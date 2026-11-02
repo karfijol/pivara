@@ -1,0 +1,359 @@
+// Glavni dio web aplikacije: izbornik, stranice, učitavanje i spremanje baze.
+import * as py from "./py.js";
+import * as store from "./store.js";
+import { h, btn, toast, info, error, confirm, busy, openFile, dbProxy, Dialog } from "./ui.js";
+
+export const VERSION = "web 1.0";
+
+const NAV = [
+  ["dash", "🏠", "Nadzorna ploča", "stock"],
+  [null, "", "SKLADIŠTE"],
+  ["items", "🌾", "Sirovine", "stock"],
+  ["lots", "🏷", "LOT-ovi / FIFO", "stock"],
+  ["chem", "🧪", "Kemikalije", "stock"],
+  ["kegs", "🛢", "Kegovi", "production"],
+  [null, "", "PROIZVODNJA"],
+  ["recipes", "📋", "Recepture", "production"],
+  ["planner", "📅", "Planer fermentora", "production"],
+  ["batches", "🍺", "Šarže piva", "production"],
+  ["haccp", "🛡", "HACCP evidencije", "haccp"],
+  [null, "", "PRODAJA"],
+  ["sales", "🤝", "Kupci i otpremnice", "production"],
+  [null, "", "NABAVA"],
+  ["reorder", "🛒", "Što naručiti", "stock"],
+  ["po", "📄", "Narudžbenice", "stock"],
+  ["suppliers", "🚚", "Dobavljači", "stock"],
+  [null, "", "IZVJEŠĆA"],
+  ["excise", "💶", "Trošarine", "production"],
+  ["recall", "🔎", "Sljedivost i povlačenje", "production"],
+  [null, "", ""],
+  ["settings", "⚙", "Postavke", "settings"],
+];
+
+class App {
+  constructor() {
+    this.db = dbProxy();
+    this.py = py;
+    this.pages = {};
+    this.classes = {};
+    this.current = null;
+    this.navBtns = {};
+  }
+
+  // ------------------------------------------------------------ pokretanje
+  async start() {
+    const splash = document.getElementById("splash-text");
+    const progress = (t) => { if (splash) splash.textContent = t; };
+    try {
+      await py.init(progress);
+    } catch (e) {
+      progress("Python se ne može pokrenuti u ovom pregledniku: " + e.message + ". Koristite noviji Chrome, Edge ili Firefox.");
+      throw e;
+    }
+    const mods = await Promise.all(["stock", "production", "haccp", "settings"].map(async (m) => {
+      try { return [m, await import(`./pages/${m}.js`)]; } catch (e) { console.error(m, e); return [m, null]; }
+    }));
+    for (const [m, mod] of mods) if (mod && mod.PAGES) Object.assign(this.classes, mod.PAGES);
+    this.modules = Object.fromEntries(mods);
+
+    this.sync = new store.Sync({
+      getBytes: () => py.dbBytes(),
+      onStatus: (s, d) => this.syncStatus(s, d),
+      onRemoteChange: (bytes) => { py.openDb(bytes); this.refreshAll(); toast("Učitane su promjene s drugog uređaja."); },
+    });
+    this.sync.onConflict = () => this.conflict();
+    this.sync.journalLen = () => py.journal.length;
+    this.sync.journalDone = (n) => py.journal.splice(0, n);
+    py.setOnChange(() => this.sync.changed());
+
+    const cfg = store.getConfig();
+    if (!cfg) { progress(""); return this.setupScreen(); }
+    progress("Učitavam podatke" + (cfg.mode === "github" ? " s GitHuba…" : "…"));
+    let bytes;
+    try { bytes = await this.sync.load(); } catch (e) {
+      progress("");
+      await error(e.message + "\n\nProvjerite postavke povezivanja.", "Podaci se ne mogu učitati");
+      return this.setupScreen(cfg);
+    }
+    if (!bytes) { progress(""); return this.setupScreen(cfg, true); }
+    await this.openApp(bytes);
+    if (this.sync.conflictLocal) this.localConflict();
+  }
+
+  async openApp(bytes) {
+    py.openDb(bytes || null);
+    await this.loadLogos();
+    document.getElementById("splash")?.remove();
+    this.buildShell();
+    const key = (location.hash || "#dash").slice(1).split("/")[0];
+    this.show(this.classes[key] ? key : "dash");
+    window.addEventListener("hashchange", () => {
+      const k = location.hash.slice(1).split("/")[0];
+      if (k && k !== this.current && this.classes[k]) this.show(k);
+    });
+    setInterval(() => this.sync.poll(), 45000);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) this.sync.poll(); });
+    window.addEventListener("beforeunload", (e) => {
+      if (this.sync.dirty || this.sync.saving) { this.sync.save(); e.preventDefault(); e.returnValue = ""; }
+    });
+    this.afterStart();
+  }
+
+  afterStart() {
+    try {
+      const rem = this.db.excise_reminder();
+      if (rem && !this.db.is_dismissed({ key: `excise:${rem[0]}`, type: "Trošarine MI-PI" })) {
+        const k = "excise_popup_" + rem[0];
+        const t = new Date().toISOString().slice(0, 10);
+        if (localStorage.getItem(k) !== t) {
+          localStorage.setItem(k, t);
+          confirm(rem[1] + "\n\nOtvoriti Trošarine sada?", "Trošarine – podsjetnik").then((y) => { if (y) this.show("excise"); });
+        }
+      }
+    } catch (e) { console.warn(e); }
+  }
+
+  // ------------------------------------------------------------ logo
+  async loadLogos() {
+    for (const f of ["logo.png", "logo_app.png"]) {
+      let bytes = null;
+      const local = await store.localGet(f);
+      if (this.sync.remote) bytes = await this.sync.getFile(f);
+      if (!bytes && local) bytes = local;
+      if (bytes) { py.writeFile(py.DATA_DIR + "/" + f, bytes); await store.localPut(f, bytes); }
+    }
+  }
+  logoUrl(which = "app") {
+    const p = py.DATA_DIR + "/" + (which === "app" && py.exists(py.DATA_DIR + "/logo_app.png") ? "logo_app.png" : "logo.png");
+    if (!py.exists(p)) return null;
+    return URL.createObjectURL(new Blob([py.readFile(p)], { type: "image/png" }));
+  }
+  async setLogo(which, bytes) {
+    const f = which === "app" ? "logo_app.png" : "logo.png";
+    const p = py.DATA_DIR + "/" + f;
+    if (bytes) { py.writeFile(p, bytes); await store.localPut(f, bytes); await this.sync.putFile(f, bytes); }
+    else { py.unlink(p); await store.localPut(f, null); await this.sync.deleteFile(f); }
+    this.applyLogo();
+  }
+  applyLogo() {
+    const box = document.getElementById("brand-logo");
+    if (!box) return;
+    const u = this.logoUrl("app");
+    box.innerHTML = "";
+    box.append(u ? h("img", { src: u, alt: "logo" }) : h("span", { class: "brand-txt" }, "🍺 Pivovara"));
+    const fav = document.querySelector("link[rel=icon]");
+    const d = this.logoUrl("doc");
+    if (fav && d) fav.href = d;
+  }
+
+  // ------------------------------------------------------------ izgled
+  buildShell() {
+    const root = document.getElementById("app");
+    root.innerHTML = "";
+    this.side = h("nav", { class: "side" });
+    this.main = h("main", { class: "main" });
+    const brand = h("div", { class: "brand" }, h("div", { id: "brand-logo", class: "brand-logo" }),
+      h("div", { class: "brand-name", id: "brand-name" }, this.db.get_setting("brewery_name")));
+    const navList = h("div", { class: "nav" });
+    for (const [key, icon, label] of NAV) {
+      if (!key) { navList.append(h("div", { class: "nav-sec" }, label)); continue; }
+      const b = h("a", { class: "nav-btn", href: "#" + key, onclick: () => this.closeMenu() }, h("span", { class: "ico" }, icon), label);
+      this.navBtns[key] = b;
+      navList.append(b);
+    }
+    this.statusEl = h("div", { class: "sync-status", title: "" });
+    this.side.append(brand, navList, h("div", { class: "side-foot" }, this.statusEl, h("div", { class: "ver" }, VERSION)));
+    const burger = h("button", { class: "burger", type: "button", onclick: () => document.body.classList.toggle("menu-open") }, "☰");
+    const scrim = h("div", { class: "scrim", onclick: () => this.closeMenu() });
+    root.append(burger, this.side, scrim, this.main);
+    this.applyLogo();
+    this.syncStatus(this.sync.status);
+    this.applyTheme();
+  }
+  closeMenu() { document.body.classList.remove("menu-open"); }
+  applyTheme() {
+    let t = "system";
+    try { t = localStorage.getItem("theme") || "system"; } catch { /* */ }
+    document.documentElement.dataset.theme = t === "system" ? "" : t;
+  }
+
+  syncStatus(s, detail = "") {
+    if (!this.statusEl) return;
+    const map = {
+      saved: ["ok", "● Spremljeno na GitHub"], pending: ["warn", "● Promjene čekaju spremanje…"], saving: ["warn", "● Spremam…"],
+      loading: ["warn", "● Učitavam…"], local: ["muted", "● Spremljeno u ovom pregledniku"],
+      offline: ["bad", "● Nije spremljeno na GitHub (nema veze)"], conflict: ["bad", "● Sukob s drugim uređajem"],
+    };
+    const [cls, txt] = map[s] || ["muted", ""];
+    this.statusEl.className = "sync-status " + cls;
+    this.statusEl.textContent = txt;
+    this.statusEl.title = detail || "";
+    this.statusEl.onclick = s === "offline" ? () => this.sync.save() : null;
+  }
+
+  async conflict() {
+    // Drugi uređaj je u međuvremenu spremio promjene: preuzmi njegovu verziju i ponovi naše promjene nad njom.
+    const pending = py.journal.splice(0);
+    let bytes;
+    try { bytes = await this.sync.takeRemote(); } catch (e) { this.syncStatus("offline", e.message); py.journal.unshift(...pending); return; }
+    const before = py.dbBytes();
+    py.openDb(bytes);
+    const failed = py.replayJournal(pending);
+    if (failed.length === pending.length && pending.length) {
+      // ništa se ne može ponoviti -> pitaj korisnika
+      py.openDb(before);
+      py.journal.push(...pending);
+      const take = await confirm("Netko je na drugom uređaju u međuvremenu spremio promjene, a vaše se promjene ne mogu automatski spojiti.\n\n" +
+        "• Preuzmi noviju verziju – vaše zadnje promjene s ovog uređaja se odbacuju.\n" +
+        "• Zadrži moju verziju – prepisuje se verzija s GitHuba (promjene s drugog uređaja se gube).",
+      "Sukob verzija", { ok: "Preuzmi noviju verziju", cancel: "Zadrži moju verziju" });
+      if (take) { py.journal.splice(0); py.openDb(bytes); this.refreshAll(); }
+      else await this.sync.forceLocal(py.dbBytes());
+      return;
+    }
+    this.refreshAll();
+    if (pending.length) this.sync.changed();
+    if (failed.length) info("Promjene s drugog uređaja su učitane. Neke vaše promjene nije bilo moguće ponoviti:\n\n" +
+      failed.map(([e, m]) => `• ${e.name}: ${m}`).join("\n"), "Spajanje promjena");
+    else toast("Spojene su promjene s drugog uređaja.");
+  }
+  async localConflict() {
+    const local = this.sync.conflictLocal;
+    this.sync.conflictLocal = null;
+    const take = await confirm("Na ovom uređaju postoje promjene koje nisu stigle na GitHub, a u međuvremenu je drugi uređaj spremio novu verziju.",
+      "Nespremljene promjene", { ok: "Koristi verziju s GitHuba", cancel: "Zadrži verziju s ovog uređaja" });
+    if (!take) { py.openDb(local.bytes); await this.sync.forceLocal(local.bytes); this.refreshAll(); }
+  }
+
+  // ------------------------------------------------------------ navigacija
+  page(key) {
+    if (!this.pages[key]) {
+      const C = this.classes[key];
+      if (!C) return null;
+      const p = new C(this);
+      p.key = key;
+      try { p.build(); } catch (e) { console.error(e); error("Greška pri izradi stranice: " + e.message); }
+      p.built = true;
+      this.pages[key] = p;
+    }
+    return this.pages[key];
+  }
+  show(key, action = null) {
+    const p = this.page(key);
+    if (!p) return null;
+    if (this.current && this.navBtns[this.current]) this.navBtns[this.current].classList.remove("active");
+    this.current = key;
+    if (this.navBtns[key]) this.navBtns[key].classList.add("active");
+    if (location.hash.slice(1).split("/")[0] !== key) history.replaceState(null, "", "#" + key);
+    this.main.innerHTML = "";
+    this.main.append(p.el);
+    this.main.scrollTop = 0;
+    try { p.refresh(); } catch (e) { console.error(e); error(e.message); }
+    if (action && typeof p[action] === "function") setTimeout(() => p[action](), 50);
+    return p;
+  }
+  refreshAll() {
+    const n = document.getElementById("brand-name");
+    if (n) n.textContent = this.db.get_setting("brewery_name");
+    if (this.current) { try { this.pages[this.current].refresh(); } catch (e) { console.error(e); } }
+  }
+  toast(t) { toast(t); }
+
+  // Izrada dokumenta u Pythonu (PDF/Word) i ponuda za otvaranje/preuzimanje
+  async doc(name, ...args) {
+    try {
+      const path = await busy("Izrađujem dokument…", async (set) => {
+        await py.ensureDocs(set);
+        set("Izrađujem dokument…");
+        return py.call(name, ...args);
+      });
+      if (Array.isArray(path)) path.forEach((p) => p && openFile(p)); else if (path) openFile(path);
+      return path;
+    } catch (e) { error(e.message); return null; }
+  }
+
+  // ------------------------------------------------------------ prvo pokretanje / povezivanje
+  async setupScreen(cfg = null, noData = false) {
+    document.getElementById("splash")?.remove();
+    const root = document.getElementById("app");
+    root.innerHTML = "";
+    const card = h("div", { class: "setup" });
+    root.append(h("div", { class: "setup-wrap" }, card));
+    let prev = {};
+    try { prev = JSON.parse(localStorage.getItem("pivovara_sync_prev") || "{}"); } catch { /* */ }
+    const c = cfg || prev;
+    card.append(h("h1", {}, "🍺 Pivovara · Skladište"), h("p", { class: "sub" },
+      "Web verzija programa. Podaci se spremaju u vaš privatni GitHub repozitorij, pa su isti na svim uređajima."));
+    const own = h("input", { placeholder: "npr. loopin-pivovara", value: c.owner || "" });
+    const repo = h("input", { placeholder: "npr. pivovara-podaci", value: c.repo || "pivovara-podaci" });
+    const tok = h("input", { type: "password", placeholder: "github_pat_…", value: c.token || "" });
+    const msg = h("div", { class: "modal-err" });
+    const step1 = h("div", { class: "setup-step" },
+      h("h2", {}, "1. Povezivanje s GitHubom"),
+      h("label", { class: "flab" }, "GitHub korisničko ime (vlasnik repozitorija)"), own,
+      h("label", { class: "flab" }, "Privatni repozitorij za podatke"), repo,
+      h("label", { class: "flab" }, "Pristupni token (fine-grained, samo za taj repozitorij: Contents – Read and write)"), tok,
+      h("p", { class: "note" }, "Token se sprema samo u ovom pregledniku. Upute: datoteka UPUTE_WEB.pdf ili README u repozitoriju stranice."),
+      msg);
+    const row = h("div", { class: "row gap" });
+    step1.append(row);
+    card.append(step1);
+    const connect = async () => {
+      msg.style.display = "none";
+      const newCfg = { mode: "github", owner: own.value.trim(), repo: repo.value.trim(), token: tok.value.trim() };
+      if (!newCfg.owner || !newCfg.repo || !newCfg.token) { msg.textContent = "Upišite sva tri podatka."; msg.style.display = "block"; return; }
+      try {
+        const r = await busy("Provjeravam pristup…", () => store.testRepo(newCfg));
+        if (!r.private && !(await confirm("Repozitorij " + r.name + " je JAVAN – podaci bi bili vidljivi svima. Preporuka: postavite ga kao Private (Settings → Danger zone → Change visibility). Nastaviti svejedno?", "Upozorenje"))) return;
+        const old = store.getConfig() || prev;
+        if (old && old.owner && (old.owner !== newCfg.owner || old.repo !== newCfg.repo)) await store.localClear();
+        store.setConfig(newCfg);
+        location.reload();
+      } catch (e) { msg.textContent = e.message; msg.style.display = "block"; }
+    };
+    row.append(btn("Poveži", connect));
+    row.append(btn("Bez GitHuba (samo ovaj preglednik)", () => {
+      store.setConfig({ mode: "local" }); location.reload();
+    }, "ghost"));
+
+    if (noData) {
+      // povezano, ali još nema baze -> uvoz iz desktop programa / prazno / demo
+      step1.style.display = "none";
+      const file = h("input", { type: "file", accept: ".db,.sqlite,application/octet-stream" });
+      const st2 = h("div", { class: "setup-step" },
+        h("h2", {}, "2. Podaci"),
+        h("p", {}, "Učitajte bazu iz programa na računalu: datoteka ", h("b", {}, "skladiste.db"), " je u mapi ",
+          h("b", {}, "Dokumenti\\PivovaraSkladiste"), ". (U desktop programu najprije zatvorite program.)"),
+        file,
+        h("div", { class: "row gap" },
+          btn("Učitaj odabranu bazu", async () => {
+            if (!file.files[0]) return info("Odaberite datoteku skladiste.db.");
+            const bytes = new Uint8Array(await file.files[0].arrayBuffer());
+            const head = new TextDecoder().decode(bytes.slice(0, 15));
+            if (head !== "SQLite format 3") return error("Odabrana datoteka nije baza programa (skladiste.db).");
+            await this.firstData(bytes);
+          }),
+          btn("Počni s praznom bazom", () => this.firstData(null, false), "ghost"),
+          btn("Demo podaci (za probu)", () => this.firstData(null, true), "ghost")),
+        h("p", { class: "note" }, "Logo pivovare možete kasnije postaviti u Postavkama."));
+      card.append(st2);
+      if (cfg && cfg.mode === "github") card.append(h("p", { class: "note" }, `Povezano: ${cfg.owner}/${cfg.repo}`),
+        btn("Promijeni povezivanje", () => { store.setConfig(null); location.reload(); }, "ghost"));
+    }
+  }
+
+  async firstData(bytes, demo = false) {
+    await busy("Pripremam podatke…", async () => {
+      py.openDb(bytes);
+      if (!bytes && demo) py.call("db.seed_demo");
+      if (!bytes && !demo) py.call("db.set_setting", "first_run_done", "1");
+      await this.sync.save();
+    });
+    location.reload();
+  }
+}
+
+const app = new App();
+window.APP = app; // za otklanjanje grešaka
+app.start().catch((e) => console.error(e));
+export default app;

@@ -1,0 +1,10 @@
+Uključene knjižnice otvorenog koda:
+- Pyodide 0.27.7 (Python u pregledniku) – Mozilla Public License 2.0 – https://pyodide.org
+- CPython standardna knjižnica – PSF License
+- SQLite – javna domena
+- ReportLab 4.4.4 – BSD License
+- python-docx 1.2.0 – MIT License
+- lxml 5.2.1 – BSD License
+- Pillow 10.2.0 – HPND License
+- charset-normalizer, typing-extensions, packaging, micropip – MIT / PSF / Apache 2.0
+- DejaVu fontovi (../fonts) – Bitstream Vera / DejaVu License (slobodna upotreba)

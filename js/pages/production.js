@@ -852,8 +852,10 @@ class SalesPage extends Page {
   static title = "Kupci i otpremnice";
   static subtitle = "Otpremnica s LOT-om piva · kegovi na otpremnici automatski idu kupcu · pregled kegova i depozita po kupcu";
 
-  static FIELDS = [{ key: "name", label: "Naziv kupca", required: true }, { key: "oib", label: "OIB" },
-    { key: "address", label: "Adresa" }, { key: "contact", label: "Kontakt osoba" },
+  static FIELDS = [{ key: "customer_type", label: "Vrsta kupca", type: "combo", options: ["Pravna osoba", "Fizička osoba"], default: "Pravna osoba" },
+    { key: "name", label: "Naziv / ime i prezime", required: true }, { key: "oib", label: "OIB" },
+    { key: "address", label: "Adresa (ulica i broj)" }, { key: "postal_code", label: "Poštanski broj" }, { key: "city", label: "Mjesto" },
+    { key: "contact", label: "Kontakt osoba" },
     { key: "phone", label: "Telefon" }, { key: "email", label: "E-mail" }, { key: "note", label: "Napomena" }];
 
   build() {

@@ -148,7 +148,7 @@ table.grid tr.empty td { color: var(--muted); text-align: center; padding: 18px;
 .fcell.full { grid-column: 1 / -1; }
 .fcell input, .fcell select { width: 100%; }
 .fcell input[type=checkbox] { width: 18px; flex: none; }
-.flab { color: var(--muted); font-size: 12px; margin-bottom: 3px; }
+.flab { display: block; color: var(--muted); font-size: 12px; margin-bottom: 3px; }
 .sec { font-weight: 700; font-size: 14px; border-bottom: 2px solid var(--accent); padding: 10px 0 3px; }
 .finfo { font-weight: 700; padding: 4px 0; }
 .chk { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; cursor: pointer; }
@@ -168,10 +168,10 @@ table.grid tr.empty td { color: var(--muted); text-align: center; padding: 18px;
 
 /* ---------- mobitel ---------- */
 @media (max-width: 860px) {
-  .side { position: fixed; z-index: 500; inset: 0 auto 0 0; transform: translateX(-100%); transition: transform .2s; }
+  .side { position: fixed; z-index: 95; inset: 0 auto 0 0; transform: translateX(-100%); transition: transform .2s; }
   body.menu-open .side { transform: none; }
-  body.menu-open .scrim { display: block; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 400; }
-  .burger { display: block; position: fixed; left: 10px; top: 10px; z-index: 300; border: 0; background: var(--card);
+  body.menu-open .scrim { display: block; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 92; }
+  .burger { display: block; position: fixed; left: 10px; top: 10px; z-index: 90; border: 0; background: var(--card);
     color: var(--text); border-radius: 10px; width: 40px; height: 40px; font-size: 20px; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
   .page { padding: 16px 12px 24px; }
   .page-head { padding-left: 48px; }
@@ -185,3 +185,31 @@ table.grid tr.empty td { color: var(--muted); text-align: center; padding: 18px;
   table.grid { min-width: 640px; }
   .form { grid-template-columns: 1fr !important; }
 }
+
+/* ---------- rad s kegovima ---------- */
+.hidden { display: none !important; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.tile { background: var(--card); color: var(--text); border: 0; border-top: 5px solid var(--accent); border-radius: 14px;
+  padding: 16px 14px; text-align: left; cursor: pointer; display: flex; flex-direction: column; gap: 3px; font: inherit;
+  box-shadow: 0 1px 3px rgba(0,0,0,.06); min-height: 110px; }
+.tile:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,0,0,.12); }
+.tile-ico { font-size: 28px; } .tile-name { font-size: 17px; font-weight: 700; } .tile-sub { color: var(--muted); font-size: 12.5px; }
+.tile-cart { color: var(--warn); font-size: 12px; font-weight: 600; min-height: 15px; }
+.badge { color: #fff; border-radius: 8px; padding: 2px 9px; font-size: 12.5px; font-weight: 700; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 14px; margin-bottom: 10px; }
+.fact { display: flex; flex-direction: column; gap: 2px; } .fact .muted { font-size: 12px; }
+.scanner { position: relative; width: 100%; max-width: 520px; aspect-ratio: 4 / 3; background: #000; border-radius: 12px;
+  overflow: hidden; margin-bottom: 10px; }
+.scanner video { width: 100%; height: 100%; object-fit: cover; }
+.scan-frame { position: absolute; inset: 14% 18%; border: 3px solid rgba(255,255,255,.75); border-radius: 14px; }
+.scan-frame.ok { animation: flashok .6s; } .scan-frame.bad { animation: flashbad .9s; }
+@keyframes flashok { 0% { border-color: #5BBF7A; box-shadow: 0 0 0 999px rgba(91,191,122,.35); } 100% { border-color: rgba(255,255,255,.75); } }
+@keyframes flashbad { 0% { border-color: #E0675A; box-shadow: 0 0 0 999px rgba(224,103,90,.45); } 100% { border-color: rgba(255,255,255,.75); } }
+.scan-msg { margin-top: 8px; font-weight: 600; min-height: 20px; }
+.scan-msg.ok { color: var(--ok); } .scan-msg.bad { color: var(--bad); }
+@media (max-width: 860px) { .tiles { grid-template-columns: 1fr 1fr; } .tile { min-height: 96px; padding: 12px; }
+  .kw-counts { grid-template-columns: repeat(3, 1fr); gap: 8px; } .kw-counts .kpi { padding: 8px 10px; }
+  .kw-counts .kpi .val { font-size: 20px; } .kw-counts .kpi .s { display: none; } }
+.who { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 6px; color: #D7DAE0; }
+.who a { color: #E3A12B; text-decoration: none; }
+.setup.login { max-width: 420px; }

@@ -1,6 +1,8 @@
 // Postavke: izgled, osnovni podaci, logo, prodaja, naljepnice, podaci i povezivanje s GitHubom.
 import { h, btn, Page, Form, confirm, info, error, busy, toast, saveBlob, tableDialog, today } from "../ui.js";
 import * as store from "../store.js";
+import * as auth from "../auth.js";
+import { Table, askForm } from "../ui.js";
 
 function card(title, note = null) {
   const c = h("div", { class: "card" }, h("h3", {}, title));
@@ -57,6 +59,15 @@ class SettingsPage extends Page {
       seg.append(b);
     }
     c.append(seg);
+    let me = "";
+    try { me = JSON.parse(localStorage.getItem("pivovara_user") || '""') || ""; } catch { /* */ }
+    const meInp = h("input", { value: me, placeholder: "npr. Ivan", style: { maxWidth: "280px" } });
+    meInp.addEventListener("change", () => {
+      try { localStorage.setItem("pivovara_user", JSON.stringify(meInp.value.trim())); } catch { /* */ }
+      toast("Ime spremljeno za ovaj uređaj.");
+    });
+    c.append(h("label", { class: "flab" }, "Moje ime na ovom uređaju (upisuje se kao radnik kod rada s kegovima)"), meInp,
+      h("div", { style: { height: "12px" } }));
     this.form = new Form([
       { key: "brewery_name", label: "Naziv pivovare (u programu i na narudžbenicama)" },
       { key: "warn_days", label: "Upozori na istek roka (dana unaprijed)", type: "num", min: 0 },
@@ -138,7 +149,187 @@ class SettingsPage extends Page {
     h("div", { class: "row gap", style: { marginTop: "6px" } },
       btn("Odjavi ovaj uređaj", () => this.logout(), "ghost")));
 
-    for (const x of [c, cl, cs, cn, cd]) this.content.append(x);
+    const role = this.app.user ? this.app.user.role : "admin";
+    this.usersCard = card("Korisnici i prijava");
+    if (role === "admin") for (const x of [c, this.usersCard, cl, cs, cn, cd]) this.content.append(x);
+    else {
+      // korisnik bez administratorskih prava vidi samo izgled i svoje podatke
+      [...c.children].forEach((ch, i) => { if (i > 0 && ch === this.form.el) ch.remove(); });
+      c.querySelectorAll(".btn").forEach((b) => { if (b.textContent.includes("Spremi postavke")) b.remove(); });
+      this.content.append(c, this.usersCard);
+    }
+    this.renderUsers();
+  }
+
+  // -------------------------------------------------------------- korisnici
+  renderUsers() {
+    const box = this.usersCard;
+    while (box.children.length > 1) box.lastChild.remove();
+    const cfg = store.getConfig() || {};
+    const users = this.app.users;
+    const me = this.app.user;
+    if (me && me.role !== "admin") {
+      box.append(h("div", {}, `Prijavljeni ste kao `, h("b", {}, `${me.name} (${me.username})`), ` · uloga: ${me.role}.`),
+        h("p", { class: "note" }, "Promjenu lozinke napravit će administrator (Postavke → Korisnici)."),
+        btn("Odjava", () => this.app.logout(), "ghost"));
+      return;
+    }
+    if (!users || !(users.users || []).length) {
+      box.append(h("div", { class: "muted" }, "Prijava korisnika je isključena – program se otvara tokenom spremljenim na uređaju. " +
+        "Uključite prijavu da se svaki radnik prijavljuje svojim korisničkim imenom i lozinkom, bez tokena."));
+      if (cfg.mode === "github") box.append(h("div", { class: "row gap", style: { marginTop: "10px" } },
+        btn("👥 Uključi prijavu korisnika…", () => this.enableUsers())));
+      else box.append(h("p", { class: "note" }, "Najprije povežite program s GitHubom (kartica Podaci i spremanje)."));
+      return;
+    }
+    if (!cfg.keys || !cfg.adminToken) {
+      box.append(h("div", { class: "muted" }, "Korisnicima upravlja administrator nakon prijave svojim korisničkim imenom."),
+        btn("Odjava i prijava kao administrator", () => this.app.logout(), "ghost"));
+      return;
+    }
+    const roleName = Object.fromEntries(auth.ROLES.map(([k, d]) => [k, d.split(" – ")[0]]));
+    this.uT = new Table([["username", "Korisničko ime", 140, "w"], ["name", "Ime i prezime", 180, "w"], ["role", "Uloga", 130, "w"],
+      ["created", "Dodan", 100, "center"]], { onDouble: () => this.editUser(), height: 8 });
+    this.uT.setRows(users.users.map((u) => ({ id: u.username, username: u.username, name: u.name || "", role: roleName[u.role] || u.role,
+      created: (u.created || "").slice(0, 10).split("-").reverse().join(".") + ".", _tag: u.username === me.username ? "bold" : "" })));
+    box.append(this.uT.el, h("div", { class: "row gap", style: { marginTop: "10px" } },
+      btn("＋ Novi korisnik", () => this.newUser()), btn("✎ Uredi / nova lozinka", () => this.editUser(), "ghost"),
+      btn("🗑 Obriši", () => this.deleteUser(), "ghost"), btn("🔑 Zamijeni tokene", () => this.replaceTokens(), "ghost")),
+    h("p", { class: "note" }, "Uloge: " + auth.ROLES.map(([, d]) => d).join(" · ") + ". Lozinke se ne spremaju nigdje – " +
+      "ako ih netko zaboravi, administrator postavlja novu. Kad netko ode iz tvrtke: obrišite ga i zamijenite tokene."));
+  }
+
+  userFields(isNew, u = {}) {
+    return [
+      { key: "username", label: "Korisničko ime (mala slova, bez razmaka)", required: true, default: u.username },
+      { key: "name", label: "Ime i prezime", required: true, default: u.name },
+      { key: "role", label: "Uloga", type: "combo", options: auth.ROLES.map(([k, d]) => [d, k]), default: u.role || "korisnik", full: true },
+      { key: "password", label: isNew ? "Lozinka (najmanje 10 znakova)" : "Nova lozinka (prazno = bez promjene)", required: isNew },
+      { key: "password2", label: "Ponovite lozinku", required: isNew }];
+  }
+
+  async saveUsersFile(users, msg) {
+    const cfg = store.getConfig();
+    await busy("Spremam korisnike na GitHub…", () => auth.saveUsers(users, users.site, cfg.adminToken));
+    this.app.users = users;
+    toast(msg);
+    this.renderUsers();
+  }
+
+  async newUser() {
+    const d = await askForm("Novi korisnik", this.userFields(true), {}, { columns: 2, validate: (x) => {
+      if (x.password !== x.password2) throw new Error("Lozinke se ne podudaraju.");
+      auth.checkPassword(x.password);
+    } });
+    if (!d) return;
+    try {
+      const users = structuredClone(this.app.users);
+      await auth.upsertUser(users, store.getConfig().keys, d, true);
+      await this.saveUsersFile(users, `Korisnik ${auth.normUser(d.username)} dodan. Neka se prijavi na adresi stranice.`);
+    } catch (e) { this.err(e); }
+  }
+
+  async editUser() {
+    const id = this.need(this.uT, "korisnika");
+    if (id === null) return;
+    const u = this.app.users.users.find((x) => x.username === String(id));
+    const fields = this.userFields(false, u);
+    fields[0] = { key: "username", label: "Korisničko ime", type: "info", default: u.username };
+    const d = await askForm(`Korisnik ${u.username}`, fields, {}, { columns: 2, validate: (x) => {
+      if ((x.password || "") !== (x.password2 || "")) throw new Error("Lozinke se ne podudaraju.");
+      if (x.password) auth.checkPassword(x.password);
+      if (x.role !== u.role && !x.password) throw new Error("Kod promjene uloge upišite novu lozinku za korisnika.");
+    } });
+    if (!d) return;
+    try {
+      const users = structuredClone(this.app.users);
+      const admins = users.users.filter((x) => x.role === "admin");
+      if (u.role === "admin" && d.role !== "admin" && admins.length === 1) throw new Error("Mora ostati barem jedan administrator.");
+      await auth.upsertUser(users, store.getConfig().keys, { ...d, username: u.username }, false);
+      await this.saveUsersFile(users, `Korisnik ${u.username} spremljen.` + (d.password ? " Nova lozinka vrijedi odmah." : ""));
+      if (u.username === this.app.user.username && d.password) {
+        await info("Promijenili ste svoju lozinku – prijavite se ponovno novom lozinkom.");
+        this.app.logout();
+      }
+    } catch (e) { this.err(e); }
+  }
+
+  async deleteUser() {
+    const id = this.need(this.uT, "korisnika");
+    if (id === null) return;
+    if (String(id) === this.app.user.username) return info("Ne možete obrisati sami sebe.");
+    if (!(await confirm(`Obrisati korisnika ${id}? Više se neće moći prijaviti.`, "Brisanje korisnika", { danger: true }))) return;
+    try {
+      const users = auth.removeUser(structuredClone(this.app.users), String(id));
+      await this.saveUsersFile(users, `Korisnik ${id} obrisan.`);
+      info("Korisnik je obrisan. Ako je osoba otišla iz tvrtke, preporuka je i zamijeniti tokene (🔑 Zamijeni tokene) " +
+        "– tada stari token prestaje vrijediti i na uređajima na kojima je ostao zapamćen.");
+    } catch (e) { this.err(e); }
+  }
+
+  async replaceTokens() {
+    const cfg = store.getConfig();
+    const d = await askForm("Zamjena tokena", [
+      { key: "info", type: "info", label: "", default: "Na GitHubu napravite nove tokene, ovdje ih upišite, pa stare obrišite (Settings → Developer settings → Fine-grained tokens). Korisnici ne moraju ništa mijenjati." },
+      { key: "worker", label: "Novi token za podatke (samo repozitorij podataka, Contents: Read and write) – prazno = bez promjene" },
+      { key: "admin", label: "Novi token administratora (repozitorij podataka + stranice) – prazno = bez promjene" }], {}, { width: 640 });
+    if (!d || (!d.worker && !d.admin)) return;
+    try {
+      if (d.worker) await store.testRepo({ owner: cfg.owner, repo: cfg.repo, token: d.worker.trim() });
+      if (d.admin) {
+        const t = await store.testRepo({ owner: this.app.users.site.owner, repo: this.app.users.site.repo, token: d.admin.trim() });
+        if (!t.push) throw new Error("Token administratora nema pravo pisanja u repozitorij stranice.");
+      }
+      const users = structuredClone(this.app.users);
+      await auth.replaceTokens(users, cfg.keys, { workerToken: d.worker && d.worker.trim(), adminToken: d.admin && d.admin.trim() });
+      const adminTok = d.admin ? d.admin.trim() : cfg.adminToken;
+      await busy("Spremam…", () => auth.saveUsers(users, users.site, adminTok));
+      this.app.users = users;
+      await info("Tokeni su zamijenjeni. Prijavite se ponovno.");
+      this.app.logout();
+    } catch (e) { this.err(e); }
+  }
+
+  async enableUsers() {
+    const cfg = store.getConfig();
+    const sr = auth.siteRepo() || { owner: cfg.owner, repo: "pivovara" };
+    const d = await askForm("Uključi prijavu korisnika", [
+      { type: "section", label: "1. Repozitoriji" },
+      { key: "site", label: "Repozitorij stranice (vlasnik/naziv)", required: true, default: `${sr.owner}/${sr.repo}` },
+      { key: "info1", type: "info", label: "", default: `Podaci: ${cfg.owner}/${cfg.repo}` },
+      { type: "section", label: "2. Tokeni" },
+      { key: "worker", label: "Token za korisnike – samo repozitorij PODATAKA (Contents: Read and write)", required: true, default: cfg.token, full: true },
+      { key: "admin", label: "Token administratora – repozitoriji PODATAKA i STRANICE (Contents: Read and write)", required: true, full: true },
+      { type: "section", label: "3. Prvi administrator (vi)" },
+      { key: "username", label: "Korisničko ime", required: true },
+      { key: "name", label: "Ime i prezime", required: true, default: (this.app.user && this.app.user.name) || "" },
+      { key: "password", label: "Lozinka (najmanje 10 znakova)", required: true },
+      { key: "password2", label: "Ponovite lozinku", required: true }], {}, { columns: 2, okText: "Uključi prijavu", validate: (x) => {
+      if (x.password !== x.password2) throw new Error("Lozinke se ne podudaraju.");
+      auth.checkPassword(x.password);
+      if (!/^[^/\s]+\/[^/\s]+$/.test(x.site.trim())) throw new Error("Repozitorij stranice upišite kao vlasnik/naziv, npr. ivan/pivovara.");
+    } });
+    if (!d) return;
+    try {
+      const [so, sn] = d.site.trim().split("/");
+      const site = { owner: so, repo: sn };
+      await busy("Provjeravam tokene…", async () => {
+        const a1 = await store.testRepo({ owner: so, repo: sn, token: d.admin.trim() });
+        if (!a1.push) throw new Error("Token administratora nema pravo pisanja u repozitorij stranice " + d.site);
+        const a2 = await store.testRepo({ owner: cfg.owner, repo: cfg.repo, token: d.admin.trim() });
+        if (!a2.push) throw new Error("Token administratora nema pravo pisanja u repozitorij podataka.");
+        const w = await store.testRepo({ owner: cfg.owner, repo: cfg.repo, token: d.worker.trim() });
+        if (!w.push) throw new Error("Token za korisnike nema pravo pisanja u repozitorij podataka.");
+      });
+      if (this.app.sync.dirty) await this.app.sync.save();
+      const users = await auth.initUsers({ owner: cfg.owner, repo: cfg.repo, workerToken: d.worker.trim(), adminToken: d.admin.trim(),
+        site, admin: { username: d.username, name: d.name, password: d.password } });
+      await busy("Spremam korisnike na GitHub…", () => auth.saveUsers(users, site, d.admin.trim()));
+      this.app.users = users;
+      try { localStorage.removeItem("pivovara_token_login"); } catch { /* */ }
+      await info(`Prijava korisnika je uključena. Prijavite se kao '${auth.normUser(d.username)}' i dodajte ostale korisnike (Postavke → Korisnici).`);
+      this.app.logout();
+    } catch (e) { this.err(e); }
   }
 
   refresh() {

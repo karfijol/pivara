@@ -48,6 +48,11 @@ def open_db(path):
     os.makedirs(DATA, exist_ok=True)
     os.makedirs(OUT, exist_ok=True)
     DB_ = DB(path)
+    try:
+        import web_kegs
+        web_kegs.ensure(DB_)
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
     return True
 
 

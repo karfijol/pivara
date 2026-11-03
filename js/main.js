@@ -1,9 +1,10 @@
 // Glavni dio web aplikacije: izbornik, stranice, učitavanje i spremanje baze.
 import * as py from "./py.js";
 import * as store from "./store.js";
+import * as auth from "./auth.js";
 import { h, btn, toast, info, error, confirm, busy, openFile, dbProxy, Dialog } from "./ui.js";
 
-export const VERSION = "web 1.0";
+export const VERSION = "web 1.2";
 
 const NAV = [
   ["dash", "🏠", "Nadzorna ploča", "stock"],
@@ -12,6 +13,7 @@ const NAV = [
   ["lots", "🏷", "LOT-ovi / FIFO", "stock"],
   ["chem", "🧪", "Kemikalije", "stock"],
   ["kegs", "🛢", "Kegovi", "production"],
+  ["kegwork", "📱", "Rad s kegovima (QR)", "kegwork"],
   [null, "", "PROIZVODNJA"],
   ["recipes", "📋", "Recepture", "production"],
   ["planner", "📅", "Planer fermentora", "production"],
@@ -50,7 +52,7 @@ class App {
       progress("Python se ne može pokrenuti u ovom pregledniku: " + e.message + ". Koristite noviji Chrome, Edge ili Firefox.");
       throw e;
     }
-    const mods = await Promise.all(["stock", "production", "haccp", "settings"].map(async (m) => {
+    const mods = await Promise.all(["stock", "production", "haccp", "settings", "kegwork"].map(async (m) => {
       try { return [m, await import(`./pages/${m}.js`)]; } catch (e) { console.error(m, e); return [m, null]; }
     }));
     for (const [m, mod] of mods) if (mod && mod.PAGES) Object.assign(this.classes, mod.PAGES);
@@ -66,7 +68,21 @@ class App {
     this.sync.journalDone = (n) => py.journal.splice(0, n);
     py.setOnChange(() => this.sync.changed());
 
-    const cfg = store.getConfig();
+    let cfg = store.getConfig();
+    // prijava korisnika (ako je administrator uključio korisnike – users.json u repozitoriju stranice)
+    progress("Provjeravam prijavu…");
+    this.users = await auth.loadUsers();
+    const hasUsers = !!(this.users && (this.users.users || []).length);
+    if (hasUsers && cfg && cfg.user && !auth.stillValid(this.users, cfg)) {
+      store.setConfig(null); await store.localClear(); cfg = null;
+    }
+    if (hasUsers && !(cfg && cfg.user) && !(cfg && cfg.mode === "github" && localStorage.getItem("pivovara_token_login") === "1")) {
+      progress(""); return this.loginScreen();
+    }
+    this.user = cfg && cfg.user ? cfg.user : null;
+    if (this.user) {
+      try { localStorage.setItem("pivovara_user", JSON.stringify(this.user.name)); } catch { /* */ }
+    }
     if (!cfg) { progress(""); return this.setupScreen(); }
     progress("Učitavam podatke" + (cfg.mode === "github" ? " s GitHuba…" : "…"));
     let bytes;
@@ -85,8 +101,10 @@ class App {
     await this.loadLogos();
     document.getElementById("splash")?.remove();
     this.buildShell();
-    const key = (location.hash || "#dash").slice(1).split("/")[0];
-    this.show(this.classes[key] ? key : "dash");
+    const role = this.user ? this.user.role : "admin";
+    const first = (auth.ROLE_PAGES[role] || ["dash"])[0];
+    const key = (location.hash || "#" + first).slice(1).split("/")[0];
+    this.show(this.classes[key] ? key : first);
     window.addEventListener("hashchange", () => {
       const k = location.hash.slice(1).split("/")[0];
       if (k && k !== this.current && this.classes[k]) this.show(k);
@@ -155,14 +173,18 @@ class App {
     const brand = h("div", { class: "brand" }, h("div", { id: "brand-logo", class: "brand-logo" }),
       h("div", { class: "brand-name", id: "brand-name" }, this.db.get_setting("brewery_name")));
     const navList = h("div", { class: "nav" });
+    const role = this.user ? this.user.role : "admin";
     for (const [key, icon, label] of NAV) {
-      if (!key) { navList.append(h("div", { class: "nav-sec" }, label)); continue; }
+      if (!key) { if (!auth.ROLE_PAGES[role]) navList.append(h("div", { class: "nav-sec" }, label)); continue; }
+      if (!auth.canSee(role, key)) continue;
       const b = h("a", { class: "nav-btn", href: "#" + key, onclick: () => this.closeMenu() }, h("span", { class: "ico" }, icon), label);
       this.navBtns[key] = b;
       navList.append(b);
     }
     this.statusEl = h("div", { class: "sync-status", title: "" });
-    this.side.append(brand, navList, h("div", { class: "side-foot" }, this.statusEl, h("div", { class: "ver" }, VERSION)));
+    const who = this.user ? h("div", { class: "who" }, h("span", {}, "👤 " + this.user.name),
+      h("a", { href: "#", onclick: (e) => { e.preventDefault(); this.logout(); } }, "Odjava")) : null;
+    this.side.append(brand, navList, h("div", { class: "side-foot" }, who, this.statusEl, h("div", { class: "ver" }, VERSION)));
     const burger = h("button", { class: "burger", type: "button", onclick: () => document.body.classList.toggle("menu-open") }, "☰");
     const scrim = h("div", { class: "scrim", onclick: () => this.closeMenu() });
     root.append(burger, this.side, scrim, this.main);
@@ -239,6 +261,8 @@ class App {
     return this.pages[key];
   }
   show(key, action = null) {
+    const role = this.user ? this.user.role : "admin";
+    if (!auth.canSee(role, key)) key = (auth.ROLE_PAGES[role] || ["dash"])[0];
     const p = this.page(key);
     if (!p) return null;
     if (this.current && this.navBtns[this.current]) this.navBtns[this.current].classList.remove("active");
@@ -270,6 +294,48 @@ class App {
       if (Array.isArray(path)) path.forEach((p) => p && openFile(p)); else if (path) openFile(path);
       return path;
     } catch (e) { error(e.message); return null; }
+  }
+
+  // ------------------------------------------------------------ prijava korisnika
+  loginScreen() {
+    document.getElementById("splash")?.remove();
+    const root = document.getElementById("app");
+    root.innerHTML = "";
+    const card = h("div", { class: "setup login" });
+    root.append(h("div", { class: "setup-wrap" }, card));
+    const un = h("input", { placeholder: "korisničko ime", autocomplete: "username", autocapitalize: "none", spellcheck: "false" });
+    const pw = h("input", { type: "password", placeholder: "lozinka", autocomplete: "current-password" });
+    const rem = h("input", { type: "checkbox" });
+    const msg = h("div", { class: "modal-err" });
+    const go = async () => {
+      msg.style.display = "none";
+      try {
+        const cfg = await busy("Prijava…", () => auth.login(this.users, un.value, pw.value));
+        const remember = rem.checked;
+        store.setConfig({ ...cfg, ephemeral: !remember }, { persist: remember });
+        try { localStorage.setItem("pivovara_user", JSON.stringify(cfg.user.name)); localStorage.removeItem("pivovara_token_login"); } catch { /* */ }
+        location.reload();
+      } catch (e) { msg.textContent = e.message; msg.style.display = "block"; pw.select(); }
+    };
+    pw.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+    un.addEventListener("keydown", (e) => { if (e.key === "Enter") pw.focus(); });
+    card.append(h("h1", {}, "🍺 Pivovara · Skladište"), h("p", { class: "sub" }, "Prijavite se svojim korisničkim imenom i lozinkom."),
+      h("label", { class: "flab" }, "Korisničko ime"), un, h("label", { class: "flab" }, "Lozinka"), pw,
+      h("label", { class: "chk", style: { margin: "4px 0 12px" } }, rem, " Zapamti me na ovom uređaju (samo na svom mobitelu/računalu)"),
+      msg, h("div", { class: "row gap" }, btn("Prijava", go)),
+      h("p", { class: "note", style: { marginTop: "18px" } }, "Zaboravljena lozinka? Novu lozinku postavlja administrator (Postavke → Korisnici)."),
+      h("a", { href: "#", class: "note", onclick: (e) => { e.preventDefault(); localStorage.setItem("pivovara_token_login", "1"); this.setupScreen(); } },
+        "Napredno: povezivanje tokenom (administrator)"));
+    setTimeout(() => un.focus(), 50);
+  }
+
+  async logout() {
+    if (this.sync && (this.sync.dirty || this.sync.saving)) await busy("Spremam…", () => this.sync.save());
+    store.setConfig(null);
+    await store.localClear();
+    try { localStorage.removeItem("pivovara_token_login"); } catch { /* */ }
+    location.hash = "";
+    location.reload();
   }
 
   // ------------------------------------------------------------ prvo pokretanje / povezivanje

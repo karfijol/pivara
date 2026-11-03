@@ -179,6 +179,14 @@ export function saveBlob(blob, name, offerOpen = false) {
   const d = new Dialog("Dokument je spreman", { width: 480 });
   d.body.append(h("div", { class: "msg" }, name));
   d.bar.append(btn("Zatvori", () => d.close(), "ghost"));
+  try {
+    const file = new File([blob], name, { type: blob.type });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      d.bar.append(btn("📤 Podijeli", async () => {
+        try { await navigator.share({ files: [file], title: name }); } catch { /* korisnik odustao */ }
+      }, "ghost"));
+    }
+  } catch { /* stariji preglednik */ }
   if (offerOpen) d.bar.append(h("a", { class: "btn btn-ghost", href: url, target: "_blank", rel: "noopener" }, "👁 Otvori"));
   d.bar.append(h("a", { class: "btn btn-primary", href: url, download: name, onclick: () => setTimeout(() => d.close(), 300) }, "⬇ Preuzmi"));
   d.show().then(() => setTimeout(() => URL.revokeObjectURL(url), 60000));

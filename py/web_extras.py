@@ -63,7 +63,9 @@ def print_dn(db, note_id, fmt="PDF", app=None):
     doc.company = g("dn_company") or doc.company
     doc.add("title", f"OTPREMNICA {d['no']}")
     sup = [g("dn_company") or g("company") or "", g("dn_address") or "", f"OIB: {g('company_oib') or ''}"]
-    cus = [c.get("name") or d["customer"] or "", c.get("address") or "", f"OIB: {c.get('oib') or ''}"]
+    place = " ".join(x for x in (c.get("postal_code"), c.get("city")) if x)
+    addr = ", ".join(x for x in (c.get("address"), place) if x)
+    cus = [c.get("name") or d["customer"] or "", addr, f"OIB: {c.get('oib') or ''}"]
     if g("dn_contact") or c.get("phone") or c.get("email"):
         sup.append(g("dn_contact") or "")
         cus.append(" · ".join(x for x in (c.get("phone"), c.get("email")) if x))
@@ -71,7 +73,7 @@ def print_dn(db, note_id, fmt="PDF", app=None):
         sup.append(f"IBAN: {g('dn_iban')}")
         cus.append("")
     doc.add("table", ["ISPORUČITELJ", "KUPAC"], [[a, b] for a, b in zip(sup, cus)], [0.5, 0.5], {"size": 10})
-    doc.add("kv", [("Datum isporuke", d2ui(d["date"])), ("Mjesto isporuke", c.get("address") or "")])
+    doc.add("kv", [("Datum isporuke", d2ui(d["date"])), ("Mjesto isporuke", addr)])
     rows, kegs, litres = [], 0, 0
     for n, ln in enumerate(db.delivery_lines(i), 1):
         rows.append([str(n), ln["beer"] or "", ln["lot"] or "", ln["pack_type"], str(ln["qty"]), fq(ln["unit_l"]),

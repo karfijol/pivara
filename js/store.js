@@ -4,14 +4,21 @@
 const CFG_KEY = "pivovara_sync";
 const DB_FILE = "skladiste.db";
 
+// Konfiguracija (repozitorij + token). Prijava bez "Zapamti me" drži je samo dok je kartica otvorena (sessionStorage).
 export function getConfig() {
-  try { return JSON.parse(localStorage.getItem(CFG_KEY) || "null"); } catch { return null; }
-}
-export function setConfig(cfg) {
   try {
-    if (cfg) localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); else localStorage.removeItem(CFG_KEY);
+    return JSON.parse(sessionStorage.getItem(CFG_KEY) || localStorage.getItem(CFG_KEY) || "null");
+  } catch { return null; }
+}
+export function setConfig(cfg, { persist = true } = {}) {
+  try {
+    sessionStorage.removeItem(CFG_KEY);
+    localStorage.removeItem(CFG_KEY);
+    if (cfg) (persist ? localStorage : sessionStorage).setItem(CFG_KEY, JSON.stringify(cfg));
   } catch { /* privatni način rada */ }
 }
+// Kod prijave bez "Zapamti me" podaci se ne spremaju trajno u preglednik (tuđe / zajedničko računalo).
+function ephemeral() { const c = getConfig(); return !!(c && c.ephemeral); }
 
 // ---------------------------------------------------------------- IndexedDB (lokalna kopija)
 function idb() {
@@ -23,6 +30,7 @@ function idb() {
   });
 }
 export async function localGet(key) {
+  if (ephemeral()) return null;
   try {
     const db = await idb();
     return await new Promise((res) => {
@@ -33,6 +41,7 @@ export async function localGet(key) {
   } catch { return null; }
 }
 export async function localPut(key, value) {
+  if (ephemeral()) return;
   try {
     const db = await idb();
     await new Promise((res, rej) => {
@@ -85,7 +94,7 @@ export async function testRepo(cfg) {
   if (r.status === 404) throw new AuthError("Repozitorij nije pronađen (ili token nema pristup njemu).");
   await check(r);
   const j = await r.json();
-  return { private: j.private, name: j.full_name };
+  return { private: j.private, name: j.full_name, push: !!(j.permissions && j.permissions.push) };
 }
 
 // Vraća {sha} ili null ako datoteka ne postoji
@@ -106,7 +115,8 @@ export async function remoteGet(cfg, path = DB_FILE) {
 }
 
 export async function remotePut(cfg, bytes, sha, message, path = DB_FILE) {
-  const body = { message, content: b64(bytes) };
+  const who = (getConfig() || {}).user;
+  const body = { message: who ? `${message} – ${who.name || who.username}` : message, content: b64(bytes) };
   if (sha) body.sha = sha;
   const r = await fetch(url(cfg, path), {
     method: "PUT", headers: { ...headers(cfg), "Content-Type": "application/json" }, body: JSON.stringify(body),

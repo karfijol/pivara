@@ -1,0 +1,370 @@
+// Rad s kegovima (za mobitel): istakanje, pranje, punjenje, otprema, povrat – skeniranjem QR koda ili upisom broja.
+import { h, btn, Page, Table, Dialog, Form, askForm, confirm, info, error, toast, fq, d2ui, today, num } from "../ui.js";
+import { Scanner, beep } from "../scanner.js";
+
+const FLOWS = [
+  ["tap", "🍺", "Istakanje", "Pun → prazan (prljav)", "#E3A12B"],
+  ["wash", "🧼", "Pranje", "Prljav → čist", "#4F9DDE"],
+  ["fill", "⬇", "Punjenje", "Čist → pun (LOT piva)", "#5BBF7A"],
+  ["ship", "🚚", "Otprema", "Pun → kod kupca + otpremnica", "#A57BD6"],
+  ["return", "↩", "Povrat od kupca", "Kod kupca → prljav", "#E0675A"],
+];
+const STATUS_COLORS = { "Pun": "#E3A12B", "Prljav": "#B9864A", "Čist": "#5BBF7A", "Kod kupca": "#4F9DDE",
+  "Servis": "#E0675A", "Otpisan": "#8A8F98" };
+
+function ls(key, val) {
+  try {
+    if (val === undefined) return JSON.parse(localStorage.getItem(key) || "null");
+    localStorage.setItem(key, JSON.stringify(val));
+  } catch { return null; }
+  return null;
+}
+export function deviceUser(app) {
+  return ls("pivovara_user") || app.db.get_setting("default_operator") || "";
+}
+function badge(status) {
+  return h("span", { class: "badge", style: { background: STATUS_COLORS[status] || "#8A8F98" } }, status);
+}
+
+// ------------------------------------------------------------------ detalji kega
+export async function kegDetail(app, kegId) {
+  const py = app.py;
+  let d;
+  try { d = py.call("web_kegs.keg_detail", kegId); } catch (e) { return error(e); }
+  const k = d.keg;
+  const dlg = new Dialog(`Keg ${k.code}`, { width: 860 });
+  const facts = [
+    ["Status", badge(k.status)], ["Volumen", `${fq(k.size_l)} L`], ["Tip", k.keg_type || "—"],
+    ["Pivo", k.beer || "—"], ["LOT", k.batch_no || "—"], ["Punjeno", d2ui(k.filled_date) || "—"],
+    ["Kupac", k.customer || "—"], ["Zadnja promjena", d2ui(k.status_date) || "—"], ["Broj punjenja", String(d.fills)],
+    ["Napomena", k.note || "—"]];
+  dlg.body.append(h("div", { class: "facts" }, facts.map(([a, b]) => h("div", { class: "fact" }, h("span", { class: "muted" }, a), h("b", {}, b)))));
+  dlg.body.append(h("h4", {}, "Povijest"));
+  const t = new Table([["ts", "Vrijeme", 130, "w"], ["action", "Radnja", 150, "w"], ["status", "Status", 100, "w"],
+    ["lot", "LOT", 120, "w"], ["customer", "Kupac", 150, "w"], ["note", "Napomena", 200, "w"]], { height: 8 });
+  t.setRows(d.log.map((g, i) => ({ id: i, ts: d2ui(g.ts.slice(0, 10)) + g.ts.slice(10), action: g.action, status: g.status,
+    lot: g.batch_no || "", customer: g.customer || "", note: g.note || "" })));
+  dlg.body.append(t.el);
+  if (d.services.length) {
+    dlg.body.append(h("h4", {}, "Servisni pregledi"));
+    const st = new Table([["date", "Datum", 100, "center"], ["ok", "Rezultat", 100, "w"], ["bad", "Neispravno", 330, "w"],
+      ["by", "Pregledao", 140, "w"], ["note", "Napomena", 200, "w"]], { height: 5 });
+    st.setRows(d.services.map((s) => ({ id: s.id, date: d2ui(s.date), ok: s.ok ? "✔ ispravan" : "✖ neispravan",
+      bad: Object.entries(s.items || {}).filter(([, v]) => v !== "DA").map(([a]) => a).join(", "), by: s.by || "",
+      note: s.note || "", _tag: s.ok ? "ok" : "bad" })));
+    dlg.body.append(st.el);
+  }
+  dlg.bar.append(btn("✎ Napomena", async () => {
+    const r = await askForm(`Napomena – ${k.code}`, [{ key: "note", label: "Napomena", type: "multi" }], { note: k.note });
+    if (r) { py.call("web_kegs.set_note", kegId, r.note); dlg.close("changed"); }
+  }, "ghost"));
+  dlg.bar.append(btn("🛠 Servisni pregled", async () => { if (await serviceDialog(app, kegId)) dlg.close("changed"); }, "ghost"));
+  dlg.bar.append(btn("Zatvori", () => dlg.close(null), "primary"));
+  return dlg.show();
+}
+
+export async function serviceDialog(app, kegId) {
+  const py = app.py;
+  const k = app.db.one("SELECT * FROM kegs WHERE id=?", [kegId]);
+  const items = py.call("web_kegs.consts").service_items;
+  const fields = [{ type: "section", label: `Kontrolna lista – ${k.code} (status: ${k.status})` }];
+  items.forEach((it, i) => fields.push({ key: "i" + i, label: it, type: "combo", options: ["DA", "NE"], default: "DA" }));
+  fields.push(
+    { key: "after", label: "Nakon pregleda", type: "combo", full: true, default: "auto",
+      options: [["Automatski: ako je nešto NE → keg ide na servis", "auto"], ["Servis završen → keg je čist", "Očisti"],
+        ["Pošalji na servis", "Na servis"], ["Bez promjene statusa", "none"]] },
+    { key: "date", label: "Datum", type: "date", default: today() },
+    { key: "by", label: "Pregledao", default: deviceUser(app) },
+    { key: "note", label: "Napomena (što je popravljeno / zamijenjeno)", type: "multi", full: true });
+  const d = await askForm("Servisni pregled kega", fields, {}, { columns: 2, okText: "Spremi pregled" });
+  if (!d) return false;
+  const res = {};
+  items.forEach((it, i) => { res[it] = d["i" + i] || "DA"; });
+  const to = d.after === "auto" ? null : d.after === "none" ? "" : d.after;
+  try {
+    const ok = py.callKw("web_kegs.save_service", [kegId, res], { by: d.by, note: d.note, date: d.date, to_status: to });
+    toast(ok ? `Keg ${k.code}: pregled spremljen – ispravan.` : `Keg ${k.code}: neispravan – označen za servis.`);
+    return true;
+  } catch (e) { error(e); return false; }
+}
+
+async function newCustomer(app) {
+  const d = await askForm("Novi kupac", [
+    { key: "customer_type", label: "Vrsta kupca", type: "combo", options: ["Pravna osoba", "Fizička osoba"], default: "Pravna osoba" },
+    { key: "name", label: "Naziv / ime i prezime", required: true }, { key: "oib", label: "OIB" },
+    { key: "address", label: "Adresa (ulica i broj)" }, { key: "postal_code", label: "Poštanski broj" },
+    { key: "city", label: "Mjesto" }, { key: "contact", label: "Kontakt osoba" }, { key: "phone", label: "Telefon" },
+    { key: "email", label: "E-mail" }], {}, {
+    columns: 2, validate: (x) => { if (x.oib && !/^\d{11}$/.test(x.oib.trim())) throw new Error("OIB mora imati točno 11 znamenki."); } });
+  if (!d) return null;
+  return app.py.call("web_kegs.save_customer", d);
+}
+
+// ------------------------------------------------------------------ stranica
+class KegWorkPage extends Page {
+  static title = "Rad s kegovima";
+  static subtitle = "Skenirajte QR kod s naljepnice ili upišite broj kega · napravljeno za mobitel";
+
+  build() {
+    this.consts = this.app.py.call("web_kegs.consts");
+    this.flow = null;
+    this.tbtn("🔍 Pronađi keg", () => this.findKeg(), "ghost");
+    this.tbtn("🛠 Servis kega", () => this.findKeg("service"), "ghost");
+    this.home = h("div", { class: "content" });
+    this.work = h("div", { class: "content hidden" });
+    this.content.append(this.home, this.work);
+    // početni zaslon
+    this.counts = h("div", { class: "cards kw-counts" });
+    this.tiles = h("div", { class: "tiles" }, FLOWS.map(([key, ico, name, sub, col]) =>
+      h("button", { class: "tile", type: "button", style: { borderTopColor: col }, onclick: () => this.open(key) },
+        h("span", { class: "tile-ico" }, ico), h("span", { class: "tile-name" }, name), h("span", { class: "tile-sub" }, sub),
+        h("span", { class: "tile-cart", "data-flow": key }))));
+    this.stockT = new Table([["beer", "Pivo", 160, "w"], ["lot", "LOT", 130, "w"], ["kegs", "Kegova", 70, "center"],
+      ["litres", "Litara", 80, "e"], ["oldest", "Najstarije punjenje", 130, "center"]], { height: 8 });
+    this.seg = h("div", { class: "seg" });
+    this.listFilter = "Pun";
+    for (const s of ["Pun", "Prljav", "Čist", "Kod kupca", "Servis", "Sve"]) {
+      const b = h("button", { type: "button", class: s === this.listFilter ? "on" : "" }, s === "Prljav" ? "Prazni (prljavi)" : s);
+      b.onclick = () => { this.listFilter = s; this.seg.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); this.renderList(); };
+      this.seg.append(b);
+    }
+    this.listT = new Table([["code", "Keg", 90, "w"], ["status", "Status", 90, "w"], ["beer", "Pivo", 140, "w"],
+      ["lot", "LOT", 120, "w"], ["filled", "Punjeno", 95, "center"], ["customer", "Kupac", 150, "w"]],
+    { onDouble: (id) => this.detail(id), height: 12 });
+    this.recentT = new Table([["ts", "Vrijeme", 120, "w"], ["code", "Keg", 80, "w"], ["action", "Radnja", 150, "w"],
+      ["status", "Novi status", 90, "w"], ["info", "LOT / kupac", 180, "w"]], { height: 8 });
+    this.home.append(this.tiles, this.counts,
+      h("div", { class: "grid2" },
+        h("div", { class: "card" }, h("h3", {}, "Zaliha piva u punim kegovima"), this.stockSum = h("div", { class: "muted" }), this.stockT.el),
+        h("div", { class: "card" }, h("h3", {}, "Zadnje radnje"), this.recentT.el)),
+      h("div", { class: "card" }, h("h3", {}, "Kegovi po statusu"), h("div", { style: { margin: "4px 0 8px" } }, this.seg),
+        h("div", { class: "muted", style: { fontSize: "12px", marginBottom: "6px" } }, "Dvoklik (ili dvostruki dodir) na keg prikazuje njegovu povijest."),
+        this.listT.el));
+    this.buildWork();
+  }
+
+  refresh() {
+    const o = this.app.py.call("web_kegs.overview");
+    const c = o.counts;
+    this.counts.innerHTML = "";
+    for (const [lab, val, col, sub] of [["Puni", c["Pun"], "#E3A12B", `${fq(o.total_litres, 0)} L piva`],
+      ["Prazni (prljavi)", c["Prljav"], "#B9864A", "za pranje"], ["Čisti", c["Čist"], "#5BBF7A", "spremni za punjenje"],
+      ["Kod kupaca", c["Kod kupca"], "#4F9DDE", "vani"], ["Servis", c["Servis"], "#E0675A", `ukupno kegova ${o.total}`]]) {
+      this.counts.append(h("div", { class: "kpi" }, h("div", { class: "bar", style: { background: col } }),
+        h("div", { class: "lab" }, lab), h("div", { class: "val" }, String(val || 0)), h("div", { class: "s" }, sub)));
+    }
+    this.stockT.setRows(o.stock.map((s, i) => ({ id: i, beer: s.beer, lot: s.lot, kegs: s.kegs, litres: fq(s.litres, 1),
+      oldest: d2ui(s.oldest) })));
+    this.stockSum.textContent = o.stock.length ? `Ukupno ${fq(o.total_litres, 1)} L u ${c["Pun"]} kegova` : "Nema punih kegova.";
+    this.kegs = this.db.kegs();
+    this.renderList();
+    this.recentT.setRows(this.app.py.call("web_kegs.recent", 25).map((g) => ({ id: g.id, ts: d2ui(g.ts.slice(0, 10)) + g.ts.slice(10),
+      code: g.code, action: g.action, status: g.status, info: [g.batch_no, g.customer].filter(Boolean).join(" · ") })));
+    for (const el of this.tiles.querySelectorAll(".tile-cart")) {
+      const n = (ls("kegcart_" + el.dataset.flow) || []).length;
+      el.textContent = n ? `${n} na listi` : "";
+    }
+    if (this.flow) this.renderCart();
+  }
+
+  renderList() {
+    const f = this.listFilter;
+    const rows = (this.kegs || []).filter((k) => f === "Sve" ? k.status !== "Otpisan" : k.status === f);
+    this.listT.setRows(rows.map((k) => ({ id: k.id, code: k.code, status: k.status, beer: k.beer || "", lot: k.batch_no || "",
+      filled: d2ui(k.filled_date), customer: k.customer || "" })));
+  }
+
+  async detail(id) {
+    const r = await kegDetail(this.app, id);
+    if (r) this.refresh();
+  }
+
+  async findKeg(mode = "detail") {
+    const dlg = new Dialog(mode === "service" ? "Servis kega – odaberite keg" : "Pronađi keg", { width: 520 });
+    const inp = h("input", { placeholder: "Broj kega, npr. 7 ili K30-007", style: { width: "100%" } });
+    const sc = new Scanner((code) => go(code));
+    const go = (text) => {
+      const found = this.app.py.call("web_kegs.find_keg", text);
+      if (found.length === 1) { beep(true); sc.stop(); dlg.close(found[0].id); }
+      else { beep(false); sc.flash(false); dlg.err(found.length ? `Više kegova odgovara: ${found.map((k) => k.code).join(", ")}` : `Keg „${text}” nije pronađen.`); }
+    };
+    inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); go(inp.value); } });
+    dlg.body.append(sc.el, h("div", { class: "row gap" }, inp), h("div", { class: "row gap", style: { marginTop: "8px" } },
+      btn("📷 Skeniraj QR", async () => { try { await sc.start(); } catch (e) { dlg.err(e.message); } }, "ghost"),
+      btn("Traži", () => go(inp.value))));
+    dlg.buttons(null, null, "Zatvori");
+    const id = await dlg.show();
+    sc.stop();
+    if (id === null || id === undefined) return;
+    if (mode === "service") { if (await serviceDialog(this.app, id)) this.refresh(); } else this.detail(id);
+  }
+
+  // -------------------------------------------------------------- radna lista
+  buildWork() {
+    this.wTitle = h("h2", {});
+    this.wHint = h("div", { class: "muted" });
+    this.scanner = new Scanner((code) => this.add(code, true));
+    this.camBtn = btn("📷 Uključi kameru", () => this.toggleCam(), "primary");
+    this.inp = h("input", { placeholder: "Broj kega (npr. 7, K30-007) – Enter", inputmode: "text", autocomplete: "off", style: { flex: "1", minWidth: "160px" } });
+    this.inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); this.add(this.inp.value); this.inp.value = ""; } });
+    this.msg = h("div", { class: "scan-msg" });
+    this.cartT = new Table([["code", "Keg", 90, "w"], ["size", "L", 50, "e"], ["status", "Status", 90, "w"],
+      ["beer", "Pivo / LOT", 200, "w"], ["customer", "Kupac", 140, "w"]], { multi: true });
+    this.extra = h("div", {});
+    this.confirmBtn = btn("✔ Potvrdi", () => this.confirmFlow(), "primary");
+    this.work.append(
+      h("div", { class: "row gap" }, btn("← Natrag", () => this.close(), "ghost"), this.wTitle),
+      this.wHint,
+      h("div", { class: "card" }, this.scanner.el,
+        h("div", { class: "row gap" }, this.camBtn, this.inp, btn("＋ Dodaj", () => { this.add(this.inp.value); this.inp.value = ""; }, "ghost")),
+        this.msg),
+      h("div", { class: "card" }, h("div", { class: "row gap", style: { justifyContent: "space-between" } },
+        this.cartTitle = h("h3", {}, "Lista"),
+        h("div", { class: "row gap" }, btn("Ukloni označene", () => this.removeSel(), "ghost"), btn("Očisti listu", () => this.clearCart(), "ghost"))),
+      this.cartT.el),
+      h("div", { class: "card" }, this.extra, h("div", { class: "row gap", style: { marginTop: "10px", justifyContent: "flex-end" } }, this.confirmBtn)));
+  }
+
+  open(flow) {
+    this.flow = flow;
+    const wf = this.consts.workflows[flow];
+    const f = FLOWS.find((x) => x[0] === flow);
+    this.wTitle.textContent = `${f[1]} ${f[2]}`;
+    this.wHint.textContent = `Dodajte kegove na listu (status mora biti: ${wf.from.join(", ")}). Nakon potvrde postaju: ${wf.to}.`;
+    this.cart = ls("kegcart_" + flow) || [];
+    this.buildExtra();
+    this.home.classList.add("hidden");
+    this.work.classList.remove("hidden");
+    this.msg.textContent = ""; this.msg.className = "scan-msg";
+    this.renderCart();
+    setTimeout(() => this.inp.focus(), 50);
+  }
+
+  close() {
+    this.scanner.stop();
+    this.camBtn.textContent = "📷 Uključi kameru";
+    this.flow = null;
+    this.work.classList.add("hidden");
+    this.home.classList.remove("hidden");
+    this.refresh();
+  }
+
+  async toggleCam() {
+    if (this.scanner.running) { this.scanner.stop(); this.camBtn.textContent = "📷 Uključi kameru"; return; }
+    try { await this.scanner.start(); this.camBtn.textContent = "⏹ Isključi kameru"; } catch (e) {
+      this.say(false, e.name === "NotAllowedError" ? "Pristup kameri nije dopušten – dopustite ga u postavkama preglednika." : e.message);
+    }
+  }
+
+  say(ok, text) {
+    this.msg.textContent = text;
+    this.msg.className = "scan-msg " + (ok ? "ok" : "bad");
+    this.scanner.flash(ok);
+    beep(ok);
+  }
+
+  add(text, fromScan = false) {
+    text = (text || "").trim();
+    if (!text) return;
+    const found = this.app.py.call("web_kegs.find_keg", text);
+    if (!found.length) return this.say(false, `Keg „${text}” nije pronađen.`);
+    if (found.length > 1) return this.say(false, `Više kegova odgovara upisu: ${found.map((k) => k.code).join(", ")} – upišite punu oznaku.`);
+    const k = found[0];
+    if (this.cart.includes(k.id)) return this.say(true, `${k.code} je već na listi.`);
+    const [ok, why] = this.app.py.call("web_kegs.check", this.flow, k.id);
+    if (!ok) return this.say(false, why);
+    this.cart.push(k.id);
+    ls("kegcart_" + this.flow, this.cart);
+    this.say(true, `✔ ${k.code} dodan${k.beer ? ` (${k.beer})` : ""} – ukupno ${this.cart.length}.`);
+    this.renderCart();
+    if (!fromScan) this.inp.focus();
+  }
+
+  renderCart() {
+    const byId = new Map(this.db.kegs().map((k) => [k.id, k]));
+    this.cart = this.cart.filter((id) => byId.has(id));
+    const rows = this.cart.map((id) => {
+      const k = byId.get(id);
+      const ok = this.consts.workflows[this.flow].from.includes(k.status);
+      return { id, code: k.code, size: fq(k.size_l), status: k.status, beer: [k.beer, k.batch_no].filter(Boolean).join(" · "),
+        customer: k.customer || "", _tag: ok ? "" : "bad" };
+    });
+    this.cartT.setRows(rows);
+    const litres = this.cart.reduce((a, id) => a + (byId.get(id).size_l || 0), 0);
+    this.cartTitle.textContent = `Lista: ${this.cart.length} keg(ova) · ${fq(litres, 1)} L`;
+    this.confirmBtn.textContent = `✔ Potvrdi (${this.cart.length})`;
+  }
+
+  removeSel() {
+    const sel = new Set(this.cartT.selectedIds().map(Number));
+    this.cart = this.cart.filter((id) => !sel.has(id));
+    ls("kegcart_" + this.flow, this.cart);
+    this.renderCart();
+  }
+  async clearCart() {
+    if (this.cart.length && !(await confirm("Ukloniti sve kegove s liste?", "Lista"))) return;
+    this.cart = [];
+    ls("kegcart_" + this.flow, this.cart);
+    this.renderCart();
+  }
+
+  buildExtra() {
+    this.extra.innerHTML = "";
+    const user = deviceUser(this.app);
+    const base = [{ key: "date", label: "Datum", type: "date", default: today() },
+      { key: "operator", label: "Radnik", default: user, type: "combo", editable: true, options: this.db.employee_names() }];
+    let fields;
+    if (this.flow === "fill") {
+      const bs = this.app.py.call("web_kegs.fill_batches");
+      fields = [{ key: "batch_id", label: "Šarža (LOT piva)", type: "combo", required: true, options: bs.map((b) => [b.label, b.id]),
+        default: ls("kegfill_batch") }, ...base,
+      { key: "pack", label: "Upiši u HACCP evidenciju pakiranja", type: "check", default: 1 },
+      { key: "real_total", label: "Stvarna ukupna količina (L) – ako zadnji keg nije pun", type: "num", min: 0 }];
+    } else if (this.flow === "ship") {
+      const cs = this.app.py.call("web_kegs.customers");
+      fields = [{ key: "customer_id", label: "Kupac", type: "combo", required: true,
+        options: cs.map((c) => [`${c.name}${c.city ? " · " + c.city : ""}${c.kegs_held ? ` (ima ${c.kegs_held} keg.)` : ""}`, c.id]) },
+      ...base, { key: "note", label: "Napomena na otpremnici" }];
+    } else fields = [...base, { key: "note", label: "Napomena (neobavezno)" }];
+    this.form = new Form(fields, {}, 2);
+    this.extra.append(this.form.el);
+    if (this.flow === "ship") {
+      this.extra.append(h("div", { class: "row gap", style: { marginTop: "6px" } }, btn("＋ Novi kupac", async () => {
+        const id = await newCustomer(this.app);
+        if (id) { this.buildExtra(); this.form.w.customer_id.set(id); toast("Kupac spremljen."); }
+      }, "ghost")));
+    }
+  }
+
+  async confirmFlow() {
+    if (!this.cart.length) return info("Lista je prazna – skenirajte ili upišite kegove.");
+    let p;
+    try { p = this.form.get(); } catch (e) { return error(e); }
+    if (p.operator) ls("pivovara_user", p.operator);
+    if (this.flow === "fill") ls("kegfill_batch", p.batch_id);
+    const f = FLOWS.find((x) => x[0] === this.flow);
+    if (!(await confirm(`${f[2]}: ${this.cart.length} keg(ova). Potvrditi?`, f[2]))) return;
+    let res;
+    try { res = this.app.py.call("web_kegs.apply", this.flow, this.cart, p); } catch (e) { return error(e); }
+    const ids = this.cart.slice();
+    this.cart = [];
+    ls("kegcart_" + this.flow, []);
+    this.renderCart();
+    this.scanner.stop(); this.camBtn.textContent = "📷 Uključi kameru";
+    if (this.flow === "ship") {
+      const d = new Dialog("Otpremnica izrađena", { width: 480 });
+      d.body.append(h("div", { class: "msg" }, `Otpremnica ${res.delivery_no} – ${res.done} keg(ova) kod kupca.`));
+      d.bar.append(btn("Zatvori", () => d.close(), "ghost"),
+        btn("📄 PDF otpremnice", () => { d.close(); this.app.doc("web_extras.print_dn", res.delivery_id, "PDF"); }, "primary"));
+      await d.show();
+    } else if (this.flow === "fill") {
+      toast(`Napunjeno ${res.done} keg(ova).` + (res.packaged ? " Pakiranje upisano u HACCP evidenciju." : ""));
+      if (await confirm("Ispisati naljepnice za napunjene kegove?", "Naljepnice")) {
+        try { const m = await import("./production.js"); await m.printKegLabels(this.app, ids); } catch (e) { error(e); }
+      }
+    } else toast(`${f[2]}: ${res.done} keg(ova) potvrđeno.`);
+    this.close();
+  }
+}
+
+export const PAGES = { kegwork: KegWorkPage };

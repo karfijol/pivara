@@ -1341,7 +1341,7 @@ export class WarningDialog extends Dialog {
 
   dismissSel() {
     const sel = this.selected();
-    if (!sel.length) { this.err("Označite jednu ili više stavki (Ctrl/Shift za više)."); return; }
+    if (!sel.length) { this.err("Označite jednu ili više stavki (Ctrl/Shift za više; na mobitelu dodirom)."); return; }
     this.err("");
     this.db.dismiss(sel);
     this.app.toast(`Zanemareno: ${sel.length}. Vratiti ih možete tipkom „🔕 Zanemarena“.`);

@@ -4,7 +4,7 @@ import * as store from "./store.js";
 import * as auth from "./auth.js";
 import { h, btn, toast, info, error, confirm, busy, openFile, dbProxy, Dialog } from "./ui.js";
 
-export const VERSION = "web 1.2";
+export const VERSION = "web 1.4";
 
 const NAV = [
   ["dash", "🏠", "Nadzorna ploča", "stock"],

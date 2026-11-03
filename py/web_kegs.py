@@ -64,6 +64,10 @@ def find_keg(db, text):
     exact = [k for k in kegs if re.sub(r"[\s\-_./]", "", k["code"].lower()) == norm]
     if exact:
         return exact
+    mq = re.match(r"^keg[\s\-_]*0*(\d+)$", t, re.I)
+    if mq:  # oznaka s QR naljepnice (Keg-023, keg23, KEG 23) -> samo kegovi s takvim oznakama
+        n = mq.group(1)
+        return [k for k in kegs if re.match(r"^keg[\s\-_]*0*" + n + r"$", k["code"], re.I)]
     d = _digits(t)
     if d is None:
         return [k for k in kegs if norm in re.sub(r"[\s\-_./]", "", k["code"].lower())]
@@ -210,3 +214,103 @@ def recent(db, limit=30):
 
 
 _ = dt
+
+
+# ------------------------------------------------------------------ QR oznake kegova (Keg-001 … Keg-150)
+QR_RE = re.compile(r"^keg-\d{1,4}$", re.I)
+
+
+def qr_code_name(n, prefix="Keg-", digits=3):
+    return f"{prefix}{int(n):0{int(digits)}d}"
+
+
+def qr_status(db, start=1, end=150, prefix="Keg-", digits=3):
+    """Koje su oznake iz raspona već u programu, a koje nisu."""
+    codes = [qr_code_name(n, prefix, digits) for n in range(int(start), int(end) + 1)]
+    have = {k["code"].lower(): k for k in db.kegs()}
+    used = [c for c in codes if c.lower() in have]
+    free = [c for c in codes if c.lower() not in have]
+    other = [k for k in db.kegs() if not QR_RE.match(k["code"])]
+    return {"used": used, "free": free, "other": [{"id": k["id"], "code": k["code"], "size_l": k["size_l"],
+                                                    "status": k["status"]} for k in other]}
+
+
+def qr_add_kegs(db, codes, size_l=30, keg_type=None, status="Čist"):
+    """Dodaje kegove s oznakama s QR naljepnica (postojeće oznake preskače)."""
+    have = {k["code"].lower() for k in db.kegs()}
+    added = []
+    for c in codes:
+        if c.lower() in have:
+            continue
+        db.save_keg({"code": c, "size_l": size_l, "keg_type": keg_type, "status": status})
+        added.append(c)
+    return added
+
+
+def assign_code(db, keg_id, code):
+    """Postojećem kegu dodijeli oznaku s QR naljepnice (povijest kega ostaje)."""
+    code = (code or "").strip()
+    m = re.search(r"KEG:([^;]+)", code, re.I)
+    if m:
+        code = m.group(1).strip()
+    if not code:
+        raise ValueError("Oznaka je prazna.")
+    other = db.one("SELECT id FROM kegs WHERE lower(code)=lower(?) AND id<>?", (code, keg_id))
+    if other:
+        raise ValueError(f"Oznaku {code} već ima drugi keg.")
+    old = db.val("SELECT code FROM kegs WHERE id=?", (keg_id,))
+    db.x("UPDATE kegs SET code=? WHERE id=?", (code, keg_id))
+    db.x("INSERT INTO keg_log(keg_id,ts,action,status,note) VALUES(?,?,?,(SELECT status FROM kegs WHERE id=?),?)",
+         (keg_id, dt.datetime.now().strftime("%Y-%m-%d %H:%M"), "Nova oznaka", keg_id, f"{old} → {code} (QR naljepnica)"))
+    return code
+
+
+def qr_sheet(db, codes, app=None, size_mm=30, with_beer=False):
+    """A4 list QR naljepnica: 5 × 7 po stranici (40 × 40 mm), QR sadrži samo oznaku (npr. 'Keg-023')."""
+    import os
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas as rl
+    from reportlab.graphics.barcode import qr
+    from reportlab.graphics.shapes import Drawing
+    from reportlab.graphics import renderPDF
+    from docgen import _register_fonts
+    body, bold, _ = _register_fonts()
+    os.makedirs("/out/naljepnice", exist_ok=True)
+    name = f"QR_kegovi_{codes[0]}_{codes[-1]}.pdf" if codes else "QR_kegovi.pdf"
+    path = os.path.join("/out/naljepnice", name)
+    c = rl.Canvas(path, pagesize=A4)
+    c.setTitle("QR oznake kegova")
+    W, H = A4
+    cell = 40 * mm
+    cols, rows = 5, 7
+    x0 = (W - cols * cell) / 2
+    y0 = H - (H - rows * cell) / 2
+    s = size_mm * mm
+    brand = db.get_setting("label_brand") or ""
+    for i, code in enumerate(codes):
+        if i and i % (cols * rows) == 0:
+            c.showPage()
+        j = i % (cols * rows)
+        x = x0 + (j % cols) * cell
+        y = y0 - (j // cols + 1) * cell
+        c.setStrokeColorRGB(0.8, 0.8, 0.8)
+        c.setLineWidth(0.3)
+        c.setDash(1, 2)
+        c.rect(x, y, cell, cell)
+        c.setDash()
+        q = qr.QrCodeWidget(code)
+        q.barLevel = "M"
+        bx = q.getBounds()
+        dwg = Drawing(s, s, transform=[s / (bx[2] - bx[0]), 0, 0, s / (bx[3] - bx[1]), 0, 0])
+        dwg.add(q)
+        renderPDF.draw(dwg, c, x + (cell - s) / 2, y + 7 * mm)
+        c.setFillColorRGB(0, 0, 0)
+        c.setFont(bold, 11)
+        c.drawCentredString(x + cell / 2, y + 3.2 * mm, code)
+        if brand:
+            c.setFont(body, 5.5)
+            c.setFillColorRGB(0.4, 0.4, 0.4)
+            c.drawCentredString(x + cell / 2, y + cell - 3 * mm, brand)
+    c.save()
+    return path

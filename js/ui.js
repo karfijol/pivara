@@ -234,7 +234,18 @@ export class Table {
     const tr = e.target.closest("tr");
     if (!tr || tr.dataset.id === undefined) return;
     const id = tr.dataset.id;
-    if (this.multi && (e.ctrlKey || e.metaKey)) { this.sel.has(id) ? this.sel.delete(id) : this.sel.add(id); this._last = id; }
+    // mobitel: drugi dodir istog retka = otvori (kao dvoklik na računalu)
+    if (this.onDouble && window.matchMedia("(pointer: coarse)").matches) {
+      const now = Date.now();
+      if (this._tap && this._tap.id === id && now - this._tap.t < 600) {
+        this._tap = null; this.sel = new Set([id]); this._paintSel(); this.onDouble(this.selectedId()); return;
+      }
+      this._tap = { id, t: now };
+    }
+    if (this.multi && window.matchMedia("(pointer: coarse)").matches && !e.shiftKey) {
+      // mobitel: dodir označava / odznačava (višestruki odabir bez tipke Ctrl)
+      this.sel.has(id) ? this.sel.delete(id) : this.sel.add(id); this._last = id;
+    } else if (this.multi && (e.ctrlKey || e.metaKey)) { this.sel.has(id) ? this.sel.delete(id) : this.sel.add(id); this._last = id; }
     else if (this.multi && e.shiftKey && this._last !== undefined) {
       const ids = this.view.map((r) => String(r.id));
       const a = ids.indexOf(this._last), b = ids.indexOf(id);
@@ -274,7 +285,10 @@ export class Table {
       const tr = h("tr", { "data-id": String(r.id), class: (r._tag || "") + (this.sel.has(String(r.id)) ? " sel" : "") });
       for (const c of this.columns) {
         const v = r[c[0]];
-        tr.append(h("td", { class: "al-" + (c[3] || "w"), title: v === undefined || v === null ? "" : String(v) }, v ?? ""));
+        const empty = v === undefined || v === null || v === "";
+        const ttl = !empty && !tr.querySelector("td.ttl");
+        tr.append(h("td", { class: "al-" + (c[3] || "w") + (empty ? " empty" : "") + (ttl ? " ttl" : ""), title: empty ? "" : String(v),
+          "data-label": c[1] || "" }, v ?? ""));
       }
       frag.append(tr);
     }

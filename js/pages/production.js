@@ -132,7 +132,7 @@ async function labelsMissingOk(app, missing, title) {
 
 export async function printKegLabels(app, ids) {
   const db = app.db;
-  if (!ids || !ids.length) { await info("Označite kegove (Ctrl/Shift za više).", "Naljepnice"); return null; }
+  if (!ids || !ids.length) { await info("Označite kegove (Ctrl/Shift za više; na mobitelu dodirom).", "Naljepnice"); return null; }
   const fmts = K(app).FLAG_FORMATS;
   const g = (k) => db.get_setting(k);
   const cur = g("label_format") || fmts[0];
@@ -468,7 +468,7 @@ class BatchesPage extends Page {
 // ================================================================== Kegovi
 class KegsPage extends Page {
   static title = "Skladište kegova";
-  static subtitle = "Ciklus: Čist → Pun (šarža) → Kod kupca → Prljav → Čist  ·  moguć višestruki odabir (Ctrl/Shift)";
+  static subtitle = "Ciklus: Čist → Pun (šarža) → Kod kupca → Prljav → Čist  ·  moguć višestruki odabir (Ctrl/Shift, na mobitelu dodirom)";
 
   build() {
     this.tbtn("＋ Novi kegovi", () => this.new());
@@ -477,7 +477,7 @@ class KegsPage extends Page {
     }
     this.tbtn("✎ Uredi", () => this.edit(), "ghost");
     this.tbtn("🗑 Obriši", () => this.delete(), "ghost");
-    const opts = ["Više…", "🏷 Naljepnice (PDF)", "🏷 Naljepnice po vrsti piva", "Na servis", "Otpiši", "Povijest kega", "Izvoz CSV"];
+    const opts = ["Više…", "🔳 QR oznake kegova", "🏷 Naljepnice (PDF)", "🏷 Naljepnice po vrsti piva", "Na servis", "Otpiši", "Povijest kega", "Izvoz CSV"];
     this.more = h("select", { class: "more", style: { width: "auto" } }, opts.map((o) => h("option", { value: o }, o)));
     this.more.addEventListener("change", () => { const v = this.more.value; this.more.value = "Više…"; this._more(v); });
     this.tb.insertBefore(this.more, this.tbRight);
@@ -503,6 +503,7 @@ class KegsPage extends Page {
       else if (v === "Povijest kega") this.history();
       else if (v === "Izvoz CSV") this.table.exportCsv("kegovi");
       else if (v === "🏷 Naljepnice po vrsti piva") await printBeerLabels(this.app);
+      else if (v === "🔳 QR oznake kegova") { const m = await import("./kegwork.js"); await m.qrManager(this.app); this.refresh(); }
       else if (v.startsWith("🏷")) await this.labels();
     } catch (e) { this.err(e); }
   }
@@ -548,7 +549,7 @@ class KegsPage extends Page {
 
   async edit() {
     const ids = this.table.selectedIds();
-    if (!ids.length) return info("Označite jedan ili više kegova (Ctrl/Shift za više).", "Uredi");
+    if (!ids.length) return info("Označite jedan ili više kegova (Ctrl/Shift za više; na mobitelu dodirom).", "Uredi");
     const statuses = ["— bez promjene —"].concat(K(this.app).KEG_STATUS);
     if (ids.length === 1) {
       const k = this.db.one("SELECT * FROM kegs WHERE id=?", [ids[0]]);
@@ -806,7 +807,7 @@ class DeliveryDialog extends Dialog {
     const lab = (t, el) => h("div", { class: "fcell", style: { flex: "1 1 200px" } }, h("label", { class: "flab" }, t), el);
     this.body.append(h("div", { class: "row", style: { gap: "10px", alignItems: "flex-end" } },
       lab("Kupac", this.cust), lab("Datum", this.date), lab("Napomena", this.note)));
-    this.body.append(h("div", { class: "sec", style: { marginTop: "10px" } }, "1. Puni kegovi (označite one koji idu kupcu – Ctrl/Shift za više)"));
+    this.body.append(h("div", { class: "sec", style: { marginTop: "10px" } }, "1. Puni kegovi (označite one koji idu kupcu – Ctrl/Shift za više; na mobitelu dodirom)"));
     this.kegs = T([["code", "Keg", 100, "w"], ["size", "L", 50, "e"], ["lot", "LOT piva", 130, "w"],
       ["beer", "Pivo", 200, "w"], ["filled", "Punjeno", 100, "center"]], { multi: true, height: 7 });
     this.kegs.setRows(this.db.kegs().filter((k) => k.status === "Pun").map((k) => ({ id: k.id, code: k.code, size: fq(k.size_l),

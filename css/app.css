@@ -271,3 +271,4 @@ table.grid tr.empty td { color: var(--muted); text-align: center; padding: 18px;
 
 .qr-box { background: #fff; border-radius: 10px; padding: 6px; text-align: center; }
 .qr-code { color: #111; font-weight: 700; font-size: 13px; }
+.install { display: block; color: #E3A12B; text-decoration: none; margin-bottom: 8px; font-weight: 600; }

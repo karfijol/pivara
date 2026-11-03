@@ -4,7 +4,7 @@ import * as store from "./store.js";
 import * as auth from "./auth.js";
 import { h, btn, toast, info, error, confirm, busy, openFile, dbProxy, Dialog } from "./ui.js";
 
-export const VERSION = "web 1.4";
+export const VERSION = "web 1.8";
 
 const NAV = [
   ["dash", "🏠", "Nadzorna ploča", "stock"],
@@ -26,6 +26,7 @@ const NAV = [
   ["po", "📄", "Narudžbenice", "stock"],
   ["suppliers", "🚚", "Dobavljači", "stock"],
   [null, "", "IZVJEŠĆA"],
+  ["costs", "🧾", "Troškovi · knjigovođa", "costs"],
   ["excise", "💶", "Trošarine", "production"],
   ["recall", "🔎", "Sljedivost i povlačenje", "production"],
   [null, "", ""],
@@ -52,7 +53,7 @@ class App {
       progress("Python se ne može pokrenuti u ovom pregledniku: " + e.message + ". Koristite noviji Chrome, Edge ili Firefox.");
       throw e;
     }
-    const mods = await Promise.all(["stock", "production", "haccp", "settings", "kegwork"].map(async (m) => {
+    const mods = await Promise.all(["stock", "production", "haccp", "settings", "kegwork", "costs"].map(async (m) => {
       try { return [m, await import(`./pages/${m}.js`)]; } catch (e) { console.error(m, e); return [m, null]; }
     }));
     for (const [m, mod] of mods) if (mod && mod.PAGES) Object.assign(this.classes, mod.PAGES);
@@ -184,7 +185,11 @@ class App {
     this.statusEl = h("div", { class: "sync-status", title: "" });
     const who = this.user ? h("div", { class: "who" }, h("span", {}, "👤 " + this.user.name),
       h("a", { href: "#", onclick: (e) => { e.preventDefault(); this.logout(); } }, "Odjava")) : null;
-    this.side.append(brand, navList, h("div", { class: "side-foot" }, who, this.statusEl, h("div", { class: "ver" }, VERSION)));
+    // tipka je uvijek vidljiva (osim kad je program već otvoren kao aplikacija); bez automatske ponude preglednika prikaže upute
+    const standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+    const inst = h("a", { href: "#", class: "install" + (standalone ? " hidden" : ""), onclick: (e) => { e.preventDefault(); this.closeMenu(); this.install(); } },
+      "📲 Instaliraj kao aplikaciju");
+    this.side.append(brand, navList, h("div", { class: "side-foot" }, inst, who, this.statusEl, h("div", { class: "ver" }, VERSION)));
     const burger = h("button", { class: "burger", type: "button", onclick: () => document.body.classList.toggle("menu-open") }, "☰");
     const scrim = h("div", { class: "scrim", onclick: () => this.closeMenu() });
     root.append(burger, this.side, scrim, this.main);
@@ -329,6 +334,17 @@ class App {
     setTimeout(() => un.focus(), 50);
   }
 
+  async install() {
+    const p = window.__installPrompt;
+    if (p) {
+      p.prompt();
+      try { await p.userChoice; } catch { /* */ }
+      window.__installPrompt = null;
+      return;
+    }
+    info(installHelp(), "Ikona na početnom zaslonu");
+  }
+
   async logout() {
     if (this.sync && (this.sync.dirty || this.sync.saving)) await busy("Spremam…", () => this.sync.save());
     store.setConfig(null);
@@ -417,6 +433,13 @@ class App {
     });
     location.reload();
   }
+}
+
+export function installHelp() {
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  if (window.matchMedia("(display-mode: standalone)").matches) return "Program je već otvoren kao aplikacija s početnog zaslona.";
+  if (ios) return "iPhone / iPad (Safari):\n1. Tipka Dijeli (kvadrat sa strelicom) na dnu zaslona\n2. „Dodaj na početni zaslon”\n3. „Dodaj” – na zaslonu se pojavi ikona Pivovara.";
+  return "Android (Chrome):\n1. Izbornik ⋮ gore desno\n2. „Instaliraj aplikaciju” ili „Dodaj na početni zaslon”\n3. Potvrdite – na zaslonu se pojavi ikona Pivovara.\n\nRačunalo (Chrome / Edge): ikona za instalaciju desno u traci adrese.";
 }
 
 const app = new App();

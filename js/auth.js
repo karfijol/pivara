@@ -44,20 +44,31 @@ export function normUser(u) { return String(u || "").trim().toLowerCase(); }
 // Repozitorij stranice iz adrese: https://<vlasnik>.github.io/<repozitorij>/
 export function siteRepo() {
   const m = location.hostname.match(/^([^.]+)\.github\.io$/i);
-  if (!m) return null;
+  if (!m) {
+    // vlastita domena (npr. skladiste.pivara.hr): repozitorij stranice zapamćen iz users.json
+    try { const c = JSON.parse(localStorage.getItem("pivovara_site") || "null"); if (c && c.owner && c.repo) return c; } catch { /* */ }
+    return null;
+  }
   const first = location.pathname.split("/").filter(Boolean)[0];
   return { owner: m[1], repo: first && !first.includes(".") ? first : `${m[1]}.github.io` };
 }
 
 // users.json: najprije svježe preko GitHub API-ja (javni repozitorij), inače datoteka sa stranice
 export async function loadUsers() {
+  const u = await loadUsersRaw();
+  if (u && u.site && u.site.owner) {
+    try { localStorage.setItem("pivovara_site", JSON.stringify(u.site)); } catch { /* */ }
+  }
+  return u;
+}
+
+async function loadUsersRaw() {
   const sr = siteRepo();
   if (sr) {
     try {
       const r = await fetch(`https://api.github.com/repos/${sr.owner}/${sr.repo}/contents/users.json?t=${Date.now()}`,
         { headers: { Accept: "application/vnd.github.raw+json" }, cache: "no-store" });
       if (r.ok) return await r.json();
-      if (r.status === 404) return null;
     } catch { /* npr. ograničenje broja upita – koristi datoteku sa stranice */ }
   }
   try {

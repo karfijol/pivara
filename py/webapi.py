@@ -53,6 +53,11 @@ def open_db(path):
         web_kegs.ensure(DB_)
     except Exception:  # noqa: BLE001
         traceback.print_exc()
+    try:
+        import web_costs
+        web_costs.ensure(DB_)
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
     return True
 
 

@@ -66,6 +66,11 @@ class SettingsPage extends Page {
       try { localStorage.setItem("pivovara_user", JSON.stringify(meInp.value.trim())); } catch { /* */ }
       toast("Ime spremljeno za ovaj uređaj.");
     });
+    c.append(h("div", { class: "row gap", style: { margin: "0 0 12px" } },
+      btn("📲 Ikona na početnom zaslonu", async () => {
+        const m = await import("../main.js");
+        if (window.__installPrompt) this.app.install(); else info(m.installHelp(), "Ikona na početnom zaslonu");
+      }, "ghost")));
     c.append(h("label", { class: "flab" }, "Moje ime na ovom uređaju (upisuje se kao radnik kod rada s kegovima)"), meInp,
       h("div", { style: { height: "12px" } }));
     this.form = new Form([
@@ -210,6 +215,9 @@ class SettingsPage extends Page {
 
   async saveUsersFile(users, msg) {
     const cfg = store.getConfig();
+    // adresa stranice je možda promijenjena (preimenovan repozitorij) -> spremi u trenutni repozitorij stranice
+    const here = auth.siteRepo();
+    if (here) users.site = here;
     await busy("Spremam korisnike na GitHub…", () => auth.saveUsers(users, users.site, cfg.adminToken));
     this.app.users = users;
     toast(msg);
@@ -277,10 +285,12 @@ class SettingsPage extends Page {
     try {
       if (d.worker) await store.testRepo({ owner: cfg.owner, repo: cfg.repo, token: d.worker.trim() });
       if (d.admin) {
-        const t = await store.testRepo({ owner: this.app.users.site.owner, repo: this.app.users.site.repo, token: d.admin.trim() });
+        const sr = auth.siteRepo() || this.app.users.site;
+        const t = await store.testRepo({ owner: sr.owner, repo: sr.repo, token: d.admin.trim() });
         if (!t.push) throw new Error("Token administratora nema pravo pisanja u repozitorij stranice.");
       }
       const users = structuredClone(this.app.users);
+      if (auth.siteRepo()) users.site = auth.siteRepo();
       await auth.replaceTokens(users, cfg.keys, { workerToken: d.worker && d.worker.trim(), adminToken: d.admin && d.admin.trim() });
       const adminTok = d.admin ? d.admin.trim() : cfg.adminToken;
       await busy("Spremam…", () => auth.saveUsers(users, users.site, adminTok));

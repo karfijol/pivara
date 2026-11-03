@@ -4,7 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pivovara · Skladište</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8D%BA%3C/text%3E%3C/svg%3E">
+  <link rel="icon" type="image/png" href="icons/favicon-32.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="theme-color" content="#1E2128">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Pivovara">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
@@ -20,5 +27,11 @@
   <div id="app"></div>
   <noscript>Za rad programa uključite JavaScript.</noscript>
   <script type="module" src="js/main.js"></script>
+  <script>
+    // instalacija na početni zaslon (Android / Chrome / Edge) – tipka se pojavi u izborniku
+    window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); window.__installPrompt = e;
+      document.dispatchEvent(new Event("pivovara-installable")); });
+    if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) navigator.serviceWorker.register("sw.js").catch(() => {});
+  </script>
 </body>
 </html>

@@ -25,6 +25,19 @@
     "iv": "XOaPO611O73fe01c",
     "ct": "jriW2IwTMYe409JL3Iwt9ASOZJybYp0xJN60iJ3WpIBJ5Url5n3riZehei70Ye9RnYhM/wLsY4Ooyxyn4yRCwsz5oOaNVvjGIHRHlo6phMwDJM9gb33VNM8rdPNAvtduRBkEbS5kD//vACy+OfMCAnKPD5tuh83It9zqWeyv"
    }
+  },
+  {
+   "username": "ilic.os",
+   "created": "2026-11-03T12:39:11.863Z",
+   "name": "Igor Ilić",
+   "role": "admin",
+   "salt": "ZaMK9Hs9tJzLnLL3h3Jv5A==",
+   "iter": 600000,
+   "wrap": {
+    "iv": "PbRKGr5yDK/L6un5",
+    "ct": "j0k96TutdoTs8eJ72si2qjNrny4tNYmhsF+M1mBidYlQC/oiEUbVA90GLzXjS8xiR1MLPOhRjDgoCR6166RG9TzireMjZJJa0jWUEgHBeRuiFHGhjAED45OKaMtTDW4qZ8sJyXvnz9H/ec0Z7wW59CXDTAT1pSwicW5iwG/U"
+   },
+   "updated": "2026-11-03T12:39:12.166Z"
   }
  ]
 }

@@ -1,0 +1,30 @@
+{
+ "version": 1,
+ "site": {
+  "owner": "karfijol",
+  "repo": "pivara"
+ },
+ "created": "2026-11-03T12:32:59.899Z",
+ "vault": {
+  "iv": "odVU6XH93W+QibbL",
+  "ct": "mlbwcivBjGheXICxC1F/bj/lKMzjeQAF9uHXLEJaNgc6MSveshf6XaQ6IbqpeTO0HafKiPjohfbRwsu6+6x52ZUBN4Ht94PPRg3136+tuvBAu++PFaoJdTemj0AZn8LPzvz2QtPIkCM4LFPy3j9rNFnUJnVfW0j1CUvEerb7jKFOVwBpRfPSmxSqcKdeknwRogghBWCpCKDJZF7+RVpqi/mNNrUq6Q=="
+ },
+ "adminVault": {
+  "iv": "7A6Rv28iRNeiX8SN",
+  "ct": "FUfHKszYgjx+NxlRek+w12WtvGrmlf6oNdemj0//Ln/BH5oqUuFuT4BolzKOatNlR/Z8DBcPsWD8myH6bizGpFBPsvD412cbWiCw3DctvadKvTlCOw7etDY2fKXgu57AA3SLgek/oLXpiVJgDeC2TWNKHSQ84fCgsA=="
+ },
+ "users": [
+  {
+   "username": "karfijol",
+   "name": "Ivan Barić",
+   "role": "admin",
+   "created": "2026-11-03T12:32:59.904Z",
+   "salt": "FC1DRWu6qSgEwTKCYTeu5Q==",
+   "iter": 600000,
+   "wrap": {
+    "iv": "XOaPO611O73fe01c",
+    "ct": "jriW2IwTMYe409JL3Iwt9ASOZJybYp0xJN60iJ3WpIBJ5Url5n3riZehei70Ye9RnYhM/wLsY4Ooyxyn4yRCwsz5oOaNVvjGIHRHlo6phMwDJM9gb33VNM8rdPNAvtduRBkEbS5kD//vACy+OfMCAnKPD5tuh83It9zqWeyv"
+   }
+  }
+ ]
+}

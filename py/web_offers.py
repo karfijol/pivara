@@ -177,7 +177,57 @@ def new_offer_defaults(db):
             "payment_due": (now.date() + dt.timedelta(days=days)).isoformat(),
             "payment_desc": db.get_setting("offer_payment_desc"),
             "payment_method": db.get_setting("offer_payment_method") or PAYMENT_METHODS[0],
-            "operator": db.get_setting("default_operator"), "lines": []}
+            "operator": db.get_setting("offer_last_operator") or db.get_setting("default_operator"), "lines": []}
+
+
+def operators(db):
+    """Operateri za padajući izbornik: zapamćeni operateri ponuda, zaposlenici i operateri iz izdanih ponuda."""
+    import json
+    ensure(db)
+    try:
+        saved = json.loads(db.get_setting("offer_operators") or "[]")
+    except ValueError:
+        saved = []
+    names = list(saved) + [r["operator"] for r in db.q("SELECT DISTINCT operator FROM offers WHERE operator<>''")]
+    try:
+        names += db.employee_names()
+    except Exception:  # noqa: BLE001
+        pass
+    if db.get_setting("default_operator"):
+        names.append(db.get_setting("default_operator"))
+    out, seen = [], set()
+    for n in names:
+        n = (n or "").strip()
+        if n and n.lower() not in seen:
+            seen.add(n.lower())
+            out.append(n)
+    return sorted(out, key=str.lower)
+
+
+def remember_operator(db, name):
+    import json
+    name = (name or "").strip()
+    if not name:
+        return operators(db)
+    try:
+        saved = json.loads(db.get_setting("offer_operators") or "[]")
+    except ValueError:
+        saved = []
+    if name.lower() not in {x.lower() for x in saved}:
+        saved.append(name)
+        db.set_setting("offer_operators", json.dumps(saved, ensure_ascii=False))
+    db.set_setting("offer_last_operator", name)
+    return operators(db)
+
+
+def forget_operator(db, name):
+    import json
+    try:
+        saved = json.loads(db.get_setting("offer_operators") or "[]")
+    except ValueError:
+        saved = []
+    db.set_setting("offer_operators", json.dumps([x for x in saved if x.lower() != (name or "").lower()], ensure_ascii=False))
+    return operators(db)
 
 
 def customer_info(db, customer_id):
@@ -226,6 +276,9 @@ def save_offer(db, data, lines, id=None, save_customer=False):
         d["status"] = d.get("status") or "Izrađena"
     else:
         d = {k: v for k, v in d.items() if not (k == "status" and v is None)}
+    if (d.get("operator") or "").strip():
+        d["operator"] = d["operator"].strip()
+        remember_operator(db, d["operator"])  # zapamti operatera za padajući izbornik i sljedeću ponudu
     oid = db._upsert("offers", d, id)
     with db.con:
         db.con.execute("DELETE FROM offer_lines WHERE offer_id=?", (oid,))

@@ -303,7 +303,7 @@ class BatchesPage extends Page {
   build() {
     this.tbtn("＋ Nova šarža", () => this.new());
     this.tbtn("🔥 Skuhaj planiranu", () => this.brew());
-    this.tbtn("Status / podaci", () => this.edit(), "ghost");
+    this.tbtn("✎ Uredi šaržu", () => this.edit(), "ghost");
     this.tbtn("Sljedivost (LOT-ovi)", () => this.detail(), "ghost");
     this.tbtn("📈 Mjerenja", () => this.readings(), "ghost");
     this.tbtn("Storno kuhanja", () => this.undo(), "ghost");
@@ -430,16 +430,40 @@ class BatchesPage extends Page {
     if (!id) return;
     const b = this.db.batch(id);
     const st = b.status !== "Planirano" ? K(this.app).BATCH_STATUS : ["Planirano"];
-    const d = await askForm(`Šarža ${b.batch_no}`, [
+    const emps = this.db.employee_names();
+    const brewed = b.status !== "Planirano";
+    const d = await askForm(`Šarža ${b.batch_no} – svi podaci`, [
+      { label: "Osnovno", type: "section" },
+      { key: "batch_no", label: "LOT piva", required: true },
+      { key: "recipe_id", label: "Pivo (receptura)", type: "combo", required: true, options: this.db.recipes().map((r) => [r.name, r.id]) },
       { key: "status", label: "Status", type: "combo", options: st },
-      { key: "brew_date", label: "Datum kuhanja", type: "date" },
+      { key: "brew_date", label: "Datum kuhanja", type: "date", required: true },
       { key: "volume_l", label: "Volumen (L) – stvarno skuhano", type: "num", required: true, positive: true },
       { key: "tank", label: "Fermentor / tank", type: "combo", editable: true, options: this.db.fermentors().map((f) => f.name) },
-      { key: "note", label: "Napomena", type: "multi" }], { ...b, volume_l: b.wort_l || b.volume_l });
+      { key: "brewer", label: "Kuhao", type: "combo", editable: true, options: emps },
+      { label: "Mjerenja kuhanja", type: "section" },
+      { key: "og_sg", label: "OG – početna gustoća (npr. 1,052)", type: "num", min: 0 },
+      { key: "fg_sg", label: "FG – završna gustoća (npr. 1,010)", type: "num", min: 0 },
+      { key: "abv", label: "Alkohol % vol (prazno = izračun iz OG i FG)", type: "num", min: 0 },
+      { key: "ph", label: "pH", type: "num", min: 0 },
+      { label: "Fermentacija", type: "section" },
+      { key: "ferm_start", label: "Početak fermentacije", type: "date" },
+      { key: "ferm_end", label: "Završetak fermentacije", type: "date" },
+      { key: "ferm_temp", label: "Temperatura fermentacije (°C)", type: "num" },
+      { key: "ferm_by", label: "Odgovorna osoba (fermentacija)", type: "combo", editable: true, options: emps },
+      { label: "Senzorika", type: "section" },
+      { key: "sensory_score", label: "Ocjena (1–5)", type: "num", min: 0 },
+      { key: "sensory_date", label: "Datum ocjene", type: "date" },
+      { key: "sensory_by", label: "Ocijenio", type: "combo", editable: true, options: emps },
+      { key: "sensory_note", label: "Senzorika – napomena" },
+      { key: "note", label: "Napomena", type: "multi", full: true }], { ...b, volume_l: b.wort_l || b.volume_l }, { columns: 3, width: 980 });
     if (d) {
+      for (const k of ["og_sg", "fg_sg", "abv", "ph", "ferm_temp", "sensory_score"]) if (!d[k]) d[k] = null;
+      if (!d.abv && d.og_sg && d.fg_sg && d.og_sg > d.fg_sg) d.abv = Math.round((d.og_sg - d.fg_sg) * 131.25 * 100) / 100;
       // skuhana šarža: mijenja se stvarna količina (troškovi po litri, izvještaji); utrošak sirovina ostaje isti
-      if (b.status !== "Planirano") d.wort_l = d.volume_l;
-      this.db.update_batch(id, d); this.app.refreshAll();
+      if (brewed) d.wort_l = d.volume_l;
+      try { this.db.update_batch(id, d); } catch (e) { return this.err(e); }
+      this.app.refreshAll();
     }
   }
 

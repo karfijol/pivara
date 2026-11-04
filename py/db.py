@@ -512,7 +512,24 @@ class DB(HaccpMixin, ExtrasMixin):
         self.x("DELETE FROM batches WHERE id=?", (batch_id,))
 
     def update_batch(self, batch_id, data):
+        data = dict(data)
+        old = self.one("SELECT batch_no FROM batches WHERE id=?", (batch_id,)) or {}
+        new_no = (data.get("batch_no") or "").strip() if "batch_no" in data else None
+        if new_no is not None:
+            if not new_no:
+                raise ValueError("LOT piva ne može biti prazan.")
+            if self.val("SELECT 1 FROM batches WHERE batch_no=? AND id<>?", (new_no, batch_id)):
+                raise ValueError(f"LOT piva {new_no} već postoji.")
+            data["batch_no"] = new_no
         self._upsert("batches", data, batch_id)
+        if new_no and old.get("batch_no") and new_no != old["batch_no"]:
+            # promjena LOT-a: isti LOT u evidenciji pakiranja, CCP kontroli i trošarinama
+            for t in ("packaging", "ccp_boil"):
+                self.x(f"UPDATE {t} SET lot=? WHERE batch_id=?", (new_no, batch_id))
+            try:
+                self.x("UPDATE cips SET batch_no=? WHERE batch_id=?", (new_no, batch_id))
+            except Exception:  # noqa: BLE001
+                pass
 
     def batch_consumption(self, batch_id):
         return self.q("""SELECT c.*, i.name, i.unit, l.lot_no, l.expiry_date, s.name AS supplier_name

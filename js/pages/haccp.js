@@ -46,15 +46,19 @@ export async function exportAll(app) {
     ? [isoOf(new Date(prevEnd.getFullYear(), prevEnd.getMonth(), 1)), isoOf(prevEnd)]
     : [isoOf(first), isoOf(t)];
   const d = await askForm("Izradi sve HACCP dokumente", [
+    { key: "mode", label: "Što izraditi", type: "combo", default: "all",
+      options: [["Cijela povijest – svaki dokument sa svim zapisima", "all"], ["Razdoblje od–do", "range"], ["Zadnji unos svake evidencije", "last"]] },
     { key: "info", label: "Dokumenti se izrađuju u jednu ZIP datoteku", type: "info",
-      default: "Sve evidencije za razdoblje (PDF i/ili Word) – preuzmite ZIP i spremite ga npr. na Google Disk." },
-    { key: "d_from", label: "Od datuma", type: "date", required: true, default: dFrom },
-    { key: "d_to", label: "Do datuma", type: "date", required: true, default: dTo },
+      default: "Unutra su uvijek iste mape: HACCP / <evidencija> / <šifra i naslov dokumenta – sadržaj>. Raspakirajte ZIP "
+        + "u istu mapu (npr. na Google Disku) i potvrdite zamjenu – isti dokumenti se prepišu, novi se dodaju." },
+    { key: "d_from", label: "Od datuma (samo za razdoblje)", type: "date", default: dFrom },
+    { key: "d_to", label: "Do datuma (samo za razdoblje)", type: "date", default: dTo },
     { key: "fmt", label: "Format", type: "combo", options: ["PDF", "Word", "PDF i Word"], default: "PDF" }],
   {}, { okText: "Izradi", width: 620 });
   if (!d) return null;
   const fmt = { PDF: "PDF", Word: "WORD", "PDF i Word": "BOTH" }[d.fmt || "PDF"];
-  const path = await app.doc("web_haccp.export_all", d.d_from, d.d_to, fmt);
+  if (d.mode === "range" && !(d.d_from && d.d_to)) { await info("Za razdoblje upišite datum od i do.", "Izrada dokumenata"); return null; }
+  const path = await app.doc("web_haccp.export_all", d.d_from, d.d_to, fmt, d.mode || "all");
   if (!path) return null;
   let res = {};
   try { res = app.py.call("web_haccp.last_export") || {}; } catch (e) { console.warn(e); }

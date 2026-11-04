@@ -31,14 +31,18 @@ def period_txt(d_from, d_to):
         return f"Razdoblje: od {d2(d_from)}"
     if d_to:
         return f"Razdoblje: do {d2(d_to)}"
-    return "Razdoblje: sve"
+    return "Razdoblje: cijela povijest (svi zapisi)"
 
 
-def new_doc(db, key, logo, landscape, name):
+def new_doc(db, key, logo, landscape, name=""):
+    """Naziv datoteke = šifra i naslov dokumenta (kao u zaglavlju) + što je u njemu (razdoblje, datum zapisa…).
+    Isti dokument uvijek dobiva isti naziv, pa nova izrada prepiše staru datoteku u istoj mapi."""
     m = dict(db.doc_meta(key))
     m["vdate"] = d2(m.get("vdate")) if m.get("vdate") and "-" in str(m.get("vdate")) else (m.get("vdate") or "")
+    title = " ".join(str(m.get("title") or "").split())
+    name = " ".join(str(name or "").split())
     return Doc(m, db.get_setting("company") or db.get_setting("brewery_name"), logo, landscape,
-               f"{m['code']} {name}")
+               f"{m['code']} {title}" + (f" – {name}" if name else ""))
 
 
 def meta_line(db, doc, extra=None):
@@ -56,12 +60,19 @@ def out_dir(base, key):
 
 
 def _pname(d_from, d_to):
-    return f"{d_from or 'pocetak'}_{d_to or 'danas'}"
+    """Dio naziva datoteke za razdoblje: prazno = cijela povijest."""
+    if d_from and d_to:
+        return d2(d_from) if d_from == d_to else f"{d2(d_from)}–{d2(d_to)}"
+    if d_from:
+        return f"od {d2(d_from)}"
+    if d_to:
+        return f"do {d2(d_to)}"
+    return ""
 
 
 # ------------------------------------------------------------------ evidencije (tablice za razdoblje)
 def doc_ferm(db, d_from, d_to, logo):
-    doc = new_doc(db, "ferm", logo, True, f"Evidencija fermentacije {_pname(d_from, d_to)}")
+    doc = new_doc(db, "ferm", logo, True, _pname(d_from, d_to))
     meta_line(db, doc)
     doc.add("note", period_txt(d_from, d_to))
     rows = []
@@ -92,7 +103,7 @@ def _amount(r, cat):
 
 
 def doc_brew(db, d_from, d_to, logo):
-    doc = new_doc(db, "brew", logo, True, f"Evidencija kuhanja i utroska {_pname(d_from, d_to)}")
+    doc = new_doc(db, "brew", logo, True, _pname(d_from, d_to))
     meta_line(db, doc)
     doc.add("note", period_txt(d_from, d_to))
     head = ["LOT piva", "Datum kuhanja", "Recept / stil", "Slad", "kg", "LOT", "Hmelj", "g", "LOT", "Kvasac", "g",
@@ -124,7 +135,7 @@ def doc_brew(db, d_from, d_to, logo):
 
 
 def doc_pack(db, d_from, d_to, logo):
-    doc = new_doc(db, "pack", logo, True, f"Evidencija pakiranja {_pname(d_from, d_to)}")
+    doc = new_doc(db, "pack", logo, True, _pname(d_from, d_to))
     meta_line(db, doc)
     doc.add("note", period_txt(d_from, d_to))
     rows = []
@@ -142,7 +153,7 @@ def doc_pack(db, d_from, d_to, logo):
 
 
 def doc_ccp(db, d_from, d_to, logo):
-    doc = new_doc(db, "ccp", logo, True, f"CCP kontrola kuhanja sladovine {_pname(d_from, d_to)}")
+    doc = new_doc(db, "ccp", logo, True, _pname(d_from, d_to))
     meta_line(db, doc)
     doc.add("note", period_txt(d_from, d_to))
     rows = []
@@ -170,8 +181,8 @@ def doc_ccp(db, d_from, d_to, logo):
 
 
 def _equipment_doc(db, key, eq, kind, d_from, d_to, logo):
-    title_word = "Kontrola mlina" if key == "mill" else f"Odrzavanje {eq['name']}"
-    doc = new_doc(db, key, logo, False, f"{title_word} {_pname(d_from, d_to)}")
+    parts = ([] if key == "mill" else [eq["name"]]) + ([_pname(d_from, d_to)] if _pname(d_from, d_to) else [])
+    doc = new_doc(db, key, logo, False, " ".join(parts))
     doc.add("title", doc.meta["title"])
     meta_line(db, doc, [("Šifra zapisa", doc.meta["code"].replace("HACCP-", ""))])
     doc.add("note", period_txt(d_from, d_to))
@@ -208,7 +219,7 @@ def doc_maint(db, equipment_id, d_from, d_to, logo):
 # ------------------------------------------------------------------ zapisnici (jedan zapis = jedan dokument)
 def doc_receipt(db, rec_id, logo):
     r = db.record("receipts", rec_id)
-    doc = new_doc(db, "receipt", logo, False, f"Prijem {r.get('lot_no') or ''} {r.get('date') or ''} {r.get('material') or ''}")
+    doc = new_doc(db, "receipt", logo, False, f"{d2(r.get('date'))} {r.get('material') or ''} LOT {r.get('lot_no') or '-'} (#{rec_id})")
     doc.add("title", doc.meta["title"])
     meta_line(db, doc)
     doc.add("h", "1. Osnovni podaci")
@@ -250,7 +261,7 @@ def doc_receipt(db, rec_id, logo):
 def doc_cip(db, rec_id, logo):
     c = db.record("cips", rec_id)
     ferm = db.val("SELECT name FROM equipment WHERE id=?", (c["fermentor_id"],)) if c.get("fermentor_id") else ""
-    doc = new_doc(db, "cip", logo, False, f"CIP {c.get('date')} {ferm or ''}")
+    doc = new_doc(db, "cip", logo, False, f"{d2(c.get('date'))} {(c.get('start_time') or '').replace(':', '.')} {ferm or c.get('cip_type') or ''} (#{rec_id})")
     doc.add("title", doc.meta["title"])
     meta_line(db, doc, [("Šifra zapisa", doc.meta["code"].replace("HACCP-", ""))])
     doc.add("h", "1. IDENTIFIKACIJA")
@@ -305,7 +316,7 @@ def doc_cip(db, rec_id, logo):
 
 def doc_pest(db, rec_id, logo):
     p = db.record("pests", rec_id)
-    doc = new_doc(db, "pest", logo, False, f"Stetnici {p.get('date')}")
+    doc = new_doc(db, "pest", logo, False, f"{d2(p.get('date'))} {p.get('pest') or ''} (#{rec_id})")
     doc.add("title", doc.meta["title"])
     meta_line(db, doc, [("Šifra zapisa", doc.meta["code"].replace("HACCP-", ""))])
     doc.add("h", "1. PODACI O POJAVI")
@@ -326,7 +337,7 @@ def doc_pest(db, rec_id, logo):
 
 def doc_training(db, rec_id, logo):
     t = db.record("trainings", rec_id)
-    doc = new_doc(db, "training", logo, False, f"Edukacija {t.get('date')} {(t.get('topic') or '')[:30]}")
+    doc = new_doc(db, "training", logo, False, f"{d2(t.get('date'))} {(t.get('topic') or '')[:40]} (#{rec_id})")
     doc.add("title", f"{doc.meta['code'].replace('HACCP-', '')} – {doc.meta['title']}")
     meta_line(db, doc)
     doc.add("kv", [("Tema edukacije", t.get("topic") or ""), ("Cilj edukacije", t.get("goal") or ""),
@@ -364,36 +375,77 @@ def make(db, key, base_dir, fmt="PDF", logo=None, d_from=None, d_to=None, rec_id
     return render(doc, out_dir(base_dir, key), fmt)
 
 
-def make_all(db, target_dir, fmts=("PDF",), logo=None, d_from=None, d_to=None, progress=None):
-    """Izradi sve HACCP dokumente za razdoblje u target_dir/HACCP <od> – <do>/<evidencija>/.
+EXPORT_MODES = {"all": "Cijela povijest", "range": "Razdoblje od–do", "last": "Zadnji unos"}
+
+
+def _last_date(db, key, equipment_id=None):
+    """Datum zadnjeg unosa u evidenciji (za način 'Zadnji unos')."""
+    if key in ("brew", "ferm"):
+        return db.val("SELECT MAX(brew_date) FROM batches WHERE status<>'Planirano'")
+    if key == "pack":
+        return db.val("SELECT MAX(date) FROM packaging")
+    if key == "ccp":
+        return db.val("SELECT MAX(date) FROM ccp_boil")
+    if key == "mill":
+        m = db.mill()
+        return db.val("SELECT MAX(date) FROM eq_checks WHERE equipment_id=? AND kind='kontrola'", (m["id"],)) if m else None
+    if key == "maint":
+        return db.val("SELECT MAX(date) FROM eq_checks WHERE equipment_id=? AND kind='odrzavanje'", (equipment_id,))
+    return None
+
+
+def make_all(db, target_dir, fmts=("PDF",), logo=None, d_from=None, d_to=None, progress=None, mode=None):
+    """Svi HACCP dokumenti u stalnu strukturu mapa: target_dir/HACCP/<evidencija>/<šifra naslov – sadržaj>.
+    mode: 'all' = cijela povijest u svakom dokumentu, 'range' = razdoblje od–do, 'last' = samo zadnji unos.
+    Isti dokument uvijek ima isti naziv datoteke, pa se kod ponovne izrade prepisuje (nove se dodaju).
     Vraća (mapa, popis datoteka, popis grešaka)."""
-    label = f"HACCP {d2(d_from) or 'početak'} – {d2(d_to) or 'danas'}".replace("..", ".")
-    root = os.path.join(target_dir, label.rstrip("."))
-    jobs = []
+    mode = mode or ("range" if (d_from or d_to) else "all")
+    if mode != "range":
+        d_from = d_to = None
+    root = os.path.join(target_dir, "HACCP")
+    jobs = []  # (ključ, izrada, dodatak nazivu za 'zadnji unos')
+
+    def period(key, build_fn, eq_id=None, label=""):
+        if mode == "last":
+            last = _last_date(db, key, eq_id)
+            if last:
+                jobs.append((key, lambda: build_fn(last, last), f"{label} zadnji unos {d2(last)}".strip()))
+        else:
+            jobs.append((key, lambda: build_fn(d_from, d_to), None))
+
     for key in ("brew", "ccp", "ferm", "pack", "mill"):
-        jobs.append((key, lambda k=key: PERIOD_DOCS[k](db, d_from, d_to, logo)))
+        if key == "mill" and not db.mill():
+            continue
+        period(key, lambda a, b, k=key: PERIOD_DOCS[k](db, a, b, logo))
     for e in db.equipment():
         if e["category"] != "Mlin" and db.eq_checks(e["id"], "odrzavanje", d_from, d_to):
-            jobs.append(("maint", lambda eid=e["id"]: doc_maint(db, eid, d_from, d_to, logo)))
-    for r in db.receipts(d_from, d_to):
-        jobs.append(("receipt", lambda i=r["id"]: doc_receipt(db, i, logo)))
-    for c in db.cips(d_from, d_to):
-        jobs.append(("cip", lambda i=c["id"]: doc_cip(db, i, logo)))
-    for p in db.pests(d_from, d_to):
-        jobs.append(("pest", lambda i=p["id"]: doc_pest(db, i, logo)))
-    for t in db.trainings():
-        if (not d_from or (t["date"] or "") >= d_from) and (not d_to or (t["date"] or "") <= d_to):
-            jobs.append(("training", lambda i=t["id"]: doc_training(db, i, logo)))
+            period("maint", lambda a, b, eid=e["id"]: doc_maint(db, eid, a, b, logo), e["id"], e["name"])
+
+    def records(key, rows, build_fn):
+        rows = list(rows)
+        if mode == "last":
+            rows = sorted(rows, key=lambda r: (r.get("date") or "", r["id"]))[-1:]
+        for r in rows:
+            jobs.append((key, lambda i=r["id"]: build_fn(db, i, logo), None))
+
+    records("receipt", db.receipts(d_from, d_to), doc_receipt)
+    records("cip", db.cips(d_from, d_to), doc_cip)
+    records("pest", db.pests(d_from, d_to), doc_pest)
+    records("training", [t for t in db.trainings() if (not d_from or (t["date"] or "") >= d_from)
+                         and (not d_to or (t["date"] or "") <= d_to)], doc_training)
     files, errors = [], []
     total = len(jobs) * len(fmts)
     n = 0
-    for key, build in jobs:
+    for key, build, suffix in jobs:
         for fmt in fmts:
             n += 1
             if progress:
                 progress(n, total)
             try:
                 doc = build()
+                if suffix:
+                    m = db.doc_meta(key)
+                    doc.filename = f"{m['code']} {' '.join(str(m.get('title') or '').split())} – {suffix}"
                 files.append(render(doc, os.path.join(root, DOC_NAMES[key]), fmt))
             except Exception as e:  # pragma: no cover
                 errors.append(f"{DOC_NAMES[key]}: {e}")

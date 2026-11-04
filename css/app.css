@@ -304,3 +304,5 @@ table.grid tr.empty td { color: var(--muted); text-align: center; padding: 18px;
 .qr-box { background: #fff; border-radius: 10px; padding: 6px; text-align: center; }
 .qr-code { color: #111; font-weight: 700; font-size: 13px; }
 .install { display: block; color: #E3A12B; text-decoration: none; margin-bottom: 8px; font-weight: 600; }
+.chip { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 4px 2px 10px; font-size: 13px; }
+.chip .btn { padding: 2px 7px; min-height: 0; border: 0; }

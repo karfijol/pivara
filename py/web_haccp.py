@@ -40,7 +40,7 @@ def print_doc(db, key, fmt="PDF", d_from=None, d_to=None, rec_id=None, equipment
     return paths[0] if len(paths) == 1 else paths
 
 
-def export_all(db, d_from=None, d_to=None, fmt="PDF", app=None):
+def export_all(db, d_from=None, d_to=None, fmt="PDF", mode="all", app=None):
     """Svi HACCP dokumenti za razdoblje -> jedna ZIP datoteka (u pregledniku nema mape Google Diska)."""
     global _LAST_EXPORT
     import haccp_docs
@@ -48,9 +48,14 @@ def export_all(db, d_from=None, d_to=None, fmt="PDF", app=None):
     base = "/out/HACCP_svi"
     shutil.rmtree(base, ignore_errors=True)
     os.makedirs(base, exist_ok=True)
-    root, files, errors = haccp_docs.make_all(db, base, tuple(_fmts(fmt)), logo, d_from or None, d_to or None)
-    name = os.path.basename(root.rstrip("/")) or "HACCP"
-    zpath = os.path.join("/out", f"HACCP_{d_from or 'pocetak'}_{d_to or 'danas'}.zip")
+    mode = mode or "all"
+    if mode == "range" and not (d_from and d_to):
+        raise ValueError("Za razdoblje upišite datum od i do.")
+    root, files, errors = haccp_docs.make_all(db, base, tuple(_fmts(fmt)), logo, d_from or None, d_to or None,
+                                              mode=mode)
+    name = "HACCP"
+    tag = {"all": "cijela_povijest", "last": "zadnji_unos"}.get(mode) or f"{d_from}_{d_to}"
+    zpath = os.path.join("/out", f"HACCP_{tag}.zip")
     if os.path.exists(zpath):
         os.remove(zpath)
     with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:

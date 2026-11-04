@@ -448,7 +448,8 @@ def render_docx(doc, path):
 
 def render(doc, folder, fmt="PDF"):
     os.makedirs(folder, exist_ok=True)
-    safe = "".join(ch if ch.isalnum() or ch in "-_ ." else "_" for ch in doc.filename).strip()
+    safe = "".join(ch if ch.isalnum() or ch in "-_ .–(),#" else "_" for ch in doc.filename).strip(" .")
+    safe = safe[:150].rstrip(" .")
     ext = ".docx" if fmt.upper().startswith("W") or fmt.upper() == "DOCX" else ".pdf"
     path = os.path.join(folder, safe + ext)
     n = 2

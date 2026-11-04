@@ -133,6 +133,19 @@ class SettingsPage extends Page {
         toast("Postavke ponuda spremljene.");
       } catch (e) { this.err(e); }
     })));
+    // zapamćeni operateri ponuda (padajući izbornik u ponudi)
+    const opBox = h("div", { class: "row gap", style: { flexWrap: "wrap", marginTop: "6px" } });
+    const renderOps = () => {
+      opBox.innerHTML = "";
+      let saved = [];
+      try { saved = JSON.parse(g("offer_operators") || "[]"); } catch { /* */ }
+      if (!saved.length) opBox.append(h("span", { class: "muted" }, "Još nema zapamćenih operatera – dodaju se sami kad ih upišete u ponudu."));
+      for (const n of saved) opBox.append(h("span", { class: "chip" }, n, " ", btn("✕", () => {
+        this.app.py.call("web_offers.forget_operator", n); renderOps();
+      }, "ghost")));
+    };
+    co.append(h("div", { class: "flab", style: { marginTop: "14px" } }, "Zapamćeni operateri ponuda"), opBox);
+    renderOps();
 
     // ---------- naljepnice
     const cn = card("Naljepnice za kegove", "Obvezni podaci prema Uredbi (EU) 1169/2011. Naziv piva, alkohol, neto količina, " +
@@ -180,7 +193,7 @@ class SettingsPage extends Page {
 
     const role = this.app.user ? this.app.user.role : "admin";
     this.usersCard = card("Korisnici i prijava");
-    if (role === "admin") for (const x of [c, this.usersCard, cl, cs, cn, cd]) this.content.append(x);
+    if (role === "admin") for (const x of [c, this.usersCard, cl, cs, co, cn, cd]) this.content.append(x);
     else {
       // korisnik bez administratorskih prava vidi samo izgled i svoje podatke
       [...c.children].forEach((ch, i) => { if (i > 0 && ch === this.form.el) ch.remove(); });

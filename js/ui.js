@@ -358,6 +358,26 @@ export class Form {
           sel.value = idx >= 0 ? String(idx) : "";
           if (idx < 0) { const e0 = opts.findIndex((o) => o[0] === ""); if (e0 >= 0) sel.value = String(e0); }
           cell.append(sel);
+          if (f.addNew) { // zadnja opcija "＋ Novi…": upis novog unosa koji se odmah doda u izbornik
+            const NEW = "__new__";
+            sel.append(h("option", { value: NEW }, f.addNewLabel || "＋ Upiši novi…"));
+            let prev = sel.value;
+            sel.addEventListener("focus", () => { prev = sel.value; });
+            sel.addEventListener("change", async (e) => {
+              if (sel.value !== NEW) { prev = sel.value; return; }
+              e.stopImmediatePropagation();
+              sel.value = prev;
+              const name = await f.addNew();
+              if (!name) return;
+              let i = opts.findIndex((o) => String(o[1]).toLowerCase() === String(name).toLowerCase());
+              if (i < 0) {
+                opts.push([String(name), name]); i = opts.length - 1;
+                sel.insertBefore(h("option", { value: String(i) }, String(name)), sel.querySelector(`option[value="${NEW}"]`));
+              }
+              sel.value = String(i); prev = sel.value;
+              sel.dispatchEvent(new Event("change"));
+            });
+          }
           w = { el: sel, get: () => sel.value === "" ? null : opts[+sel.value][1],
             getLabel: () => sel.value === "" ? "" : opts[+sel.value][0],
             set: (val) => { const i = opts.findIndex((o) => o[1] === val); sel.value = i >= 0 ? String(i) : ""; } };

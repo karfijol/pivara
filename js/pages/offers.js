@@ -33,7 +33,8 @@ class OfferDialog extends Dialog {
     this.lines = (data.lines || []).map((l) => ({ ...l }));
     const custs = app.db.customers_list();
     this.custs = custs;
-    const ops = app.db.employee_names();
+    const ops = this.py.call("web_offers.operators");
+    if (data.operator && !ops.some((x) => x.toLowerCase() === String(data.operator).toLowerCase())) ops.push(data.operator);
     this.form = new Form([
       { key: "no", label: "Broj ponude (npr. 32-2026)", required: true },
       { key: "issue_date", label: "Datum izdavanja", type: "date", required: true },
@@ -50,7 +51,13 @@ class OfferDialog extends Dialog {
       { key: "delivery_place", label: "Mjesto isporuke" },
       { key: "payment_due", label: "Rok plaćanja", type: "date" },
       { key: "payment_method", label: "Način plaćanja", type: "combo", editable: true, options: this.consts.payment_methods },
-      { key: "operator", label: "Oznaka operatera", type: "combo", editable: true, options: ops },
+      { key: "operator", label: "Oznaka operatera", type: "combo", options: ops, addNewLabel: "＋ Novi operater…",
+        addNew: async () => {
+          const v = await askForm("Novi operater", [{ key: "name", label: "Ime i prezime ili oznaka operatera", required: true }], {}, { okText: "Dodaj" });
+          if (!v || !v.name) return null;
+          this.py.call("web_offers.remember_operator", v.name.trim());
+          return v.name.trim();
+        } },
       { key: "payment_desc", label: "Opis plaćanja", full: true },
       { key: "note", label: "Napomena (neobavezno)", type: "multi", full: true, height: 50 }], data, 3);
     this.saveCust = h("input", { type: "checkbox" });

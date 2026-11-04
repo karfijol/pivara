@@ -36,6 +36,18 @@ function T(columns, opts = {}) {
   t.table.style.minWidth = `${Math.round(sum * 0.6)}px`;
   return t;
 }
+// osnovna veličina kega (18 L) i količina piva u punom kegu (17 L) – Postavke
+function kegSize(p) { return parseFloat(String(p.db.get_setting("keg_size_l") || 18).replace(",", ".")) || 18; }
+function kegFill(p) { return parseFloat(String(p.db.get_setting("keg_fill_l") || 17).replace(",", ".")) || 17; }
+// polja za količinu piva po kegu kod punjenja: svaki 17 L, zadnji (i svaki drugi) može se upisati ručno
+function fillFields(p, ids, fields) {
+  const full = kegFill(p);
+  const kegs = ids.map((i) => p.db.one("SELECT id, code, size_l FROM kegs WHERE id=?", [i])).sort((a, b) => a.code.localeCompare(b.code, "hr", { numeric: true }));
+  ids.splice(0, ids.length, ...kegs.map((k) => k.id));
+  fields.push({ label: `Količina piva u kegovima (L) – svaki keg ${fq(full)} L; zadnji keg ili bilo koji drugi upišite ručno ako nije pun`, type: "section" });
+  kegs.forEach((k, n) => fields.push({ key: "l_" + k.id, label: `${k.code}${n === kegs.length - 1 && kegs.length > 1 ? " – zadnji keg" : ""}`,
+    type: "num", required: true, positive: true, max: k.size_l || undefined, default: k.size_l ? Math.min(full, k.size_l) : full }));
+}
 // dva stupca (omjer kao u desktopu), na uskom ekranu jedan ispod drugog
 function split(a, b, wa = 2, wb = 3) {
   return h("div", { class: "row", style: { gap: "12px", alignItems: "flex-start" } },
@@ -163,7 +175,7 @@ export async function printBeerLabels(app) {
   const names = recs.map((r) => r.name);
   const fmts = K(app).FLAG_FORMATS;
   const cur = db.get_setting("label_format") || fmts[0];
-  const nets = ["20 L", "30 L", "50 L", "prazno (upisati ručno)"];
+  const nets = ["17 L", "18 L", "20 L", "30 L", "prazno (upisati ručno)"];
   const d = await askForm("Naljepnice po vrsti piva (za ručni upis)", [
     { key: "info", label: "", type: "info", default: "Datum punjenja, rok, LOT i broj kega ostaju prazni – upisuju se olovkom." },
     { key: "beers", label: "Piva", type: "multicheck", options: names, per_row: 3, default: names },
@@ -308,7 +320,7 @@ class BatchesPage extends Page {
 
   refresh() {
     this.table.setRows(this.db.batches().map((b) => ({
-      id: b.id, no: b.batch_no, recipe: b.recipe || "", style: b.style || "", date: d2ui(b.brew_date), vol: fq(b.volume_l),
+      id: b.id, no: b.batch_no, recipe: b.recipe || "", style: b.style || "", date: d2ui(b.brew_date), vol: fq(b.wort_l || b.volume_l),
       tank: b.tank || "", og: sg(b.og_sg), fg: sg(b.fg_sg), abv: b.abv ? fq(b.abv, 1) : "", status: b.status,
       kegs: b.kegs_out || "", note: b.note || "",
       cost: b.status !== "Planirano" ? fq(this.db.batch_cost(b.id)[2], 2) : "",
@@ -421,9 +433,14 @@ class BatchesPage extends Page {
     const d = await askForm(`Šarža ${b.batch_no}`, [
       { key: "status", label: "Status", type: "combo", options: st },
       { key: "brew_date", label: "Datum kuhanja", type: "date" },
+      { key: "volume_l", label: "Volumen (L) – stvarno skuhano", type: "num", required: true, positive: true },
       { key: "tank", label: "Fermentor / tank", type: "combo", editable: true, options: this.db.fermentors().map((f) => f.name) },
-      { key: "note", label: "Napomena", type: "multi" }], b);
-    if (d) { this.db.update_batch(id, d); this.app.refreshAll(); }
+      { key: "note", label: "Napomena", type: "multi" }], { ...b, volume_l: b.wort_l || b.volume_l });
+    if (d) {
+      // skuhana šarža: mijenja se stvarna količina (troškovi po litri, izvještaji); utrošak sirovina ostaje isti
+      if (b.status !== "Planirano") d.wort_l = d.volume_l;
+      this.db.update_batch(id, d); this.app.refreshAll();
+    }
   }
 
   detail() {
@@ -488,7 +505,7 @@ class KegsPage extends Page {
       cards.append(h("div", { class: "kpi", style: { cursor: "default", textAlign: "center" } }, h("div", { class: "lab" }, s), this.sumL[s]));
     }
     this.table = T([
-      ["code", "Oznaka", 100, "w"], ["size", "Vol. (L)", 70, "e"], ["type", "Tip", 120, "w"],
+      ["code", "Oznaka", 100, "w"], ["size", "Vol. (L)", 70, "e"], ["fill", "Piva (L)", 70, "e"], ["type", "Tip", 120, "w"],
       ["status", "Status", 100, "w"], ["batch", "Šarža", 90, "w"], ["beer", "Pivo", 170, "w"],
       ["filled", "Punjeno", 95, "center"], ["customer", "Kupac / lokacija", 170, "w"],
       ["since", "Od datuma", 95, "center"], ["days", "Dana", 60, "e"], ["note", "Napomena", 150, "w"]],
@@ -520,7 +537,7 @@ class KegsPage extends Page {
       const dd = k.status_date ? -daysLeft(k.status_date) : "";
       const tag = { "Pun": "ok", "Kod kupca": typeof dd === "number" && dd > 45 ? "warn" : "", "Prljav": "warn",
         "Servis": "bad", "Otpisan": "muted" }[k.status] || "";
-      return { id: k.id, code: k.code, size: fq(k.size_l), type: k.keg_type || "", status: k.status, batch: k.batch_no || "",
+      return { id: k.id, code: k.code, size: fq(k.size_l), fill: k.fill_l ? fq(k.fill_l, 2) : "", type: k.keg_type || "", status: k.status, batch: k.batch_no || "",
         beer: k.beer || "", filled: d2ui(k.filled_date), customer: k.customer || "", since: d2ui(k.status_date),
         days: dd, note: k.note || "", _tag: tag };
     }));
@@ -528,10 +545,10 @@ class KegsPage extends Page {
 
   async new() {
     const d = await askForm("Novi kegovi", [
-      { key: "prefix", label: "Prefiks oznake", default: "K30-" },
+      { key: "prefix", label: "Prefiks oznake", default: "Keg-" },
       { key: "start", label: "Od broja", type: "num", default: 1, min: 0 },
       { key: "count", label: "Broj kegova", type: "num", default: 1, min: 1 },
-      { key: "size_l", label: "Volumen (L)", type: "num", default: 30, required: true, positive: true },
+      { key: "size_l", label: "Volumen (L)", type: "num", default: kegSize(this), required: true, positive: true },
       { key: "keg_type", label: "Tip (npr. Euro, KeyKeg, Slim)", default: "Euro" },
       { key: "note", label: "Napomena" }]);
     if (!d) return;
@@ -622,11 +639,16 @@ class KegsPage extends Page {
       fields.push({ key: "operator", label: "Operater", type: "combo", editable: true, options: this.db.employee_names(),
         default: this.db.get_setting("default_operator") },
       { key: "cip", label: "CIP kegova proveden prije punjenja – otvori zapisnik", type: "check", default: 1 },
-      { key: "pack", label: "Upiši u HACCP evidenciju pakiranja", type: "check", default: 1 },
-      { key: "real_total", label: "Ukupno stvarno napunjeno (L) – upišite ako zadnji keg nije pun", type: "num", min: 0 });
+      { key: "pack", label: "Upiši u HACCP evidenciju pakiranja", type: "check", default: 1 });
+      fillFields(this, ids, fields);
     }
-    const d = await askForm(`${action} – ${ids.length} keg(ov)a`, fields, {}, { okText: action });
+    if (action === "Isporuči") {
+      const bad = ids.map((i) => this.db.keg_ship_error(this.db.one("SELECT * FROM kegs WHERE id=?", [i]))).filter(Boolean);
+      if (bad.length) return this.err(bad.join("\n"));
+    }
+    const d = await askForm(`${action} – ${ids.length} keg(ov)a`, fields, {}, { okText: action, columns: action === "Napuni" ? 2 : undefined });
     if (!d) return;
+    const litres = (i) => (action === "Napuni" ? d["l_" + i] : null);
     if (action === "Napuni" && d.cip) {
       const codes = this.app.py.call("web_extras.compress_codes", ids.map((i) => this.db.one("SELECT code FROM kegs WHERE id=?", [i]).code));
       const b = this.db.batch(d.batch_id);
@@ -644,7 +666,7 @@ class KegsPage extends Page {
     const errors = []; let done = 0; const filled = [];
     for (const i of ids) {
       try {
-        this.db.keg_action(i, action, d.batch_id ?? null, d.customer ?? null, d.date, d.note);
+        this.db.keg_action(i, action, d.batch_id ?? null, d.customer ?? null, d.date, d.note, false, litres(i));
         done++; filled.push(i);
       } catch (e) { errors.push(e.message); }
     }
@@ -654,14 +676,14 @@ class KegsPage extends Page {
         const k = this.db.one("SELECT status FROM kegs WHERE id=?", [i]);
         if (k.status !== target) {
           try {
-            this.db.keg_action(i, action, d.batch_id ?? null, d.customer ?? null, d.date, d.note, true);
+            this.db.keg_action(i, action, d.batch_id ?? null, d.customer ?? null, d.date, d.note, true, litres(i));
             done++; filled.push(i);
           } catch (e) { this.err(e); }
         }
       }
     }
     if (action === "Napuni" && d.pack && filled.length) {
-      this.db.package_from_kegs(d.batch_id, filled, d.date, d.operator, d.real_total || null);
+      this.db.package_from_kegs(d.batch_id, filled, d.date, d.operator);
       const b = this.db.batch(d.batch_id);
       if (["Fermentacija", "Odležavanje"].includes(b.status)) this.db.update_batch(b.id, { status: "Pakirano" });
     }
@@ -808,11 +830,17 @@ class DeliveryDialog extends Dialog {
     this.body.append(h("div", { class: "row", style: { gap: "10px", alignItems: "flex-end" } },
       lab("Kupac", this.cust), lab("Datum", this.date), lab("Napomena", this.note)));
     this.body.append(h("div", { class: "sec", style: { marginTop: "10px" } }, "1. Puni kegovi (označite one koji idu kupcu – Ctrl/Shift za više; na mobitelu dodirom)"));
-    this.kegs = T([["code", "Keg", 100, "w"], ["size", "L", 50, "e"], ["lot", "LOT piva", 130, "w"],
+    this.kegs = T([["code", "Keg", 100, "w"], ["size", "L piva", 60, "e"], ["lot", "LOT piva", 130, "w"],
       ["beer", "Pivo", 200, "w"], ["filled", "Punjeno", 100, "center"]], { multi: true, height: 7 });
-    this.kegs.setRows(this.db.kegs().filter((k) => k.status === "Pun").map((k) => ({ id: k.id, code: k.code, size: fq(k.size_l),
+    const full = this.db.kegs().filter((k) => k.status === "Pun");
+    const partial = full.filter((k) => this.db.keg_ship_error(k));
+    this.kegs.setRows(full.filter((k) => !partial.includes(k)).map((k) => ({ id: k.id, code: k.code, size: fq(k.fill_l || k.size_l, 2),
       lot: k.batch_no || "", beer: k.beer || "", filled: d2ui(k.filled_date) })));
     this.body.append(this.kegs.el);
+    if (partial.length) {
+      this.body.append(h("div", { class: "muted", style: { fontSize: "12.5px" } },
+        `Nisu ponuđeni (manje od ${fq(kegFill(this))} L piva – ne izdaju se kupcu): ` + partial.map((k) => `${k.code} (${fq(k.fill_l, 2)} L)`).join(", ")));
+    }
     this.body.append(h("div", { class: "sec", style: { marginTop: "10px" } }, "2. Ostalo (boce, limenke) – neobavezno"));
     this.bopts = this.db.brewed_batches().map((b) => [`${b.batch_no} · ${b.recipe}`, b.id]);
     this.bsel = h("select", { style: { flex: "1 1 240px" } }, h("option", { value: "" }, ""), this.bopts.map((o, i) => h("option", { value: String(i) }, o[0])));

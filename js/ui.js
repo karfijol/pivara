@@ -407,6 +407,7 @@ export class Form {
       if (t === "num") {
         try { v = num(w.get()); } catch { throw new Error(`Polje '${f.label}' mora biti broj.`); }
         if (f.min !== undefined && f.min !== null && v < f.min) throw new Error(`Polje '${f.label}' mora biti ≥ ${f.min}.`);
+        if (f.max !== undefined && f.max !== null && v > f.max) throw new Error(`Polje '${f.label}' može biti najviše ${fq(f.max)}.`);
       } else if (t === "text" || t === "time") {
         v = (w.get() || "").trim() || null;
       } else v = w.get();

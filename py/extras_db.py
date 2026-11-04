@@ -36,7 +36,9 @@ EXTRA_SETTINGS = {"excise_rate": "5.31", "excise_reduced": "2.65", "small_brewer
                   "label_show_ingredients": "1", "label_pictograms": "1",
                   # 2.6: isporučitelj na otpremnici
                   "dn_company": "Moja pivovara d.o.o.", "dn_address": "Ulica 1, Mjesto", "dn_contact": "",
-                  "dn_iban": ""}
+                  "dn_iban": "",
+                  # 3.3: osnovna veličina kega i količina piva u kegu
+                  "keg_size_l": "18", "keg_fill_l": "17"}
 
 # alkohol prema službenoj analizi (prijava carini), 2.5 – ključne riječi u nazivu recepture
 OFFICIAL_ABV = [(("lager", "pils"), 6.04), (("ipa",), 5.59), (("pale ale",), 5.74), (("stout",), 4.24),
@@ -81,6 +83,11 @@ class ExtrasMixin:
             self.apply_official_abv(commit=False)
         if "label_color" not in cols:
             self.con.execute("ALTER TABLE recipes ADD COLUMN label_color TEXT")
+        cols = {r["name"] for r in self.q("PRAGMA table_info(kegs)")}
+        if "fill_l" not in cols:  # 3.3: količina piva u kegu; kegovi sa starom zadanom veličinom 30 L -> 18 L
+            self.con.execute("ALTER TABLE kegs ADD COLUMN fill_l REAL")
+            self.con.execute("UPDATE kegs SET size_l=18 WHERE size_l IS NULL OR size_l=30")
+            self.con.execute("UPDATE kegs SET fill_l=MIN(COALESCE(size_l,18),17) WHERE status IN ('Pun','Kod kupca')")
         for k, v in EXTRA_SETTINGS.items():
             self.con.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", (k, v))
         self.con.commit()
@@ -170,16 +177,17 @@ class ExtrasMixin:
         cust = self.one("SELECT * FROM customers WHERE id=?", (customer_id,))
         if not keg_ids and not other_lines:
             raise ValueError("Otpremnica nema stavki.")
+        kegs = [self.one("SELECT * FROM kegs WHERE id=?", (kid,)) for kid in keg_ids]
+        errs = [e for e in (self.keg_ship_error(k) for k in kegs) if e]
+        if errs:  # provjera prije izrade otpremnice: kupcu samo puni kegovi (17 L)
+            raise ValueError("\n".join(errs))
         no = self.next_dn_no()
         dep = float(self.get_setting("keg_deposit") or 0)
         nid = self.x("""INSERT INTO delivery_notes(no,date,customer_id,customer,note,deposit_per_keg,operator)
                         VALUES(?,?,?,?,?,?,?)""", (no, date, customer_id, cust["name"], note, dep, operator))
         groups = {}
-        for kid in keg_ids:
-            k = self.one("SELECT * FROM kegs WHERE id=?", (kid,))
-            if k["status"] != "Pun":
-                raise ValueError(f"Keg {k['code']} nije pun.")
-            groups.setdefault((k["batch_id"], k["size_l"]), []).append(k)
+        for k in kegs:  # na otpremnici je neto količina piva u kegu (17 L), ne volumen kega
+            groups.setdefault((k["batch_id"], k.get("fill_l") or self.keg_default_fill(k)), []).append(k)
         for (bid, size), ks in groups.items():
             b = self.batch(bid) if bid else None
             self.x("""INSERT INTO delivery_lines(note_id,batch_id,lot,beer,pack_type,qty,unit_l,keg_codes)

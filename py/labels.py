@@ -30,6 +30,8 @@ def keg_label_data(db, kid):
     if not best and k.get("filled_date"):
         best = add_months(k["filled_date"], int(db.get_setting("shelf_months") or 6))
     k["best"] = best
+    # neto količina = piva u kegu (17 L ili ručno upisano kod punjenja), ne volumen kega
+    k["net_l"] = k.get("fill_l") or db.keg_default_fill(k)
     return k
 
 
@@ -259,7 +261,7 @@ def keg_labels_pdf(db, app, keg_ids, parent=None, data=None, opts=None):
         abv = f"{k['abv']:.1f}".replace(".", ",") if k.get("abv") else "____"
         best = k.get("best")
         best_txt = f"{best[5:7]}.{best[:4]}." if best else blank
-        size = k.get("size_l")
+        size = k.get("net_l") or k.get("size_l")
         net = (f"{size:g}".replace(".", ",") + " L") if size else "____ L"
         if use_pic:  # dobrovoljni piktogrami: 18+, ne za trudnice, ne vozi
             pr = 4.1 * mm
@@ -431,7 +433,7 @@ def keg_flags_pdf(db, app, keg_ids, parent=None, single=False, data=None, opts=N
         c.setFont(body, fit(desc, body, 5.6, inner, 4.6))
         c.drawString(lx, ny + 0.6 * mm, desc)
         abv = f"{k['abv']:.1f}".replace(".", ",") if k.get("abv") else "___"
-        size = k.get("size_l")
+        size = k.get("net_l") or k.get("size_l")
         net = (f"{size:g}".replace(".", ",") + " L") if size else blank
         c.setFont(bold, fit(f"{abv} % vol.", bold, 8.5, inner))
         c.drawString(lx, y + 9.6 * mm, f"{abv} % vol.")

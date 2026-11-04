@@ -83,9 +83,9 @@ CREATE TABLE IF NOT EXISTS po_lines(
     qty_received REAL DEFAULT 0, unit_price REAL DEFAULT 0);
 
 CREATE TABLE IF NOT EXISTS kegs(
-    id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, size_l REAL DEFAULT 30, keg_type TEXT,
+    id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, size_l REAL DEFAULT 18, keg_type TEXT,
     status TEXT DEFAULT 'Čist', batch_id INTEGER REFERENCES batches(id) ON DELETE SET NULL,
-    customer TEXT, status_date TEXT, filled_date TEXT, note TEXT);
+    customer TEXT, status_date TEXT, filled_date TEXT, note TEXT, fill_l REAL);
 
 CREATE TABLE IF NOT EXISTS keg_log(
     id INTEGER PRIMARY KEY, keg_id INTEGER NOT NULL REFERENCES kegs(id) ON DELETE CASCADE,
@@ -654,7 +654,37 @@ class DB(HaccpMixin, ExtrasMixin):
                    (kid, now(), "Unos", data["status"], "Novi keg"))
         return kid
 
-    def keg_action(self, keg_id, action, batch_id=None, customer=None, date=None, note=None, force=False):
+    # osnovna veličina kega i količina piva u punom kegu (Postavke; 18 L keg, 17 L piva)
+    def keg_size_default(self):
+        try:
+            return float(str(self.get_setting("keg_size_l") or 18).replace(",", "."))
+        except ValueError:
+            return 18.0
+
+    def keg_fill_default(self):
+        try:
+            return float(str(self.get_setting("keg_fill_l") or 17).replace(",", "."))
+        except ValueError:
+            return 17.0
+
+    def keg_default_fill(self, k):
+        """Koliko piva ide u keg kod punjenja ako se ne upiše ručno (17 L, ali ne više od volumena kega)."""
+        full = self.keg_fill_default()
+        size = k.get("size_l") if isinstance(k, dict) else None
+        return min(full, size) if size else full
+
+    def keg_ship_error(self, k):
+        """Razlog zašto se keg ne smije izdati kupcu (None = smije). Izdaju se samo puni kegovi s 17 L piva."""
+        if k["status"] != "Pun":
+            return f"Keg {k['code']} nije pun (status '{k['status']}')."
+        full = self.keg_fill_default()
+        fill = k.get("fill_l")
+        if fill is not None and fill + 1e-9 < full:
+            return (f"Keg {k['code']} ima samo {hr(round(fill, 2))} L piva – kupcu se smiju izdati samo kegovi "
+                    f"s {hr(full)} L. Takav keg istočite u pivnici ili ga nadopunite.")
+        return None
+
+    def keg_action(self, keg_id, action, batch_id=None, customer=None, date=None, note=None, force=False, fill_l=None):
         k = self.one("SELECT * FROM kegs WHERE id=?", (keg_id,))
         allowed, new = KEG_ACTIONS[action]
         if k["status"] not in allowed and not force:
@@ -664,11 +694,22 @@ class DB(HaccpMixin, ExtrasMixin):
         if action == "Napuni":
             if not batch_id:
                 raise ValueError("Odaberite šaržu.")
-            upd.update(batch_id=batch_id, filled_date=date, customer=None)
+            fill = self.keg_default_fill(k) if fill_l in (None, "") else float(fill_l)
+            if fill <= 0:
+                raise ValueError(f"Keg {k['code']}: upišite količinu piva veću od 0 L.")
+            if k.get("size_l") and fill > k["size_l"] + 1e-9:
+                raise ValueError(f"Keg {k['code']}: {hr(fill)} L je više od volumena kega ({hr(k['size_l'])} L).")
+            upd.update(batch_id=batch_id, filled_date=date, customer=None, fill_l=round(fill, 2))
+            note = f"{hr(round(fill, 2))} L" + (f" · {note}" if note else "")
         elif action == "Isporuči":
+            err = self.keg_ship_error({**k, "status": "Pun"} if force else k)
+            if err:  # manje od 17 L piva: ne izdaje se ni uz potvrdu
+                raise ValueError(err)
             upd["customer"] = customer
+        elif action in ("Vrati", "Istočeno (pivnica)"):
+            upd["fill_l"] = None
         elif action in ("Očisti", "Otpiši", "Na servis"):
-            upd.update(batch_id=None, customer=None, filled_date=None)
+            upd.update(batch_id=None, customer=None, filled_date=None, fill_l=None)
         with self.con:
             keys = list(upd)
             self.con.execute(f"UPDATE kegs SET {','.join(k_ + '=?' for k_ in keys)} WHERE id=?",

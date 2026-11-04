@@ -98,8 +98,10 @@ class SettingsPage extends Page {
 
     // ---------- prodaja
     const cs = card("Prodaja i troškovi");
-    const k2 = ["keg_deposit", "extra_cost_l", "dn_prefix", "dn_company", "dn_address", "company_oib", "dn_contact", "dn_iban"];
+    const k2 = ["keg_size_l", "keg_fill_l", "keg_deposit", "extra_cost_l", "dn_prefix", "dn_company", "dn_address", "company_oib", "dn_contact", "dn_iban"];
     this.form2 = new Form([
+      { key: "keg_size_l", label: "Osnovna veličina kega (L)", type: "num", required: true, positive: true },
+      { key: "keg_fill_l", label: "Piva u punom kegu (L) – kupcu se izdaju samo kegovi s ovom količinom", type: "num", required: true, positive: true },
       { key: "keg_deposit", label: "Depozit po kegu (€)", type: "num", min: 0 },
       { key: "extra_cost_l", label: "Ostali troškovi po litri piva (€) – ambalaža, energija, rad", type: "num", min: 0 },
       { key: "dn_prefix", label: "Prefiks broja otpremnice" },
@@ -383,6 +385,7 @@ class SettingsPage extends Page {
       const d = this.form2.get();
       const oib = (d.company_oib || "").trim();
       if (oib && !/^\d{11}$/.test(oib)) throw new Error("OIB mora imati točno 11 znamenki.");
+      if (d.keg_fill_l > d.keg_size_l) throw new Error("Količina piva u kegu ne može biti veća od veličine kega.");
       for (const [k, v] of Object.entries(d)) this.db.set_setting(k, v ?? "");
       toast("Postavke spremljene.");
     } catch (e) { this.err(e); }

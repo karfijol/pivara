@@ -15,9 +15,9 @@ SERVICE_ITEMS = ["Vanjski izgled (udubljenja, oštećenja)", "Spear / ventil", "
 
 # radni tok -> (akcija u bazi, dopušteni statusi, novi status, naziv)
 WORKFLOWS = {
-    "tap": ("Istočeno (pivnica)", ["Pun"], "Prljav", "Istakanje"),
+    "tap": ("Istočeno (pivnica)", ["Pun"], "Prljav", "Istočeno u pivnici"),
     "wash": ("Očisti", ["Prljav", "Servis"], "Čist", "Pranje"),
-    "fill": ("Napuni", ["Čist"], "Pun", "Punjenje"),
+    "fill": ("Napuni", ["Čist"], "Pun", "Punjenje (istakanje)"),
     "ship": ("Isporuči", ["Pun"], "Kod kupca", "Otprema"),
     "return": ("Vrati", ["Kod kupca"], "Prljav", "Povrat od kupca"),
 }
@@ -36,7 +36,7 @@ def ensure(db):
 
 def consts(db):
     return {"workflows": {k: {"action": v[0], "from": v[1], "to": v[2], "name": v[3]} for k, v in WORKFLOWS.items()},
-            "service_items": SERVICE_ITEMS}
+            "service_items": SERVICE_ITEMS, "keg_size": db.keg_size_default(), "keg_fill": db.keg_fill_default()}
 
 
 # ------------------------------------------------------------------ pronalaženje kega (QR ili ručni upis)
@@ -93,7 +93,7 @@ def overview(db):
             key = (k.get("beer") or "?", k.get("batch_no") or "")
             s = stock.setdefault(key, {"beer": key[0], "lot": key[1], "kegs": 0, "litres": 0.0, "oldest": None})
             s["kegs"] += 1
-            s["litres"] += k["size_l"] or 0
+            s["litres"] += k.get("fill_l") or k["size_l"] or 0
             if k.get("filled_date") and (not s["oldest"] or k["filled_date"] < s["oldest"]):
                 s["oldest"] = k["filled_date"]
     out = sorted(stock.values(), key=lambda s: (s["beer"], s["lot"]))
@@ -127,11 +127,15 @@ def check(db, flow, keg_id):
         return [False, "Keg ne postoji."]
     if k["status"] not in allowed:
         return [False, f"{k['code']} je '{k['status']}' – za {name.lower()} mora biti: {', '.join(allowed)}."]
+    if flow == "ship":
+        err = db.keg_ship_error(k)
+        if err:
+            return [False, err]
     return [True, ""]
 
 
 def apply(db, flow, keg_ids, params=None):
-    """Potvrda liste. params: date, operator, note; fill: batch_id, pack (1/0), real_total; ship: customer_id."""
+    """Potvrda liste. params: date, operator, note; fill: batch_id, pack (1/0), litres {keg_id: L}; ship: customer_id."""
     p = params or {}
     action, allowed, new, name = WORKFLOWS[flow]
     date = p.get("date") or today()
@@ -150,12 +154,21 @@ def apply(db, flow, keg_ids, params=None):
         if not p.get("batch_id"):
             raise ValueError("Odaberite šaržu (LOT piva).")
     note = p.get("note") or None
+    litres = {str(k): v for k, v in (p.get("litres") or {}).items()}
+    if flow == "fill":  # provjera svih količina prije punjenja
+        for kid in keg_ids:
+            k = db.one("SELECT * FROM kegs WHERE id=?", (kid,))
+            v = litres.get(str(kid))
+            v = db.keg_default_fill(k) if v in (None, "") else float(v)
+            if v <= 0 or (k["size_l"] and v > k["size_l"] + 1e-9):
+                raise ValueError(f"{k['code']}: količina mora biti veća od 0 i najviše {k['size_l']:g} L.")
     for kid in keg_ids:
-        db.keg_action(kid, action, batch_id=p.get("batch_id") if flow == "fill" else None, date=date, note=note)
+        db.keg_action(kid, action, batch_id=p.get("batch_id") if flow == "fill" else None, date=date, note=note,
+                      fill_l=litres.get(str(kid)) if flow == "fill" else None)
     res = {"done": len(keg_ids)}
     if flow == "fill":
         if p.get("pack"):
-            db.package_from_kegs(p["batch_id"], keg_ids, date, p.get("operator"), p.get("real_total") or None)
+            db.package_from_kegs(p["batch_id"], keg_ids, date, p.get("operator"))
             res["packaged"] = True
         b = db.batch(p["batch_id"])
         if b and b["status"] in ("Fermentacija", "Odležavanje"):
@@ -235,14 +248,14 @@ def qr_status(db, start=1, end=150, prefix="Keg-", digits=3):
                                                     "status": k["status"]} for k in other]}
 
 
-def qr_add_kegs(db, codes, size_l=30, keg_type=None, status="Čist"):
+def qr_add_kegs(db, codes, size_l=None, keg_type=None, status="Čist"):
     """Dodaje kegove s oznakama s QR naljepnica (postojeće oznake preskače)."""
     have = {k["code"].lower() for k in db.kegs()}
     added = []
     for c in codes:
         if c.lower() in have:
             continue
-        db.save_keg({"code": c, "size_l": size_l, "keg_type": keg_type, "status": status})
+        db.save_keg({"code": c, "size_l": size_l or db.keg_size_default(), "keg_type": keg_type, "status": status})
         added.append(c)
     return added
 

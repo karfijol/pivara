@@ -334,22 +334,18 @@ class HaccpMixin:
         return self.save_record("packaging", data, id)
 
     def package_from_kegs(self, batch_id, keg_ids, date, operator=None, total_override=None):
+        """Jedan zapis pakiranja za punjenje: broj kegova, količina po kegu (17 L) i ukupno stvarno napunjeno
+        (zbroj količina u kegovima – zadnji keg i ručno upisane količine uračunate)."""
         kegs = [self.one("SELECT * FROM kegs WHERE id=?", (k,)) for k in keg_ids]
-        by_size = {}
-        for k in kegs:
-            by_size.setdefault(k["size_l"], []).append(k["code"])
+        if not kegs:
+            return []
+        fills = [k.get("fill_l") or k["size_l"] or 0 for k in kegs]
+        unit = max(set(fills), key=lambda v: (fills.count(v), v))
+        total = round(total_override, 2) if total_override else round(sum(fills), 2)
         shelf = int(self.get_setting("shelf_months") or 6)
-        ids = []
-        full = sum(size * len(codes) for size, codes in by_size.items())
-        groups = list(by_size.items())
-        for n, (size, codes) in enumerate(groups):
-            total = None
-            if total_override and n == len(groups) - 1:  # zadnji keg nije pun: razlika ide na zadnju grupu
-                total = round(size * len(codes) - (full - total_override), 2)
-            ids.append(self.save_packaging({"date": date, "batch_id": batch_id, "pack_type": "Keg",
-                                            "pack_lot": compress_codes(codes), "units": len(codes), "unit_l": size,
-                                            "total_l": total, "shelf_months": shelf, "operator": operator}))
-        return ids
+        return [self.save_packaging({"date": date, "batch_id": batch_id, "pack_type": "Keg",
+                                     "pack_lot": compress_codes([k["code"] for k in kegs]), "units": len(kegs),
+                                     "unit_l": unit, "total_l": total, "shelf_months": shelf, "operator": operator})]
 
     # ------------------------------------------------------------ prijem robe
     def receipts(self, d_from=None, d_to=None):

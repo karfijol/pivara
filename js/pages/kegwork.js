@@ -4,10 +4,10 @@ import { Scanner, beep } from "../scanner.js";
 import { qrSvg } from "../qr.js";
 
 const FLOWS = [
-  ["tap", "🍺", "Istakanje", "Pun → prazan (prljav)", "#E3A12B"],
+  ["tap", "🍺", "Istočeno u pivnici", "Pun → prazan (prljav)", "#E3A12B"],
   ["wash", "🧼", "Pranje", "Prljav → čist", "#4F9DDE"],
-  ["fill", "⬇", "Punjenje", "Čist → pun (LOT piva)", "#5BBF7A"],
-  ["ship", "🚚", "Otprema", "Pun → kod kupca + otpremnica", "#A57BD6"],
+  ["fill", "⬇", "Punjenje (istakanje)", "Čist → pun · 17 L po kegu", "#5BBF7A"],
+  ["ship", "🚚", "Otprema", "Pun (17 L) → kod kupca + otpremnica", "#A57BD6"],
   ["return", "↩", "Povrat od kupca", "Kod kupca → prljav", "#E0675A"],
 ];
 const STATUS_COLORS = { "Pun": "#E3A12B", "Prljav": "#B9864A", "Čist": "#5BBF7A", "Kod kupca": "#4F9DDE",
@@ -35,7 +35,8 @@ export async function kegDetail(app, kegId) {
   const k = d.keg;
   const dlg = new Dialog(`Keg ${k.code}`, { width: 860 });
   const facts = [
-    ["Status", badge(k.status)], ["Volumen", `${fq(k.size_l)} L`], ["Tip", k.keg_type || "—"],
+    ["Status", badge(k.status)], ["Volumen", `${fq(k.size_l)} L`],
+    ["Piva u kegu", k.fill_l ? `${fq(k.fill_l, 2)} L` : "—"], ["Tip", k.keg_type || "—"],
     ["Pivo", k.beer || "—"], ["LOT", k.batch_no || "—"], ["Punjeno", d2ui(k.filled_date) || "—"],
     ["Kupac", k.customer || "—"], ["Zadnja promjena", d2ui(k.status_date) || "—"], ["Broj punjenja", String(d.fills)],
     ["Napomena", k.note || "—"]];
@@ -111,7 +112,7 @@ async function newCustomer(app) {
 }
 
 // ------------------------------------------------------------------ QR oznake (Keg-001 … Keg-150)
-const SIZES = [["20 L", 20], ["30 L", 30], ["50 L", 50]];
+const SIZES = [["18 L", 18], ["20 L", 20], ["30 L", 30], ["50 L", 50]];
 
 // Skeniran / upisan keg koji ne postoji u programu -> dodaj novi ili dodijeli oznaku postojećem
 export async function unknownKeg(app, text) {
@@ -126,7 +127,7 @@ export async function unknownKeg(app, text) {
   const f = new Form([
     { key: "what", label: "", type: "combo", full: true, default: "new",
       options: [["Novi keg s tom oznakom", "new"], ...(other.length ? [["Postojeći keg iz programa (stara oznaka)", "old"]] : [])] },
-    { key: "size_l", label: "Volumen (novi keg)", type: "combo", options: SIZES, default: 30 },
+    { key: "size_l", label: "Volumen (novi keg)", type: "combo", options: SIZES, default: 18 },
     { key: "keg_type", label: "Tip (neobavezno)" },
     ...(other.length ? [{ key: "keg_id", label: "Postojeći keg (dobit će novu oznaku, povijest ostaje)", type: "combo", full: true,
       options: other.map((k) => [`${k.code} · ${k.size_l} L · ${k.status}`, k.id]) }] : [])], {}, 2);
@@ -137,7 +138,7 @@ export async function unknownKeg(app, text) {
       if (v.what === "old") {
         if (!v.keg_id) throw new Error("Odaberite postojeći keg.");
         app.py.call("web_kegs.assign_code", v.keg_id, code);
-      } else app.py.call("web_kegs.qr_add_kegs", [code], v.size_l || 30, v.keg_type || null);
+      } else app.py.call("web_kegs.qr_add_kegs", [code], v.size_l || 18, v.keg_type || null);
       d.close(code);
     } catch (e) { d.err(e.message); }
   });
@@ -174,7 +175,7 @@ export async function qrManager(app) {
     } catch (e) { d.err(e.message); }
   };
   form.el.addEventListener("change", load);
-  const size = new Form([{ key: "size_l", label: "Volumen novih kegova", type: "combo", options: SIZES, default: 30 },
+  const size = new Form([{ key: "size_l", label: "Volumen novih kegova", type: "combo", options: SIZES, default: 18 },
     { key: "keg_type", label: "Tip (neobavezno)" }], {}, 2);
   d.body.append(h("div", { class: "muted" }, "Oznake s vaših QR naljepnica (QR kod sadrži samo oznaku, npr. „Keg-023”). " +
     "Skeniranjem naljepnice program pronalazi keg u Radu s kegovima."), form.el, stat,
@@ -183,7 +184,7 @@ export async function qrManager(app) {
       if (!st || !st.free.length) return info("Sve oznake iz raspona već su u programu.");
       const sv = size.get();
       if (!(await confirm(`Dodati ${st.free.length} novih kegova (${st.free[0]} … ${st.free.slice(-1)[0]}), ${sv.size_l} L, status Čist?`, "Novi kegovi"))) return;
-      const added = py.call("web_kegs.qr_add_kegs", st.free, sv.size_l || 30, sv.keg_type || null);
+      const added = py.call("web_kegs.qr_add_kegs", st.free, sv.size_l || 18, sv.keg_type || null);
       toast(`Dodano ${added.length} kegova.`); load();
     }))),
   h("div", { class: "card" }, h("h3", {}, "2. Postojeći kegovi sa starim oznakama"),
@@ -244,13 +245,17 @@ class KegWorkPage extends Page {
     { onDouble: (id) => this.detail(id), height: 12 });
     this.recentT = new Table([["ts", "Vrijeme", 120, "w"], ["code", "Keg", 80, "w"], ["action", "Radnja", 150, "w"],
       ["status", "Novi status", 90, "w"], ["info", "LOT / kupac", 180, "w"]], { height: 8 });
+    // zadnje radnje: na dnu stranice, zatvoreno dok se ne otvori
+    this.recentBox = h("details", { class: "card kw-recent" },
+      h("summary", {}, h("span", { class: "kw-recent-t" }, "Zadnje radnje"), this.recentN = h("span", { class: "muted" }, ""),
+        h("span", { class: "kw-recent-btn" })),
+      this.recentT.el);
     this.home.append(this.tiles, this.counts,
-      h("div", { class: "grid2" },
-        h("div", { class: "card" }, h("h3", {}, "Zaliha piva u punim kegovima"), this.stockSum = h("div", { class: "muted" }), this.stockT.el),
-        h("div", { class: "card" }, h("h3", {}, "Zadnje radnje"), this.recentT.el)),
+      h("div", { class: "card" }, h("h3", {}, "Zaliha piva u punim kegovima"), this.stockSum = h("div", { class: "muted" }), this.stockT.el),
       h("div", { class: "card" }, h("h3", {}, "Kegovi po statusu"), h("div", { style: { margin: "4px 0 8px" } }, this.seg),
         h("div", { class: "muted", style: { fontSize: "12px", marginBottom: "6px" } }, "Dvoklik (ili dvostruki dodir) na keg prikazuje njegovu povijest."),
-        this.listT.el));
+        this.listT.el),
+      this.recentBox);
     this.buildWork();
   }
 
@@ -269,7 +274,9 @@ class KegWorkPage extends Page {
     this.stockSum.textContent = o.stock.length ? `Ukupno ${fq(o.total_litres, 1)} L u ${c["Pun"]} kegova` : "Nema punih kegova.";
     this.kegs = this.db.kegs();
     this.renderList();
-    this.recentT.setRows(this.app.py.call("web_kegs.recent", 25).map((g) => ({ id: g.id, ts: d2ui(g.ts.slice(0, 10)) + g.ts.slice(10),
+    const rec = this.app.py.call("web_kegs.recent", 25);
+    this.recentN.textContent = rec.length ? ` · ${rec.length}` : "";
+    this.recentT.setRows(rec.map((g) => ({ id: g.id, ts: d2ui(g.ts.slice(0, 10)) + g.ts.slice(10),
       code: g.code, action: g.action, status: g.status, info: [g.batch_no, g.customer].filter(Boolean).join(" · ") })));
     for (const el of this.tiles.querySelectorAll(".tile-cart")) {
       const n = (ls("kegcart_" + el.dataset.flow) || []).length;
@@ -350,6 +357,7 @@ class KegWorkPage extends Page {
     this.wTitle.textContent = `${f[1]} ${f[2]}`;
     this.wHint.textContent = `Dodajte kegove na listu (status mora biti: ${wf.from.join(", ")}). Nakon potvrde postaju: ${wf.to}.`;
     this.cart = ls("kegcart_" + flow) || [];
+    this.fillL = ls("kegfill_l") || {};
     this.buildExtra();
     this.home.classList.add("hidden");
     this.work.classList.remove("hidden");
@@ -411,16 +419,51 @@ class KegWorkPage extends Page {
   renderCart() {
     const byId = new Map(this.db.kegs().map((k) => [k.id, k]));
     this.cart = this.cart.filter((id) => byId.has(id));
+    const fill = this.flow === "fill";
+    const lit = (k) => fill ? this.litresOf(k) : (k.fill_l || (k.status === "Pun" || k.status === "Kod kupca" ? k.size_l : 0) || 0);
     const rows = this.cart.map((id) => {
       const k = byId.get(id);
       const ok = this.consts.workflows[this.flow].from.includes(k.status);
-      return { id, code: k.code, size: fq(k.size_l), status: k.status, beer: [k.beer, k.batch_no].filter(Boolean).join(" · "),
+      return { id, code: k.code, size: fq(lit(k), 2) || fq(k.size_l), status: k.status, beer: [k.beer, k.batch_no].filter(Boolean).join(" · "),
         customer: k.customer || "", _tag: ok ? "" : "bad" };
     });
     this.cartT.setRows(rows);
-    const litres = this.cart.reduce((a, id) => a + (byId.get(id).size_l || 0), 0);
+    const litres = this.cart.reduce((a, id) => a + lit(byId.get(id)), 0);
     this.cartTitle.textContent = `Lista: ${this.cart.length} keg(ova) · ${fq(litres, 1)} L`;
     this.confirmBtn.textContent = `✔ Potvrdi (${this.cart.length})`;
+    if (fill) this.renderFill(byId);
+  }
+
+  // punjenje: svaki keg 17 L; zadnji keg (i bilo koji drugi) može se upisati ručno
+  defaultFill(k) { const f = this.consts.keg_fill || 17; return k && k.size_l ? Math.min(f, k.size_l) : f; }
+  litresOf(k) { const v = this.fillL[k.id]; return v === undefined || v === "" || v === null ? this.defaultFill(k) : Number(v); }
+  renderFill(byId) {
+    if (!this.fillBox) return;
+    this.fillBox.innerHTML = "";
+    if (!this.cart.length) { this.fillBox.append(h("div", { class: "muted" }, "Dodajte kegove na listu – svaki dobiva 17 L.")); return; }
+    const grid = h("div", { class: "fill-grid" });
+    this.cart.forEach((id, i) => {
+      const k = byId.get(id);
+      const last = i === this.cart.length - 1;
+      const manual = this.fillL[id] !== undefined && this.fillL[id] !== "";
+      const inp = h("input", { type: "text", inputmode: "decimal", value: fq(this.litresOf(k), 2), style: { width: "80px", textAlign: "right" },
+        "data-keg": String(id), class: manual ? "manual" : "" });
+      inp.addEventListener("change", () => {
+        const v = inp.value.trim();
+        if (v === "") delete this.fillL[id];
+        else {
+          const n = num(v);
+          if (!(n > 0) || (k.size_l && n > k.size_l + 1e-9)) { inp.value = fq(this.litresOf(k), 2); return this.say(false, `${k.code}: količina mora biti veća od 0 i najviše ${fq(k.size_l)} L.`); }
+          if (Math.abs(n - this.defaultFill(k)) < 1e-9) delete this.fillL[id]; else this.fillL[id] = n;
+        }
+        ls("kegfill_l", this.fillL);
+        this.renderCart();
+      });
+      grid.append(h("div", { class: "fill-row" + (last ? " last" : "") },
+        h("span", { class: "fill-code" }, k.code, last ? h("span", { class: "muted" }, " · zadnji keg") : null), inp, h("span", {}, "L"),
+        manual ? btn("↺", () => { delete this.fillL[id]; ls("kegfill_l", this.fillL); this.renderCart(); }, "ghost") : null));
+    });
+    this.fillBox.append(grid);
   }
 
   removeSel() {
@@ -446,8 +489,7 @@ class KegWorkPage extends Page {
       const bs = this.app.py.call("web_kegs.fill_batches");
       fields = [{ key: "batch_id", label: "Šarža (LOT piva)", type: "combo", required: true, options: bs.map((b) => [b.label, b.id]),
         default: ls("kegfill_batch") }, ...base,
-      { key: "pack", label: "Upiši u HACCP evidenciju pakiranja", type: "check", default: 1 },
-      { key: "real_total", label: "Stvarna ukupna količina (L) – ako zadnji keg nije pun", type: "num", min: 0 }];
+      { key: "pack", label: "Upiši u HACCP evidenciju pakiranja", type: "check", default: 1 }];
     } else if (this.flow === "ship") {
       const cs = this.app.py.call("web_kegs.customers");
       fields = [{ key: "customer_id", label: "Kupac", type: "combo", required: true,
@@ -456,6 +498,14 @@ class KegWorkPage extends Page {
     } else fields = [...base, { key: "note", label: "Napomena (neobavezno)" }];
     this.form = new Form(fields, {}, 2);
     this.extra.append(this.form.el);
+    this.fillBox = null;
+    if (this.flow === "fill") {
+      this.fillBox = h("div", {});
+      this.extra.append(h("h3", { class: "sec" }, "Količina piva u kegovima"),
+        h("div", { class: "muted", style: { fontSize: "12.5px", margin: "4px 0 6px" } },
+          `Svaki keg dobiva ${fq(this.consts.keg_fill || 17)} L. Ako zadnji keg (ili bilo koji drugi) nije pun, upišite stvarnu količinu. `
+          + `Kupcu se mogu izdati samo kegovi s ${fq(this.consts.keg_fill || 17)} L.`), this.fillBox);
+    }
     if (this.flow === "ship") {
       this.extra.append(h("div", { class: "row gap", style: { marginTop: "6px" } }, btn("＋ Novi kupac", async () => {
         const id = await newCustomer(this.app);
@@ -469,14 +519,24 @@ class KegWorkPage extends Page {
     let p;
     try { p = this.form.get(); } catch (e) { return error(e); }
     if (p.operator) ls("pivovara_user", p.operator);
-    if (this.flow === "fill") ls("kegfill_batch", p.batch_id);
     const f = FLOWS.find((x) => x[0] === this.flow);
-    if (!(await confirm(`${f[2]}: ${this.cart.length} keg(ova). Potvrditi?`, f[2]))) return;
+    let ask = `${f[2]}: ${this.cart.length} keg(ova). Potvrditi?`;
+    if (this.flow === "fill") {
+      ls("kegfill_batch", p.batch_id);
+      const byId = new Map(this.db.kegs().map((k) => [k.id, k]));
+      p.litres = {};
+      for (const id of this.cart) p.litres[id] = this.litresOf(byId.get(id));
+      const tot = Object.values(p.litres).reduce((a, b) => a + b, 0);
+      const part = this.cart.filter((id) => p.litres[id] + 1e-9 < (this.consts.keg_fill || 17)).map((id) => `${byId.get(id).code} (${fq(p.litres[id], 2)} L)`);
+      ask = `Punjenje: ${this.cart.length} keg(ova), ukupno ${fq(tot, 2)} L.` + (part.length ? `\n\nNisu puni: ${part.join(", ")} – ti se kegovi ne mogu izdati kupcu.` : "") + "\n\nPotvrditi?";
+    }
+    if (!(await confirm(ask, f[2]))) return;
     let res;
     try { res = this.app.py.call("web_kegs.apply", this.flow, this.cart, p); } catch (e) { return error(e); }
     const ids = this.cart.slice();
     this.cart = [];
     ls("kegcart_" + this.flow, []);
+    if (this.flow === "fill") { this.fillL = {}; ls("kegfill_l", {}); }
     this.renderCart();
     this.scanner.stop(); this.camBtn.textContent = "📷 Uključi kameru";
     if (this.flow === "ship") {

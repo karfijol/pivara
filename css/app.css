@@ -206,6 +206,26 @@ table.grid tr.empty td { color: var(--muted); text-align: center; padding: 18px;
 @keyframes flashok { 0% { border-color: #5BBF7A; box-shadow: 0 0 0 999px rgba(91,191,122,.35); } 100% { border-color: rgba(255,255,255,.75); } }
 @keyframes flashbad { 0% { border-color: #E0675A; box-shadow: 0 0 0 999px rgba(224,103,90,.45); } 100% { border-color: rgba(255,255,255,.75); } }
 .scan-msg { margin-top: 8px; font-weight: 600; min-height: 20px; }
+.offer-lines { display: flex; flex-direction: column; gap: 2px; }
+.ol-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) 130px 110px 100px 76px; gap: 8px; align-items: center;
+  padding: 6px 4px; border-bottom: 1px solid var(--line); }
+.ol-head { font-size: 12px; font-weight: 700; color: var(--muted); border-bottom-width: 2px; }
+.ol-row input { width: 100%; text-align: right; }
+.ol-name { display: flex; flex-direction: column; min-width: 0; }
+.ol-q { display: flex; align-items: center; gap: 4px; }
+.ol-amt { text-align: right; font-weight: 700; }
+.ol-act { display: flex; gap: 4px; justify-content: flex-end; } .ol-act .btn { padding: 4px 8px; min-height: 0; }
+.ol-head span:nth-child(n+3) { text-align: right; }
+.offer-tot { text-align: right; margin-top: 10px; display: flex; flex-direction: column; gap: 2px; }
+.offer-sum { font-size: 18px; } .offer-sum b { font-size: 20px; }
+@media (max-width: 700px) {
+  .ol-head { display: none; }
+  .ol-row { grid-template-columns: 26px minmax(0, 1fr) auto; grid-template-areas: "n name act" "n q amt" "n p amt"; row-gap: 4px; }
+  .ol-row > :nth-child(1) { grid-area: n; } .ol-row > :nth-child(2) { grid-area: name; } .ol-row > :nth-child(3) { grid-area: q; }
+  .ol-row > :nth-child(4) { grid-area: p; } .ol-row > :nth-child(5) { grid-area: amt; align-self: center; }
+  .ol-row > :nth-child(6) { grid-area: act; }
+  .ol-q input, .ol-row > :nth-child(4) input { max-width: 110px; }
+}
 .kw-recent > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: 16px; user-select: none; }
 .kw-recent > summary::-webkit-details-marker { display: none; }
 .kw-recent-btn { margin-left: auto; border: 1px solid var(--line, #ccc); border-radius: 8px; padding: 4px 10px; font-size: 13px; font-weight: 600; }

@@ -4,7 +4,7 @@ import * as store from "./store.js";
 import * as auth from "./auth.js";
 import { h, btn, toast, info, error, confirm, busy, openFile, dbProxy, Dialog } from "./ui.js";
 
-export const VERSION = "web 2.0";
+export const VERSION = "web 2.1";
 
 const NAV = [
   ["dash", "🏠", "Nadzorna ploča", "stock"],
@@ -20,6 +20,7 @@ const NAV = [
   ["batches", "🍺", "Šarže piva", "production"],
   ["haccp", "🛡", "HACCP evidencije", "haccp"],
   [null, "", "PRODAJA"],
+  ["offers", "💰", "Ponude", "offers"],
   ["sales", "🤝", "Kupci i otpremnice", "production"],
   [null, "", "NABAVA"],
   ["reorder", "🛒", "Što naručiti", "stock"],
@@ -53,7 +54,7 @@ class App {
       progress("Python se ne može pokrenuti u ovom pregledniku: " + e.message + ". Koristite noviji Chrome, Edge ili Firefox.");
       throw e;
     }
-    const mods = await Promise.all(["stock", "production", "haccp", "settings", "kegwork", "costs"].map(async (m) => {
+    const mods = await Promise.all(["stock", "production", "haccp", "settings", "kegwork", "costs", "offers"].map(async (m) => {
       try { return [m, await import(`./pages/${m}.js`)]; } catch (e) { console.error(m, e); return [m, null]; }
     }));
     for (const [m, mod] of mods) if (mod && mod.PAGES) Object.assign(this.classes, mod.PAGES);

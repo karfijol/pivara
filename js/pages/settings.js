@@ -112,6 +112,28 @@ class SettingsPage extends Page {
       { key: "dn_iban", label: "IBAN (neobavezno)" }], Object.fromEntries(k2.map((k) => [k, g(k)])), 3);
     cs.append(this.form2.el, h("div", { style: { marginTop: "10px" } }, btn("Spremi", () => this.save2())));
 
+    // ---------- ponude
+    const co = card("Ponude", "Zaglavlje (uz logo PIVARA) i podnožje ponude te zadane vrijednosti za nove ponude.");
+    const ok = ["offer_header1", "offer_header2", "offer_footer", "offer_payment_desc", "offer_payment_method", "offer_valid_days", "offer_first_no"];
+    try { this.app.py.call("web_offers.consts"); } catch { /* */ }
+    this.formO = new Form([
+      { key: "offer_header1", label: "Zaglavlje – pivnica (svaki redak u novi red)", type: "multi", height: 50 },
+      { key: "offer_header2", label: "Zaglavlje – tvrtka", type: "multi", height: 70 },
+      { key: "offer_footer", label: "Podnožje ponude", type: "multi", full: true, height: 80 },
+      { key: "offer_payment_desc", label: "Opis plaćanja (zadano)" },
+      { key: "offer_payment_method", label: "Način plaćanja (zadano)", type: "combo", editable: true,
+        options: ["Transakcijski račun", "Gotovina", "Kartica", "Ostalo"] },
+      { key: "offer_valid_days", label: "Rok plaćanja (dana od izdavanja)", type: "num", min: 0 },
+      { key: "offer_first_no", label: "Prvi redni broj ponude u godini (ako se nastavlja postojeće brojanje)", type: "num", min: 1 }],
+    Object.fromEntries(ok.map((k) => [k, g(k)])), 2);
+    co.append(this.formO.el, h("div", { style: { marginTop: "10px" } }, btn("Spremi", () => {
+      try {
+        const d = this.formO.get();
+        for (const [k, v] of Object.entries(d)) this.db.set_setting(k, v === null || v === undefined ? "" : String(v));
+        toast("Postavke ponuda spremljene.");
+      } catch (e) { this.err(e); }
+    })));
+
     // ---------- naljepnice
     const cn = card("Naljepnice za kegove", "Obvezni podaci prema Uredbi (EU) 1169/2011. Naziv piva, alkohol, neto količina, " +
       "datum punjenja, rok i LOT uzimaju se iz šarže i kega.");

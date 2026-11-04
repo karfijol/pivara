@@ -2,7 +2,7 @@
 import { loadPyodide } from "../pyodide/pyodide_esm.js";
 
 const PY_FILES = ["db.py", "haccp_db.py", "extras_db.py", "docgen.py", "haccp_docs.py", "mipi.py", "importer.py",
-  "webutil.py", "labels.py", "webapi.py", "web_main.py", "web_extras.py", "web_haccp.py", "web_kegs.py", "web_costs.py"];
+  "webutil.py", "labels.py", "webapi.py", "web_main.py", "web_extras.py", "web_haccp.py", "web_kegs.py", "web_costs.py", "web_offers.py"];
 const WHEELS = ["charset_normalizer-3.4.2-py3-none-any.whl", "reportlab-4.4.4-py3-none-any.whl",
   "python_docx-1.2.0-py3-none-any.whl", "et_xmlfile-2.0.0-py3-none-any.whl", "openpyxl-3.1.5-py2.py3-none-any.whl"];
 export const DB_PATH = "/data/skladiste.db";
@@ -65,6 +65,10 @@ export function ensureDocs(progress = () => {}) {
       const r = await fetch(base + "fonts/" + f);
       pyo.FS.writeFile(fdir + f, new Uint8Array(await r.arrayBuffer()));
     }
+    try { // logo PIVARA za zaglavlje ponuda
+      const r = await fetch(base + "icons/pivara-logo.png");
+      if (r.ok) pyo.FS.writeFile("/app/pivara_logo.png", new Uint8Array(await r.arrayBuffer()));
+    } catch { /* bez loga */ }
   })();
   docsReady.catch(() => { docsReady = null; });
   return docsReady;

@@ -366,3 +366,7 @@ table.grid tr.empty td { color: var(--muted); text-align: center; padding: 18px;
 .dry-bar { display: flex; flex-direction: column; gap: 6px; }
 .dry-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 @media (max-width: 700px) { .hop-r { grid-template-columns: 1fr 1fr; } .hop-h { display: none; } }
+.tank-info { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.tank-info .banner { margin: 0; }
+.alarm-dlg .modal-head { background: var(--accent); color: #fff; }
+.alarm-dlg .modal-bar .btn { font-size: 18px; padding: 12px 28px; }

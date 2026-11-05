@@ -1,6 +1,84 @@
 // Izvješća: godišnji pregled (proizvodnja, trošak po litri, kupci) i kegovi za povrat.
 import { h, btn, Page, Table, info, error, toast, fq, money, d2ui } from "../ui.js";
-import { MonthBars, HBars } from "./stock.js";
+import { MonthBars, HBars, ChartCard } from "./stock.js";
+
+const SVGNS = "http://www.w3.org/2000/svg";
+function S(tag, attrs = {}, text = null) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) if (v !== null && v !== undefined) e.setAttribute(k, v);
+  if (text !== null) e.textContent = text;
+  return e;
+}
+const MON = ["sij", "velj", "ožu", "tra", "svi", "lip", "srp", "kol", "ruj", "lis", "stu", "pro"];
+const nf = (x) => Number(x || 0).toLocaleString("hr-HR", { maximumFractionDigits: 0 });
+function axis(c, w, hh, vmax, left, right, top, bottom) {
+  let step = 10 ** Math.max(0, Math.floor(Math.log10(vmax || 1)));
+  const nice = Math.ceil((vmax || 1) / step) * step;
+  if (nice / step <= 3) step /= 2;
+  const ph = hh - top - bottom;
+  for (let k = 0; k * step <= nice + 1e-9; k++) {
+    const y = top + ph - ph * (k * step) / nice;
+    c.append(S("line", { x1: left, y1: y, x2: w - right, y2: y, style: "stroke:var(--line)" }));
+    c.append(S("text", { x: left - 6, y: y + 4, "text-anchor": "end", "font-size": 10.5, style: "fill:var(--muted)" }, nf(k * step)));
+  }
+  return { nice, ph };
+}
+function legend(c, items, x, y) {
+  let lx = x;
+  for (const [label, col] of items) {
+    c.append(S("rect", { x: lx, y: y - 9, width: 11, height: 11, rx: 2, fill: col }));
+    const t = S("text", { x: lx + 15, y, "font-size": 11.5, style: "fill:var(--text)" }, label);
+    c.append(t);
+    lx += 22 + label.length * 6.6;
+  }
+}
+
+// proizvedeno pivo po mjesecima, stupci složeni po vrsti piva
+class StackBars extends ChartCard {
+  draw(c, w, hh) {
+    const { months, series } = this.data[0];
+    const left = 44, right = 10, top = 30, bottom = 24;
+    const tot = months.map((_, i) => series.reduce((a, s) => a + s.values[i], 0));
+    const { nice, ph } = axis(c, w, hh, Math.max(...tot), left, right, top, bottom);
+    const slot = (w - left - right) / 12, bw = Math.min(34, slot * 0.62);
+    months.forEach((m, i) => {
+      const x = left + slot * i + slot / 2;
+      let y0 = top + ph;
+      series.forEach((s) => {
+        const v = s.values[i]; if (!v) return;
+        const hgt = ph * v / nice;
+        const r = S("rect", { x: x - bw / 2, y: y0 - hgt, width: bw, height: hgt, fill: s.col });
+        r.append(S("title", {}, `${s.beer}: ${nf(v)} L`));
+        c.append(r); y0 -= hgt;
+      });
+      if (tot[i]) c.append(S("text", { x, y: y0 - 5, "text-anchor": "middle", "font-size": 10, style: "fill:var(--text)" }, nf(tot[i])));
+      c.append(S("text", { x, y: hh - bottom + 16, "text-anchor": "middle", "font-size": 11, style: "fill:var(--muted)" }, MON[i]));
+    });
+    legend(c, series.map((s) => [s.beer, s.col]), left, 14);
+  }
+}
+
+// proizvedeno i isporučeno (otpremnice) po mjesecima, dva stupca jedan do drugog
+class PairBars extends ChartCard {
+  draw(c, w, hh) {
+    const { a, b, la, lb } = this.data[0];
+    const left = 44, right = 10, top = 30, bottom = 24;
+    const { nice, ph } = axis(c, w, hh, Math.max(...a, ...b), left, right, top, bottom);
+    const slot = (w - left - right) / 12, bw = Math.min(16, slot * 0.32);
+    for (let i = 0; i < 12; i++) {
+      const x = left + slot * i + slot / 2;
+      [[a[i], "#E3A12B", -1], [b[i], "#4F9DDE", 1]].forEach(([v, col, side]) => {
+        if (!v) return;
+        const hgt = ph * v / nice;
+        const r = S("rect", { x: side < 0 ? x - bw - 1 : x + 1, y: top + ph - hgt, width: bw, height: hgt, fill: col, rx: 2 });
+        r.append(S("title", {}, `${nf(v)} L`));
+        c.append(r);
+      });
+      c.append(S("text", { x, y: hh - bottom + 16, "text-anchor": "middle", "font-size": 11, style: "fill:var(--muted)" }, MON[i]));
+    }
+    legend(c, [[la, "#E3A12B"], [lb, "#4F9DDE"]], left, 14);
+  }
+}
 
 const PALETTE = ["#E3A12B", "#4F9DDE", "#5BBF7A", "#A57BD6", "#E0675A", "#3FB8B0", "#C98B1E", "#8A8F98"];
 const eur = (x, d = 2) => Number(x || 0).toLocaleString("hr-HR", { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -15,26 +93,24 @@ function T(columns, opts = {}) {
 // ------------------------------------------------------------------ godišnji pregled
 class YearPage extends Page {
   static title = "Godišnji pregled";
-  static subtitle = "Proizvedeno pivo po mjesecima i po vrsti, trošak sirovina po litri i prodaja po kupcima";
+  static subtitle = "Proizvedeno pivo po mjesecima i vrsti piva, proizvedeno prema isporučenom i prodaja po kupcima";
 
   build() {
     this.year = h("select", { style: { width: "110px" } });
     this.year.addEventListener("change", () => this.refresh());
     this.tb.insertBefore(this.year, this.tbRight);
     this.sum = h("div", { class: "msg", style: { fontWeight: 700, fontSize: "14px" } });
-    this.chL = new MonthBars("Proizvedeno pivo", "litara po mjesecima");
-    this.chC = new MonthBars("Trošak sirovina po litri", "€/L po mjesecima (bez PDV-a)");
-    this.chB = new HBars("Po vrsti piva", "litara");
-    this.chS = new HBars("Prodaja po kupcima", "litara na otpremnicama");
+    this.chL = new StackBars("Proizvedeno pivo po mjesecima", "litara, po vrsti piva", 260);
+    this.chC = new PairBars("Proizvedeno i isporučeno", "litara po mjesecima", 230);
     this.chL.el.classList.add("span2");
+    this.chC.el.classList.add("span2");
     this.beers = T([["beer", "Pivo", 170, "w"], ["brews", "Kuhanja", 70, "center"], ["litres", "Litara", 90, "e"],
       ["cost", "Sirovine €", 100, "e"], ["perl", "€/L", 80, "e"]]);
     this.sales = T([["customer", "Kupac", 200, "w"], ["notes", "Otpremnica", 90, "center"], ["kegs", "Kegova", 80, "center"],
       ["litres", "Litara", 90, "e"]]);
-    this.content.append(this.sum, h("div", { class: "grid2" }, this.chL.el, this.chC.el, this.chB.el),
+    this.content.append(this.sum, h("div", { class: "grid2" }, this.chL.el, this.chC.el),
       h("div", { class: "grid2", style: { marginTop: "14px" } },
         h("div", {}, h("h3", { class: "sec" }, "Piva"), this.beers.el), h("div", {}, h("h3", { class: "sec" }, "Kupci"), this.sales.el)));
-    this.chS.el.style.display = "none";
   }
 
   refresh() {
@@ -47,10 +123,11 @@ class YearPage extends Page {
     }
     this.sum.textContent = `${d.year}.: ${d.brews} kuhanja · ${fq(d.total_l, 0)} L proizvedenog piva · sirovine ${money(d.total_cost)}`
       + (d.total_l ? ` · prosječno ${eur(d.total_cost / d.total_l, 3)} €/L` : "");
-    this.chL.set(d.total_l ? d.litres : [], `${fq(d.total_l, 0)} L`);
-    this.chC.set(d.per_l.some((x) => x[1]) ? d.per_l.map(([m, v]) => [m, Math.round(v * 100) / 100]) : [], "€/L");
-    const bmax = Math.max(1, ...d.beers.map((b) => b.litres));
-    this.chB.set(d.beers.map((b, i) => [b.beer, b.litres, `${fq(b.litres, 0)} L`, PALETTE[i % PALETTE.length], null]), "", bmax);
+    const series = d.stack.map((s, i) => ({ beer: s.beer, values: s.values, col: PALETTE[i % PALETTE.length] }));
+    this.chL.set(d.total_l ? [{ months: d.months, series }] : [], `${fq(d.total_l, 0)} L ukupno`);
+    const prod = d.months.map((_, i) => d.stack.reduce((a, s) => a + s.values[i], 0));
+    this.chC.set(d.total_l || d.total_delivered ? [{ a: prod, b: d.delivered, la: "Proizvedeno", lb: "Isporučeno (otpremnice)" }] : [],
+      `${fq(d.total_l, 0)} L proizvedeno · ${fq(d.total_delivered, 0)} L isporučeno`);
     this.beers.setRows(d.beers.map((b, i) => ({ id: i, beer: b.beer, brews: b.brews, litres: fq(b.litres, 0), cost: eur(b.cost),
       perl: b.litres ? eur(b.cost / b.litres, 3) : "" })));
     this.sales.setRows(d.sales.map((s, i) => ({ id: i, customer: s.customer, notes: s.notes, kegs: s.kegs || "", litres: fq(s.litres, 0) })));

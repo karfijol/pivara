@@ -445,6 +445,17 @@ def year_overview(db, year=None):
         pb["cost"] += b["cost"] or 0
         pb["brews"] += 1
     per_l = [(m, round(cost[m] / litres[m], 4) if litres[m] else 0) for m in months]
+    # proizvedeno po mjesecima i vrsti piva (složeni stupci) + isporučeno na otpremnicama po mjesecima
+    by_beer_month = {}
+    for b in rep["brews"]:
+        m = b["date"][:7]
+        if m in litres:
+            by_beer_month.setdefault(b["beer"] or "?", {mm: 0.0 for mm in months})[m] += b["litres"] or 0
+    delivered = {m: 0.0 for m in months}
+    for r in db.q("""SELECT substr(d.date,1,7) AS m, SUM(l.qty*COALESCE(l.unit_l,0)) AS v FROM delivery_notes d
+                     JOIN delivery_lines l ON l.note_id=d.id WHERE d.date BETWEEN ? AND ? GROUP BY m""", (d_from, d_to)):
+        if r["m"] in delivered:
+            delivered[r["m"]] = r["v"] or 0
     sales = db.q("""SELECT d.customer AS customer, COUNT(DISTINCT d.id) AS notes,
                     SUM(CASE WHEN l.pack_type='Keg' THEN l.qty ELSE 0 END) AS kegs, SUM(l.qty*COALESCE(l.unit_l,0)) AS litres
                     FROM delivery_notes d JOIN delivery_lines l ON l.note_id=d.id
@@ -453,6 +464,9 @@ def year_overview(db, year=None):
                                      UNION SELECT DISTINCT substr(date,1,4) FROM delivery_notes ORDER BY 1 DESC""") if r["y"]]
     return {"year": year, "years": years or [str(year)], "litres": [(m, litres[m]) for m in months], "per_l": per_l,
             "beers": sorted(per_beer.values(), key=lambda x: -x["litres"]), "sales": sales,
+            "months": months, "stack": [{"beer": k, "values": [v[m] for m in months]}
+                                        for k, v in sorted(by_beer_month.items(), key=lambda kv: -sum(kv[1].values()))],
+            "delivered": [delivered[m] for m in months], "total_delivered": sum(delivered.values()),
             "total_l": sum(litres.values()), "total_cost": sum(cost.values()), "brews": len(rep["brews"])}
 
 
@@ -487,6 +501,12 @@ def brew_day_finish(db, batch_id, data):
     if data.get("wort_l"):
         upd["wort_l"] = data["wort_l"]
     upd["brewer"] = op
+    # dan kuhanja = početak fermentacije u odabranom fermentoru
+    if data.get("tank"):
+        upd["tank"] = data["tank"]
+    upd["ferm_start"] = date
+    if data.get("ferm_temp"):
+        upd["ferm_temp"] = data["ferm_temp"]
     db.update_batch(batch_id, upd)
     b = db.batch(batch_id)
     if data.get("boil_temp"):

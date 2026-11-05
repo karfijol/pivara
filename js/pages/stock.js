@@ -185,7 +185,7 @@ class DashboardPage extends Page {
   static title = "Nadzorna ploča";
 
   build() {
-    this.tbtn("＋ Nova šarža", () => this.app.show("batches", "new"));
+    this.tbtn("🔥 Dan kuhanja", () => this.app.show("batches", "brewDay"));
     this.tbtn("⬇ Primka robe", () => this.app.show("items", "receive"), "ghost");
     this.tbtn("🛒 Što trebam naručiti", () => this.app.show("reorder"), "ghost");
     this.tbtn("🛡 HACCP evidencije", () => this.app.show("haccp"), "ghost");
@@ -1034,4 +1034,4 @@ class ReorderPage extends Page {
 
 export const PAGES = { dash: DashboardPage, items: ItemsPage, lots: LotsPage, chem: ChemicalsPage,
   reorder: ReorderPage, po: POPage, suppliers: SuppliersPage };
-export { MonthBars, HBars, Donut };
+export { MonthBars, HBars, Donut, ChartCard };

@@ -5,7 +5,7 @@ import * as auth from "./auth.js";
 import { h, btn, toast, info, error, confirm, busy, openFile, dbProxy, Dialog } from "./ui.js";
 import { icon } from "./icons.js";
 
-export const VERSION = "web 2.11";
+export const VERSION = "web 2.12";
 
 // [ključ, ikona (icons.js), naziv, modul stranice, rijetko korišteno -> skupina "Više"]
 const NAV = [
@@ -156,6 +156,13 @@ class App {
     // podsjetnik za trošarine više ne iskače pri ulasku – prikazuje se kao traka na nadzornoj ploči
     this.checkDbSize();
     try { if (store.tokenExpiry) py.call("web_more.set_token_expires", store.tokenExpiry); } catch (e) { console.warn(e); }
+    // jednokratno: brojevi računa iz Excela "Matematika piva" za postojeće LOT-ove
+    try {
+      if (this.db.get_setting("excel_invoices_done") !== "1") {
+        const n = py.call("web_costs.auto_invoices");
+        if (n) toast(`Brojevi računa upisani za ${n} LOT-ova (iz Excela „Matematika piva”).`);
+      }
+    } catch (e) { console.warn(e); }
   }
 
   // baza raste s godinama: upozori ako se približi veličini kod koje spremanje postaje sporo

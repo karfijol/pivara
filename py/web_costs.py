@@ -84,10 +84,14 @@ def read_price_sheets(path):
     return out
 
 
-def price_preview(db, path, mapping=None):
+# računi dobavljača iz "Matematika piva.xlsx" (listovi Jecam, Hmelj, Kvasac, Ostalo): [list, račun, naziv, količina, cijena]
+EXCEL_INVOICES = [["Jecam", "2026-00795", "Pale Ale", 175.0, 0.913], ["Jecam", "2026-00795", "Pilsner", 150.0, 0.889], ["Jecam", "2026-00795", "Wheat", 25.0, 0.901], ["Jecam", "2026-00795", "Munich", 25.0, 0.919], ["Jecam", "2026-00795", "Carapils", 25.0, 1.132], ["Jecam", "2026-00795", "Melanoidin", 25.0, 1.046], ["Jecam", "2026-00795", "Maris Otter", 25.0, 0.999], ["Jecam", "2026-00795", "Roasted", 25.0, 1.097], ["Jecam", "2026-00795", "Crystal Medium", 25.0, 1.051], ["Jecam", "2026-00795", "Flaked", 16.0, 1.058], ["Jecam", "2026-01637", "Pale Ale", 200.0, 0.913], ["Jecam", "2026-01637", "Pilsner", 150.0, 0.889], ["Jecam", "2026-01637", "Wheat", 25.0, 0.901], ["Jecam", "2026-01637", "Maris Otter", 25.0, 0.998], ["Jecam", "2026-01637", "Flaked", 25.0, 1.058], ["Jecam", "2026-03125", "Pale Ale", 175.0, 0.913], ["Jecam", "2026-03125", "Pilsner", 100.0, 0.889], ["Jecam", "2026-03125", "Wheat", 50.0, 0.901], ["Jecam", "2026-03125", "Maris Otter", 25.0, 0.998], ["Jecam", "2026-03125", "Simpsons Black", 25.0, 1.309], ["Jecam", "2026-03125", "Simpsons Chocolate", 25.0, 1.309], ["Jecam", "2026-03125", "CARAFA", 25.0, 1.347], ["Hmelj", "2026-00795", "Saaz", 3.0, 19.75], ["Hmelj", "2026-00795", "Chinook", 1.0, 21.62], ["Hmelj", "2026-00795", "East Kent Golding", 1.0, 21.18], ["Hmelj", "2026-00795", "Cascade US", 1.0, 21.52], ["Hmelj", "2026-00795", "Centennial", 1.0, 24.43], ["Hmelj", "2026-00795", "Citra", 1.0, 30.11], ["Hmelj", "2026-00795", "Amarillo", 1.0, 30.18], ["Hmelj", "2026-00795", "Magnum", 0.1, 11.48], ["Hmelj", "2026-00795", "Columbus", 0.1, 15.68], ["Hmelj", "2026-01637", "Saaz", 2.0, 19.75], ["Hmelj", "2026-01637", "Chinook", 2.0, 21.62], ["Hmelj", "2026-01637", "Centennial", 1.0, 24.43], ["Hmelj", "2026-01637", "Citra", 1.0, 30.11], ["Hmelj", "2026-01637", "Magnum", 0.1, 22.1], ["Hmelj", "2026-01637", "Columbus", 0.1, 42.9], ["Hmelj", "2026-03125", "Saaz", 2.0, 19.75], ["Hmelj", "2026-03125", "Chinook", 1.0, 21.62], ["Hmelj", "2026-03125", "Cascade US", 2.0, 21.52], ["Hmelj", "2026-03125", "Citra", 1.0, 30.11], ["Hmelj", "2026-03125", "Magnum", 1.0, 11.48], ["Hmelj", "2026-03125", "Columbus", 0.1, 42.9], ["Kvasac", "2026-00795", "S-04", 0.5, 90.6], ["Kvasac", "2026-00795", "W34/70", 0.5, 170.06], ["Kvasac", "2026-00795", "US-05", 0.5, 100.18], ["Kvasac", "2026-00795", "WildBrew Philly Sour", 0.5, 221.88], ["Kvasac", "2026-01637", "W34/70", 0.5, 170.06], ["Kvasac", "2026-01637", "US-05", 0.5, 100.18], ["Kvasac", "2026-03125", "W34/70", 0.5, 170.06], ["Kvasac", "2026-03125", "WildBrew Philly Sour", 0.5, 110.94], ["Ostalo", "2026-00795", "Protafloc tablete", 2.0, 19.71], ["Ostalo", "2026-00795", "Malina", 13.0, 13.07], ["Ostalo", "4975/14/6006", "Višnja", 13.0, 11.49], ["Ostalo", "2026-03125", "Candy sugar", 1.0, 3.48], ["Ostalo", "16011/14/6005", "Višnja", 6.0, 15.99], ["Ostalo", "8247/14/6003", "Višnja", 7.0, 15.99]]
+
+
+def price_preview(db, path, mapping=None, rows=None):
     """Pregled prije uvoza: za svaku stavku računa artikl u programu i LOT-ovi kojima će se upisati cijena."""
     ensure(db)
-    rows = read_price_sheets(path)
+    rows = rows if rows is not None else read_price_sheets(path)
     items = db.q("SELECT id, name, category, unit FROM items")
     names = {i["id"]: i["name"] for i in items}
     mapping = {k: v for k, v in (mapping or {}).items()}
@@ -353,3 +357,40 @@ def report_xlsx(db, d_from, d_to, app=None):
 def months_with_brews(db):
     return [r["m"] for r in db.q("""SELECT DISTINCT substr(brew_date,1,7) AS m FROM batches
                                     WHERE status<>'Planirano' AND brew_date IS NOT NULL ORDER BY m DESC""")]
+
+
+# ------------------------------------------------------------------ brojevi računa na LOT-ovima
+def set_lot_invoice(db, lot_ids, invoice_no, unit_price=None):
+    """Broj računa dobavljača (i po potrebi cijena) na LOT-ovima – kod primke ili naknadno."""
+    ensure(db)
+    inv = (invoice_no or "").strip() or None
+    for lid in lot_ids or []:
+        if unit_price is not None and unit_price != "":
+            db.con.execute("UPDATE lots SET invoice_no=?, unit_price=? WHERE id=?", (inv, float(unit_price), lid))
+        else:
+            db.con.execute("UPDATE lots SET invoice_no=? WHERE id=?", (inv, lid))
+    db.con.commit()
+    return len(lot_ids or [])
+
+
+def auto_invoices(db):
+    """Jednokratno: brojevi računa (i cijene gdje ih nema) iz Excela za LOT-ove koji ih još nemaju."""
+    ensure(db)
+    if db.get_setting("excel_invoices_done") == "1":
+        return 0
+    rows = [{"sheet": a, "invoice": b, "name": c, "qty": q, "price": p} for a, b, c, q, p in EXCEL_INVOICES]
+    pv = price_preview(db, None, None, rows)
+    n = 0
+    for r in pv["rows"]:
+        for lid in r.get("lot_ids") or []:
+            l = db.one("SELECT invoice_no, unit_price FROM lots WHERE id=?", (lid,))
+            if not l or (l["invoice_no"] and l["invoice_no"] != "procjena"):
+                continue
+            if not l["unit_price"] or l["invoice_no"] == "procjena":
+                db.con.execute("UPDATE lots SET invoice_no=?, unit_price=? WHERE id=?", (r["invoice"], r["price"], lid))
+            else:
+                db.con.execute("UPDATE lots SET invoice_no=? WHERE id=?", (r["invoice"], lid))
+            n += 1
+    db.con.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('excel_invoices_done','1')")
+    db.con.commit()
+    return n

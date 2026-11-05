@@ -447,8 +447,9 @@ class ItemsPage extends Page {
       { key: "received", label: "Datum primitka", type: "date", required: true, default: today() },
       { key: "expiry", label: "Rok trajanja (najbolje upotrijebiti do)", type: "date" },
       { key: "supplier_id", label: "Dobavljač", type: "combo", options: supplierOpts(this.db) },
-      { key: "unit_price", label: "Cijena €/jed.", type: "num", min: 0 },
-      { key: "note", label: "Napomena (br. otpremnice/računa...)" },
+      { key: "unit_price", label: "Cijena €/jed. (bez PDV-a, s računa)", type: "num", min: 0 },
+      { key: "invoice_no", label: "Broj računa dobavljača (za izvještaj knjigovođi)" },
+      { key: "note", label: "Napomena (br. otpremnice…)" },
       { key: "haccp", label: "Odmah ispuni HACCP zapisnik o prijemu (sirovine i ambalaža)", type: "check" },
     ], { item_id: itemId, supplier_id: it ? it.supplier_id : null, unit_price: it ? it.price : 0, haccp: chem ? 0 : 1 });
     if (!d) return;
@@ -457,6 +458,7 @@ class ItemsPage extends Page {
     let lotId;
     try {
       lotId = this.db.receive_lot(d.item_id, d.qty, d.lot_no, d.received, d.expiry, d.supplier_id, d.unit_price || 0, null, d.note);
+      if (d.invoice_no) this.app.py.call("web_costs.set_lot_invoice", [lotId], d.invoice_no);
       this.app.refreshAll();
       this.app.toast("Primka spremljena.");
     } catch (e) { this.err(e); return; }
@@ -519,6 +521,7 @@ class LotsPage extends Page {
 
   build() {
     this.tbtn("Sljedivost LOT-a", () => this.trace());
+    this.tbtn("🧾 Račun / cijena", () => this.invoice(), "ghost");
     this.tbtn("Korekcija količine", () => this.adjust(), "ghost");
     this.tbtn("Otpis LOT-a", () => this.writeoff(), "ghost");
     this.tbtn("Izvoz CSV", () => this.table.exportCsv("lotovi"), "ghost");
@@ -527,7 +530,8 @@ class LotsPage extends Page {
       ["item", "Artikl", 230, "w"], ["lot", "LOT", 140, "w"], ["received", "Primljeno", 95, "center"],
       ["qty_r", "Primljeno kol.", 100, "e"], ["qty_l", "Preostalo", 90, "e"], ["unit", "Jed.", 50, "center"],
       ["expiry", "Rok", 95, "center"], ["days", "Dana do isteka", 105, "e"],
-      ["supplier", "Dobavljač", 160, "w"], ["fifo", "FIFO", 60, "center"]], { onDouble: () => this.trace() });
+      ["supplier", "Dobavljač", 160, "w"], ["invoice", "Račun", 120, "w"], ["price", "Cijena €", 80, "e"],
+      ["fifo", "FIFO", 60, "center"]], { onDouble: () => this.trace(), multi: true });
     this.search(this.table);
     this.content.append(this.table.el);
   }
@@ -545,7 +549,8 @@ class LotsPage extends Page {
       }
       rows.push({ id: l.id, item: l.item_name, lot: l.lot_no, received: d2ui(l.received_date),
         qty_r: fq(l.qty_received), qty_l: fq(l.qty_left), unit: l.unit, expiry: d2ui(l.eff_expiry),
-        days: dl === null ? "" : dl, supplier: l.supplier_name || "", fifo, _tag: tag });
+        days: dl === null ? "" : dl, supplier: l.supplier_name || "", invoice: l.invoice_no || "",
+        price: l.unit_price ? fq(l.unit_price, 4) : "", fifo, _tag: tag });
     }
     this.table.setRows(rows);
   }
@@ -562,6 +567,22 @@ class LotsPage extends Page {
     { info: `${l.item_name}  ·  LOT ${l.lot_no}  ·  primljeno ${d2ui(l.received_date)}  ·  ` +
         `rok ${d2ui(l.eff_expiry) || "—"}\nPrimljeno ${fq(l.qty_received)} ${l.unit}, preostalo ${fq(l.qty_left)} ${l.unit}`,
     width: 760 });
+  }
+
+  // broj računa dobavljača i nabavna cijena (bez PDV-a) za jedan ili više označenih LOT-ova
+  async invoice() {
+    const ids = this.table.selectedIds();
+    if (!ids.length) return info("Označite jedan ili više LOT-ova (Ctrl/Shift za više; na mobitelu dodirom).", "Račun");
+    const l = this.db.lot(ids[0]);
+    const d = await askForm(ids.length > 1 ? `Račun – ${ids.length} LOT-ova` : `Račun – LOT ${l.lot_no}`, [
+      { key: "info", label: "Artikl", type: "info", default: ids.length > 1 ? `${ids.length} označenih LOT-ova` : `${l.item_name} · primljeno ${d2ui(l.received_date)}` },
+      { key: "invoice_no", label: "Broj računa dobavljača" },
+      ...(ids.length === 1 ? [{ key: "unit_price", label: "Cijena €/jed. (bez PDV-a)", type: "num", min: 0 }] : [])],
+    { invoice_no: l.invoice_no || "", unit_price: l.unit_price || 0 });
+    if (!d) return;
+    this.app.py.call("web_costs.set_lot_invoice", ids, d.invoice_no || "", ids.length === 1 ? d.unit_price : null);
+    this.refresh();
+    toast("Račun spremljen.");
   }
 
   async adjust() {
@@ -817,9 +838,11 @@ class ReceivePODialog extends Dialog {
     this.body.append(h("div", { style: { marginBottom: "8px" } },
       `${p.po_no} · ${p.supplier_name || ""}  —  upišite zaprimljene količine, LOT brojeve s deklaracije i rokove trajanja.`));
     this.date = h("input", { type: "date", value: today() });
+    this.inv = h("input", { placeholder: "npr. 2026-03125", style: { width: "170px" } });
     this.haccp = h("input", { type: "checkbox" }); this.haccp.checked = true;
-    this.body.append(h("div", { class: "row gap", style: { gap: "8px", justifyContent: "space-between", marginBottom: "8px" } },
+    this.body.append(h("div", { class: "row gap", style: { gap: "8px", justifyContent: "space-between", marginBottom: "8px", flexWrap: "wrap" } },
       h("label", { class: "row", style: { gap: "8px" } }, "Datum primitka:", this.date),
+      h("label", { class: "row", style: { gap: "8px" } }, "Broj računa:", this.inv),
       h("label", { class: "chk" }, this.haccp, " Odmah ispuni HACCP zapisnike o prijemu")));
     const heads = ["Artikl", "Naručeno", "Već zaprimljeno", "Zaprimam sad", "LOT broj", "Rok trajanja"];
     const tbody = h("tbody");
@@ -845,6 +868,7 @@ class ReceivePODialog extends Dialog {
       const rc = this.rows.map(([lid, q, lot, exp]) => ({ line_id: lid, qty: num(q.value), lot_no: lot.value.trim() || null, expiry: exp.value || null }));
       if (!rc.some((r) => r.qty > 0)) throw new Error("Nema količina za zaprimanje.");
       lots = this.db.receive_po(this.poId, rc, date);
+      if (this.inv.value.trim() && lots.length) window.APP.py.call("web_costs.set_lot_invoice", lots, this.inv.value.trim());
     } catch (e) { return this.err(e.message); }
     this.close(this.haccp.checked ? lots : true);
   }

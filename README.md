@@ -18,3 +18,4 @@ Radi u pregledniku (Chrome, Edge, Firefox, Safari) na računalu, tabletu i mobit
 5. Učitajte postojeću bazu `skladiste.db` (sigurnosnu kopiju) ili počnite s praznom bazom.
 
 Detaljne upute: dokument „Web verzija – postavljanje na GitHub”.
+

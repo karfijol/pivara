@@ -43,6 +43,17 @@ def ensure(db):
     for col, typ in (("valid_until", "TEXT"), ("price_mode", "TEXT"), ("delivery_id", "INTEGER")):
         if col not in cols:
             c.execute(f"ALTER TABLE offers ADD COLUMN {col} {typ}")
+    # 2.10: raspored hmelja (kuhanje) i podsjetnik za dry hop
+    cols = {r["name"] for r in db.q("PRAGMA table_info(recipes)")}
+    for col, typ in (("hop_schedule", "TEXT"), ("boil_min", "INTEGER"), ("dry_hop", "INTEGER DEFAULT 0"),
+                     ("dry_hop_days", "INTEGER DEFAULT 3"), ("dry_hop_time", "TEXT DEFAULT '09:00'")):
+        if col not in cols:
+            c.execute(f"ALTER TABLE recipes ADD COLUMN {col} {typ}")
+    cols = {r["name"] for r in db.q("PRAGMA table_info(batches)")}
+    for col, typ in (("hop_schedule", "TEXT"), ("boil_min", "INTEGER"), ("dry_hop_on", "INTEGER DEFAULT 0"),
+                     ("dry_hop_date", "TEXT"), ("dry_hop_time", "TEXT"), ("dry_hop_done", "TEXT")):
+        if col not in cols:
+            c.execute(f"ALTER TABLE batches ADD COLUMN {col} {typ}")
     for k, v in (("keg_return_days", "30"), ("token_expires", "")):
         c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", (k, v))
     # veleprodaja: keg 18 L za svaku recepturu (cijena se upisuje u cjeniku; dok je 0, ne nudi se)
@@ -319,6 +330,14 @@ def calendar_ics(db, days_ahead=120):
             add(f"ferm-{x['batch_id']}", x["end"], f"Kraj fermentacije: {x['batch_no']} ({x['tank']})",
                 "Procjena prema broju dana fermentacije u recepturi. Nakon pražnjenja: CIP fermentora.")
             add(f"cip-{x['batch_id']}", x["end"], f"CIP {x['tank']} nakon fermentacije {x['batch_no']}")
+    timed = []
+    for b in db.q("""SELECT b.*, r.name AS recipe FROM batches b LEFT JOIN recipes r ON r.id=b.recipe_id
+                     WHERE COALESCE(b.dry_hop_on,0)=1 AND b.dry_hop_done IS NULL AND b.dry_hop_date IS NOT NULL
+                     AND b.status<>'Planirano'"""):
+        if today.isoformat() <= b["dry_hop_date"] <= to:
+            hops = [f"{x['name']} {x['g']:g} {x['unit']}" for x in hop_plan(db, b["id"])["rows"] if x["stage"] == "dry"]
+            timed.append((f"dry-{b['id']}", b["dry_hop_date"], b.get("dry_hop_time") or "09:00",
+                          f"Dry hop: {b['recipe'] or ''} {b['batch_no']} ({b.get('tank') or 'fermentor'})", ", ".join(hops)))
     for e in db.q("SELECT * FROM equipment WHERE COALESCE(active,1)=1 AND COALESCE(interval_days,0)>0"):
         last = db.val("SELECT MAX(date) FROM eq_checks WHERE equipment_id=? AND kind='odrzavanje'", (e["id"],))
         due = (dt.date.fromisoformat(last) + dt.timedelta(days=int(e["interval_days"]))) if last else today
@@ -334,12 +353,20 @@ def calendar_ics(db, days_ahead=120):
                   f"DTEND;VALUE=DATE:{d1}", f"SUMMARY:{_ics_text(title)}", f"DESCRIPTION:{_ics_text(desc)}",
                   "BEGIN:VALARM", "TRIGGER:-PT15H", "ACTION:DISPLAY", f"DESCRIPTION:{_ics_text(title)}", "END:VALARM",
                   "END:VEVENT"]
+    for uid, date, tm, title, desc in timed:
+        hh, mm = (tm or "09:00").split(":")[:2]
+        start = f"{date.replace('-', '')}T{int(hh):02d}{int(mm):02d}00"
+        endt = (dt.datetime.fromisoformat(f"{date}T{int(hh):02d}:{int(mm):02d}") + dt.timedelta(minutes=30)).strftime("%Y%m%dT%H%M%S")
+        lines += ["BEGIN:VEVENT", f"UID:{uid}@pivara", f"DTSTAMP:{stamp}", f"DTSTART:{start}", f"DTEND:{endt}",
+                  f"SUMMARY:{_ics_text(title)}", f"DESCRIPTION:{_ics_text(desc)}",
+                  "BEGIN:VALARM", "TRIGGER:PT0M", "ACTION:DISPLAY", f"DESCRIPTION:{_ics_text(title)}", "END:VALARM",
+                  "END:VEVENT"]
     lines.append("END:VCALENDAR")
     os.makedirs(os.path.join(OUT, "kalendar"), exist_ok=True)
     path = os.path.join(OUT, "kalendar", "PIVARA_kalendar.ics")
     with open(path, "w", encoding="utf-8", newline="") as f:
         f.write("\r\n".join(lines) + "\r\n")
-    return {"path": path, "n": len(ev)}
+    return {"path": path, "n": len(ev) + len(timed)}
 
 
 # ------------------------------------------------------------------ kegovi za povrat
@@ -472,7 +499,127 @@ def brew_day_finish(db, batch_id, data):
                                     "operator": op})
     if data.get("mill_ok"):
         db.add_mill_check(date, "Uređaj je u redu", op, batch_id)
-    return {"batch_no": b["batch_no"]}
+    dry = data.get("dry") or {}
+    if "on" in dry:
+        on = 1 if dry.get("on") else 0
+        days = int(dry.get("days") or 3)
+        db.update_batch(batch_id, {"dry_hop_on": on, "dry_hop_time": dry.get("time") or "09:00",
+                                   "dry_hop_date": (dt.date.fromisoformat(date) + dt.timedelta(days=days)).isoformat() if on else None})
+    b = db.batch(batch_id)
+    return {"batch_no": b["batch_no"], "dry_hop_date": b.get("dry_hop_date") if b.get("dry_hop_on") else None}
+
+
+# ------------------------------------------------------------------ hmeljenje: raspored za kuhanje i dry hop
+def _hop_needs(db, recipe_id, volume):
+    """Ukupna količina svakog hmelja u recepturi za zadani volumen: {item_id: (naziv, količina, jedinica)}."""
+    out = {}
+    for ln in db.scaled_needs(recipe_id, volume):
+        cat = db.val("SELECT category FROM items WHERE id=?", (ln["item_id"],)) or ""
+        if cat != "Hmelj":
+            continue
+        n, q, u = out.get(ln["item_id"], (ln["name"], 0, ln["unit"]))
+        out[ln["item_id"]] = (n, q + ln["need"], u)
+    return out
+
+
+def _grams(q, unit):
+    u = (unit or "").lower()
+    return q * 1000 if u == "kg" else q
+
+
+def hop_plan(db, batch_id=None, recipe_id=None):
+    """Raspored hmelja: dodaci tijekom kuhanja (minuta od početka) i dry hop (u fermentoru, X dana nakon kuhanja).
+    Redak: {item_id, stage: 'boil'|'dry', min, frac} – frac = dio ukupne količine tog hmelja u recepturi."""
+    b = db.batch(batch_id) if batch_id else None
+    rid = b["recipe_id"] if b else recipe_id
+    r = db.one("SELECT * FROM recipes WHERE id=?", (rid,)) or {}
+    vol = (b.get("volume_l") if b else None) or r.get("batch_size_l") or 0
+    needs = _hop_needs(db, rid, vol) if rid else {}
+    raw = (b or {}).get("hop_schedule") or r.get("hop_schedule")
+    try:
+        rows = json.loads(raw) if raw else []
+    except ValueError:
+        rows = []
+    if not rows:  # zadano: sav hmelj na početku kuhanja
+        rows = [{"item_id": iid, "stage": "boil", "min": 0, "frac": 1} for iid in needs]
+    boil = int((b or {}).get("boil_min") or r.get("boil_min") or 60)
+    out = []
+    for x in rows:
+        if x.get("item_id") not in needs:
+            continue
+        name, q, unit = needs[x["item_id"]]
+        g = round(_grams(q * float(x.get("frac") or 0), unit), 1)
+        out.append({"item_id": x["item_id"], "name": name, "stage": x.get("stage") or "boil",
+                    "min": int(x.get("min") or 0), "frac": float(x.get("frac") or 0), "g": g,
+                    "unit": "g" if (unit or "").lower() in ("kg", "g") else unit})
+    out.sort(key=lambda x: (x["stage"] != "boil", x["min"], x["name"]))
+    on = (b or {}).get("dry_hop_on")
+    on = int(r.get("dry_hop") or 0) if on is None or (b and not b.get("dry_hop_date") and b["status"] == "Planirano") else int(on)
+    days = int(r.get("dry_hop_days") or 3)
+    tm = (b or {}).get("dry_hop_time") or r.get("dry_hop_time") or "09:00"
+    date = (b or {}).get("dry_hop_date")
+    if not date and b and b.get("brew_date") and b["status"] != "Planirano":
+        date = (dt.date.fromisoformat(b["brew_date"][:10]) + dt.timedelta(days=days)).isoformat()
+    hops = [{"item_id": iid, "name": n, "g": round(_grams(q, u), 1), "unit": "g" if (u or "").lower() in ("kg", "g") else u}
+            for iid, (n, q, u) in needs.items()]
+    return {"rows": out, "boil_min": boil, "hops": hops, "dry": {"on": on, "days": days, "time": tm, "date": date,
+                                                                 "done": (b or {}).get("dry_hop_done")},
+            "recipe": r.get("name") or "", "recipe_id": rid}
+
+
+def save_hop_plan(db, rows, boil_min=60, dry=None, batch_id=None, recipe_id=None, as_default=False):
+    """rows: [{item_id, stage, min, g}] – g se preračuna u dio ukupne količine (frac)."""
+    b = db.batch(batch_id) if batch_id else None
+    rid = b["recipe_id"] if b else recipe_id
+    r = db.one("SELECT * FROM recipes WHERE id=?", (rid,)) or {}
+    vol = (b.get("volume_l") if b else None) or r.get("batch_size_l") or 0
+    needs = _hop_needs(db, rid, vol)
+    clean = []
+    for x in rows or []:
+        iid = x.get("item_id")
+        if iid not in needs:
+            continue
+        tot = _grams(needs[iid][1], needs[iid][2]) or 1
+        g = float(x.get("g") or 0)
+        mn = int(float(x.get("min") or 0))
+        if x.get("stage", "boil") == "boil" and not 0 <= mn <= int(boil_min or 60):
+            raise ValueError(f"{needs[iid][0]}: minuta mora biti između 0 (početak) i {boil_min} (kraj kuhanja).")
+        clean.append({"item_id": iid, "stage": x.get("stage") or "boil", "min": mn, "frac": round(g / tot, 4)})
+    js = json.dumps(clean)
+    d = dry or {}
+    on = 1 if d.get("on") else 0
+    days = int(d.get("days") or 3)
+    tm = d.get("time") or "09:00"
+    if b:
+        upd = {"hop_schedule": js, "boil_min": int(boil_min or 60), "dry_hop_on": on, "dry_hop_time": tm}
+        if d.get("date"):
+            upd["dry_hop_date"] = d["date"]
+        elif b.get("brew_date") and b["status"] != "Planirano":
+            upd["dry_hop_date"] = (dt.date.fromisoformat(b["brew_date"][:10]) + dt.timedelta(days=days)).isoformat()
+        db.update_batch(batch_id, upd)
+    if as_default or not b:
+        db.x("UPDATE recipes SET hop_schedule=?, boil_min=?, dry_hop=?, dry_hop_days=?, dry_hop_time=? WHERE id=?",
+             (js, int(boil_min or 60), on, days, tm, rid))
+    return True
+
+
+def dry_hop_due(db, days_ahead=0):
+    """Šarže kojima je dry hop danas ili je kasnio (ili u sljedećih N dana)."""
+    lim = (dt.date.today() + dt.timedelta(days=days_ahead)).isoformat()
+    out = []
+    for b in db.q("""SELECT b.*, r.name AS recipe FROM batches b LEFT JOIN recipes r ON r.id=b.recipe_id
+                     WHERE COALESCE(b.dry_hop_on,0)=1 AND b.dry_hop_done IS NULL AND b.dry_hop_date IS NOT NULL
+                     AND b.dry_hop_date<=? AND b.status IN ('Fermentacija','Odležavanje')""", (lim,)):
+        p = hop_plan(db, b["id"])
+        out.append({"batch_id": b["id"], "batch_no": b["batch_no"], "recipe": b["recipe"], "tank": b.get("tank") or "",
+                    "date": b["dry_hop_date"], "time": b.get("dry_hop_time") or "", "late": b["dry_hop_date"] < _today(),
+                    "hops": [f"{x['name']} {x['g']:g} {x['unit']}".replace(".", ",") for x in p["rows"] if x["stage"] == "dry"]})
+    return out
+
+
+def dry_hop_mark(db, batch_id, done=True):
+    db.update_batch(batch_id, {"dry_hop_done": _today() if done else None})
+    return True
 
 
 # ------------------------------------------------------------------ ponude: status, cijene po kupcu, otpremnica

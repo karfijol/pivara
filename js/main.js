@@ -5,7 +5,7 @@ import * as auth from "./auth.js";
 import { h, btn, toast, info, error, confirm, busy, openFile, dbProxy, Dialog } from "./ui.js";
 import { icon } from "./icons.js";
 
-export const VERSION = "web 2.9";
+export const VERSION = "web 2.10";
 
 // [ključ, ikona (icons.js), naziv, modul stranice, rijetko korišteno -> skupina "Više"]
 const NAV = [

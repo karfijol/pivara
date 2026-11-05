@@ -242,7 +242,39 @@ class DashboardPage extends Page {
     // podsjetnik za trošarine (umjesto skočnog prozora pri ulasku)
     this.exciseBar = h("div", { class: "banner warn", style: { display: "none", cursor: "pointer" }, onclick: () => this.app.show("excise") });
     this.tokenBar = h("div", { class: "banner warn", style: { display: "none", cursor: "pointer" }, onclick: () => this.app.show("settings") });
-    this.content.append(this.tokenBar, this.exciseBar, cards, charts, low);
+    this.dryBar = h("div", { class: "banner ok dry-bar", style: { display: "none" } });
+    this.content.append(this.tokenBar, this.dryBar, this.exciseBar, cards, charts, low);
+  }
+
+  // podsjetnik za dry hop (danas ili kasni) + obavijest na uređaju
+  renderDry() {
+    const due = this.app.py.call("web_more.dry_hop_due", 0);
+    this.dryBar.innerHTML = "";
+    this.dryBar.style.display = due.length ? "" : "none";
+    if (!due.length) return;
+    this.dryBar.className = "banner dry-bar " + (due.some((x) => x.late) ? "warn" : "ok");
+    this.dryBar.append(h("b", {}, "🌿 Dry hop"));
+    for (const x of due) {
+      this.dryBar.append(h("div", { class: "dry-item" },
+        h("span", {}, `${x.recipe} ${x.batch_no}${x.tank ? " · " + x.tank : ""} – ${x.late ? "kasni od " + d2ui(x.date) : "danas" + (x.time ? " u " + x.time : "")}`
+          + (x.hops.length ? ": " + x.hops.join(", ") : "")),
+        btn("✔ Obavljeno", () => { this.app.py.call("web_more.dry_hop_mark", x.batch_id, true); toast("Dry hop označen kao obavljen."); this.refresh(); }, "ghost")));
+    }
+    const N = window.Notification;
+    if (N && N.permission === "default") {
+      this.dryBar.append(h("a", { href: "#", onclick: (e) => { e.preventDefault(); N.requestPermission().then(() => this.refresh()); } },
+        "🔔 Uključi obavijesti na ovom uređaju"));
+    }
+    if (N && N.permission === "granted") {
+      const today2 = today();
+      for (const x of due) {
+        const k = `dryhop_note_${x.batch_id}_${today2}`;
+        try { if (localStorage.getItem(k)) continue; localStorage.setItem(k, "1"); } catch { /* */ }
+        const body = `${x.recipe} ${x.batch_no}${x.tank ? " · " + x.tank : ""}` + (x.hops.length ? "\n" + x.hops.join(", ") : "");
+        navigator.serviceWorker?.getRegistration().then((r) => r ? r.showNotification("Dry hop danas", { body, icon: "icons/icon-192.png", tag: "dry-" + x.batch_id })
+          : new N("Dry hop danas", { body })).catch(() => {});
+      }
+    }
   }
 
   refresh() {
@@ -287,6 +319,7 @@ class DashboardPage extends Page {
     const areas = {};
     for (const r of tasks) areas[r.area] = (areas[r.area] || 0) + 1;
     this.tasksSum.textContent = tasks.length ? Object.entries(areas).map(([k, v]) => `${k}: ${v}`).join(" · ") : "✓ HACCP evidencije su ažurne.";
+    try { this.renderDry(); } catch (e) { console.warn(e); }
     try {
       const ts = this.app.py.call("web_more.token_status");
       const warn = ts && ts.days <= 30;

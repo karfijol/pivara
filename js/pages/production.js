@@ -208,6 +208,9 @@ class RecipesPage extends Page {
     this.tbtn("＋ Nova receptura", () => this.new());
     this.tbtn("Uredi", () => this.edit(), "ghost");
     this.tbtn("Obriši", () => this.delete(), "ghost");
+    this.tbtn("🌿 Hmeljenje / dry hop", async () => {
+      const id = this.need(this.table, "recepturu"); if (id && await hopEditor(this.app, { recipeId: id })) toast("Raspored hmelja spremljen.");
+    }, "ghost");
     this.tbtn("🏷 Naljepnice po vrsti piva", () => printBeerLabels(this.app), "ghost");
     this.table = T([["name", "Naziv", 200, "w"], ["code", "Oznaka", 65, "center"], ["style", "Stil", 120, "w"],
       ["size", "Šarža (L)", 90, "e"], ["n", "Sastojaka", 80, "center"], ["b", "Kuhano puta", 90, "center"]],
@@ -296,6 +299,78 @@ class BrewPreview extends Dialog {
   }
 }
 
+// ================================================================== Raspored hmelja (kuhanje + dry hop)
+// opts: { batchId } ili { recipeId }; vraća spremljeni plan ili null
+export async function hopEditor(app, opts) {
+  const py = app.py;
+  const plan = py.call("web_more.hop_plan", opts.batchId || null, opts.recipeId || null);
+  if (!plan.hops.length) { await info("Receptura nema hmelja (kategorija „Hmelj”)."); return null; }
+  const d = new Dialog(`Hmeljenje – ${plan.recipe}`, { width: 760 });
+  const rows = plan.rows.map((r) => ({ ...r }));
+  const boil = h("input", { value: String(plan.boil_min), inputmode: "numeric", style: { width: "70px", textAlign: "right" } });
+  const list = h("div", { class: "hop-ed" });
+  const sum = h("div", { class: "muted", style: { fontSize: "12.5px", margin: "4px 0" } });
+  const hopOpts = plan.hops.map((x) => [x.name, x.item_id]);
+  const render = () => {
+    list.innerHTML = "";
+    list.append(h("div", { class: "hop-r hop-h" }, h("span", {}, "Hmelj"), h("span", {}, "Kada"), h("span", {}, "Minuta"), h("span", {}, "Količina (g)"), h("span", {})));
+    rows.forEach((r, i) => {
+      const hs = h("select", {}, hopOpts.map(([l, v]) => h("option", { value: String(v) }, l)));
+      hs.value = String(r.item_id);
+      const st = h("select", {}, h("option", { value: "boil" }, "Kuhanje"), h("option", { value: "dry" }, "Dry hop (fermentor)"));
+      st.value = r.stage;
+      const mn = h("input", { value: r.stage === "dry" ? "" : String(r.min), inputmode: "numeric", disabled: r.stage === "dry",
+        placeholder: r.stage === "dry" ? "—" : "0", style: { textAlign: "right" } });
+      const g = h("input", { value: fq(r.g, 1), inputmode: "decimal", style: { textAlign: "right" } });
+      hs.onchange = () => { r.item_id = Number(hs.value); renderSum(); };
+      st.onchange = () => { r.stage = st.value; render(); };
+      mn.oninput = () => { r.min = Math.round(num(mn.value) || 0); };
+      g.oninput = () => { r.g = num(g.value) || 0; renderSum(); };
+      list.append(h("div", { class: "hop-r" }, hs, st, mn, g, btn("✕", () => { rows.splice(i, 1); render(); }, "ghost")));
+    });
+    renderSum();
+  };
+  const renderSum = () => {
+    const by = {};
+    for (const r of rows) by[r.item_id] = (by[r.item_id] || 0) + Number(r.g || 0);
+    sum.textContent = "Ukupno po recepturi: " + plan.hops.map((x) => {
+      const u = by[x.item_id] || 0; const ok = Math.abs(u - x.g) < 0.6;
+      return `${x.name} ${fq(u, 1)} / ${fq(x.g, 1)} g${ok ? "" : " ⚠"}`;
+    }).join(" · ");
+  };
+  const dry = plan.dry;
+  const dOn = h("input", { type: "checkbox" }); dOn.checked = !!dry.on;
+  const dDays = h("input", { value: String(dry.days || 3), inputmode: "numeric", style: { width: "60px", textAlign: "right" } });
+  const dTime = h("input", { type: "time", value: dry.time || "09:00", style: { width: "110px" } });
+  const dDate = h("input", { type: "date", value: dry.date || "", style: { width: "150px" } });
+  const def = h("input", { type: "checkbox" }); def.checked = !opts.batchId || !py.call("db.q", "SELECT hop_schedule FROM recipes WHERE id=?", [plan.recipe_id])[0].hop_schedule;
+  d.body.append(
+    h("div", { class: "row gap", style: { flexWrap: "wrap" } }, h("b", {}, "Trajanje kuhanja"), boil, h("span", { class: "muted" }, "min · minuta 0 = na početku, minuta = trajanje → na kraju kuhanja")),
+    list, sum,
+    h("div", { class: "row gap", style: { margin: "6px 0 12px" } }, btn("＋ Dodaj hmelj", () => {
+      rows.push({ item_id: plan.hops[0].item_id, stage: "boil", min: 0, g: 0 }); render();
+    }, "ghost")),
+    h("div", { class: "sec" }, "Podsjetnik za dry hop"),
+    h("label", { class: "chk big" }, dOn, " Ovo pivo se dry hopa – podsjeti me (uključite samo za piva s dry hopom)"),
+    h("div", { class: "row gap", style: { flexWrap: "wrap", margin: "6px 0" } },
+      h("span", {}, "Dana nakon kuhanja"), dDays, h("span", {}, "u"), dTime,
+      ...(opts.batchId ? [h("span", { class: "muted" }, "ili točan datum"), dDate] : [])),
+    ...(opts.batchId ? [h("label", { class: "chk" }, def, " Spremi kao zadano za recepturu (sljedeća kuhanja tog piva)")] : []));
+  dDays.oninput = () => { dDate.value = ""; };
+  render();
+  d.buttons("Spremi", () => {
+    try {
+      const b = Math.max(1, Math.round(num(boil.value) || 60));
+      py.callKw("web_more.save_hop_plan", [rows.map((r) => ({ item_id: r.item_id, stage: r.stage, min: r.stage === "dry" ? 0 : r.min, g: r.g })), b,
+        { on: dOn.checked, days: Math.round(num(dDays.value) || 3), time: dTime.value || "09:00", date: opts.batchId ? (dDate.value || null) : null }],
+      { batch_id: opts.batchId || null, recipe_id: opts.recipeId || null, as_default: def.checked });
+      d.close(true);
+    } catch (e) { d.err(e.message); }
+  });
+  if (!(await d.show())) return null;
+  return py.call("web_more.hop_plan", opts.batchId || null, opts.recipeId || null);
+}
+
 // ================================================================== Dan kuhanja (mobitel)
 function beepLong() {
   try {
@@ -339,12 +414,24 @@ class BrewDayDialog extends Dialog {
     this.body.append(h("h3", { class: "sec" }, "2. Koraci"));
     if (d.mill) this.body.append(chk("mill", "Mlin pregledan prije mljevenja – uređaj je u redu (upisuje se kontrola mlina)"));
     this.body.append(chk("mill_done", "Mljevenje slada"));
-    for (const [id, label, mins] of [["mash", "Ukomljavanje", 60], ["lauter", "Cijeđenje i ispiranje", 45], ["boil", "Kuhanje sladovine", 60],
+    for (let [id, label, mins] of [["mash", "Ukomljavanje", 60], ["lauter", "Cijeđenje i ispiranje", 45], ["boil", "Kuhanje sladovine", 60],
       ["whirl", "Whirlpool / odmor", 15]]) {
+      if (id === "boil") mins = (app.py.call("web_more.hop_plan", batchId).boil_min) || mins;
       this.body.append(chk(id, label, this.timer(id, mins)));
     }
-    this.body.append(chk("hops", "Dodaci hmelja prema recepturi"), chk("cool", "Hlađenje i prebacivanje u fermentor"),
-      chk("yeast", "Dodan kvasac"));
+    // hmeljenje tijekom kuhanja: odbrojavanje do svakog dodatka (pokreće se tipkom Start kod kuhanja sladovine)
+    this.hopBox = h("div", { class: "hop-live" });
+    this.body.append(h("div", { class: "bd-sub" }, h("b", {}, "Hmeljenje tijekom kuhanja"),
+      btn("✎ Raspored hmelja", async () => { const p = await hopEditor(app, { batchId }); if (p) { this.plan = p; this.renderHops(); this.renderDry(); } }, "ghost")),
+    this.hopBox);
+    this.body.append(chk("cool", "Hlađenje i prebacivanje u fermentor"), chk("yeast", "Dodan kvasac"));
+    this.plan = app.py.call("web_more.hop_plan", batchId);
+    this.renderHops();
+    this._timers.push(setInterval(() => this.hopTick(), 1000));
+    // dry hop podsjetnik
+    this.dryBox = h("div", { class: "card", style: { marginTop: "8px" } });
+    this.body.append(h("h3", { class: "sec" }, "Dry hop"), this.dryBox);
+    this.renderDry();
     // 3. mjerenja
     this.body.append(h("h3", { class: "sec" }, "3. Mjerenja i CCP kuhanja"));
     const v = this.st.vals;
@@ -365,9 +452,72 @@ class BrewDayDialog extends Dialog {
     this.bar.append(btn("Zatvori (zapamti)", () => this.close(null), "ghost"), btn("✔ Završi kuhanje i spremi", () => this.finish()));
   }
 
+  renderHops() {
+    this.hopBox.innerHTML = "";
+    const rows = this.plan.rows.filter((r) => r.stage === "boil");
+    if (!rows.length) { this.hopBox.append(h("div", { class: "muted" }, "Nema hmelja za kuhanje u rasporedu.")); return; }
+    this.hopEls = rows.map((r, i) => {
+      const id = `hop_${r.item_id}_${r.min}_${i}`;
+      const cb = h("input", { type: "checkbox" }); cb.checked = !!this.st.checks[id];
+      const st = h("span", { class: "hop-st" }, "");
+      cb.addEventListener("change", () => { this.st.checks[id] = cb.checked; this.save(); this.hopTick(); });
+      const when = r.min <= 0 ? "na početku" : (r.min >= this.boilLen() ? "na kraju" : `${r.min}. min`);
+      const row = h("label", { class: "bd-row hop-row" }, cb, h("span", { class: "bd-lab" }, `${r.name} · ${fq(r.g, 1)} ${r.unit}`),
+        h("span", { class: "hop-when" }, when), st);
+      this.hopBox.append(row);
+      return { r, id, row, st };
+    });
+    this.hopTick();
+  }
+  boilLen() { const i = this.timerMin && this.timerMin.boil; return Math.max(1, Number(i && i.value) || this.plan.boil_min || 60); }
+  hopTick() {
+    if (!this.hopEls) return;
+    const t = this.st.vals.t_boil;
+    const len = this.boilLen();
+    const elapsed = t && t.end ? Math.min(len * 60, len * 60 - Math.round((t.end - Date.now()) / 1000)) : null;
+    let rang = this.st.vals.hopRang || (this.st.vals.hopRang = {});
+    for (const e of this.hopEls) {
+      const at = Math.min(e.r.min, len) * 60;
+      const done = !!this.st.checks[e.id];
+      e.row.classList.toggle("due", !done && elapsed !== null && elapsed >= at);
+      if (done) e.st.textContent = "✓ dodano";
+      else if (elapsed === null) e.st.textContent = "";
+      else if (elapsed >= at) {
+        e.st.textContent = "DODAJ SADA!";
+        if (!rang[e.id]) { rang[e.id] = true; this.save(); beepLong(); toast(`Dodaj hmelj: ${e.r.name} ${fq(e.r.g, 1)} ${e.r.unit}`); }
+      } else {
+        const left = at - elapsed;
+        e.st.textContent = `za ${String(Math.floor(left / 60)).padStart(2, "0")}:${String(left % 60).padStart(2, "0")}`;
+      }
+    }
+  }
+  renderDry() {
+    const d = this.plan.dry;
+    const dry = this.plan.rows.filter((r) => r.stage === "dry");
+    this.dry = this.dry || { on: !!d.on, days: d.days || 3, time: d.time || "09:00" };
+    const on = h("input", { type: "checkbox" }); on.checked = this.dry.on;
+    const days = h("input", { value: String(this.dry.days), inputmode: "numeric", style: { width: "56px", textAlign: "right" } });
+    const tm = h("input", { type: "time", value: this.dry.time, style: { width: "110px" } });
+    const info2 = h("div", { class: "muted", style: { fontSize: "12.5px", marginTop: "4px" } });
+    const upd = () => {
+      this.dry = { on: on.checked, days: Math.round(num(days.value) || 3), time: tm.value || "09:00" };
+      const dt0 = new Date(); dt0.setDate(dt0.getDate() + this.dry.days);
+      info2.textContent = this.dry.on ? `Podsjetnik: ${d2ui(dt0.toISOString().slice(0, 10))} u ${this.dry.time}`
+        + (dry.length ? ` · ${dry.map((r) => `${r.name} ${fq(r.g, 1)} ${r.unit}`).join(", ")}` : " · u rasporedu hmelja nema dry hop stavki (✎ Raspored hmelja)") : "Bez dry hopa za ovu šaržu.";
+    };
+    [on, days, tm].forEach((x) => x.addEventListener("input", upd));
+    on.addEventListener("change", upd);
+    this.dryBox.innerHTML = "";
+    this.dryBox.append(h("label", { class: "chk big" }, on, " Podsjeti me za dry hop"),
+      h("div", { class: "row gap", style: { flexWrap: "wrap", marginTop: "6px" } }, h("span", {}, "nakon"), days, h("span", {}, "dana, u"), tm), info2);
+    upd();
+  }
+
   timer(id, defMin) {
     const t = this.st.vals["t_" + id] || {};
     const min = h("input", { value: String(t.min || defMin), inputmode: "numeric", style: { width: "52px", textAlign: "right" } });
+    (this.timerMin = this.timerMin || {})[id] = min;
+    if (id === "boil") min.addEventListener("input", () => this.renderHops && this.hopEls && this.renderHops());
     const lbl = h("span", { class: "bd-time" }, "");
     const b = btn("▶", () => toggle(), "ghost");
     const tick = () => {
@@ -390,7 +540,7 @@ class BrewDayDialog extends Dialog {
       else {
         const m = Math.max(1, Number(min.value) || defMin);
         this.st.vals["t_" + id] = { min: m, end: Date.now() + m * 60000 };
-        if (id === "boil") this.form.w.boil_start.set(nowHM());
+        if (id === "boil") { this.form.w.boil_start.set(nowHM()); this.st.vals.hopRang = {}; }
       }
       this.save(); tick();
     };
@@ -409,7 +559,7 @@ class BrewDayDialog extends Dialog {
     if (this.d.planned && !(await confirm("Sirovine će se skinuti sa skladišta (FIFO) i šarža prelazi u fermentaciju. Nastaviti?", "Završi kuhanje"))) return;
     try {
       for (const k of ["wort_l", "og_sg", "ph", "boil_temp", "boil_min"]) if (!v[k]) delete v[k];
-      const r = this.app.py.call("web_more.brew_day_finish", this.batchId, { ...v, mill_ok: this.d.mill && this.st.checks.mill ? 1 : 0 });
+      const r = this.app.py.call("web_more.brew_day_finish", this.batchId, { ...v, mill_ok: this.d.mill && this.st.checks.mill ? 1 : 0, dry: this.dry });
       try { localStorage.removeItem(this.key); } catch { /* */ }
       this.close(r);
     } catch (e) { this.err(e.message); }
@@ -488,7 +638,7 @@ class BatchesPage extends Page {
     const id = this.need(this.table, "šaržu");
     if (!id) return;
     const r = await new BrewDayDialog(this.app, id).show();
-    if (r) { this.app.refreshAll(); toast(`Dan kuhanja spremljen – ${r.batch_no}.`); }
+    if (r) { this.app.refreshAll(); toast(`Dan kuhanja spremljen – ${r.batch_no}.` + (r.dry_hop_date ? ` Dry hop podsjetnik: ${d2ui(r.dry_hop_date)}.` : "")); }
   }
 
   // Nakon kuhanja: kontrola mlina, CIP fermentora prije šarže i CCP kontrola kuhanja.
@@ -589,6 +739,11 @@ class BatchesPage extends Page {
       { key: "sensory_date", label: "Datum ocjene", type: "date" },
       { key: "sensory_by", label: "Ocijenio", type: "combo", editable: true, options: emps },
       { key: "sensory_note", label: "Senzorika – napomena" },
+      { label: "Dry hop", type: "section" },
+      { key: "dry_hop_on", label: "Podsjetnik za dry hop uključen", type: "check" },
+      { key: "dry_hop_date", label: "Datum dry hopa", type: "date" },
+      { key: "dry_hop_time", label: "Vrijeme podsjetnika", type: "time" },
+      { key: "dry_hop_done", label: "Dry hop obavljen (datum)", type: "date" },
       { key: "note", label: "Napomena", type: "multi", full: true }], { ...b, volume_l: b.wort_l || b.volume_l }, { columns: 3, width: 980 });
     if (d) {
       for (const k of ["og_sg", "fg_sg", "abv", "ph", "ferm_temp", "sensory_score", "packaged_l"]) if (!d[k]) d[k] = null;

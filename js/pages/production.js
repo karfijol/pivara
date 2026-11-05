@@ -7,6 +7,9 @@ import {
 } from "../ui.js";
 
 // ---------------------------------------------------------------- zajedničko
+// operateri na HACCP evidencijama (Postavke HACCP); kuhanje i pakiranje imaju svog operatera
+const opDoc = (db) => db.get_setting("haccp_doc_operator") || db.get_setting("default_operator");
+const opBrew = (db) => db.get_setting("haccp_brew_operator") || db.get_setting("default_operator");
 let CONSTS = null;
 function K(app) {
   if (!CONSTS) CONSTS = app.py.call("web_extras.consts");
@@ -497,7 +500,7 @@ class BrewDayDialog extends Dialog {
       { key: "boil_end", label: "Kraj kuhanja", type: "time" },
       { key: "boil_min", label: "Trajanje kuhanja (min)", type: "num", min: 0 },
       { key: "corrective", label: "Korektivna radnja (ako < 100 °C)", full: true }],
-    { date: b.brew_date || today(), tank: b.tank, ferm_temp: b.ferm_temp, operator: b.brewer || app.db.get_setting("default_operator"),
+    { date: b.brew_date || today(), tank: b.tank, ferm_temp: b.ferm_temp, operator: b.brewer || opBrew(app.db),
       wort_l: b.wort_l || b.volume_l, og_sg: b.og_sg, ph: b.ph, ...v }, 3);
     this.form.el.addEventListener("change", () => { try { Object.assign(this.st.vals, this.form.get()); } catch { /* */ } save(); });
     this.tankInfo = h("div", { class: "tank-info" });
@@ -704,7 +707,7 @@ class BatchesPage extends Page {
       { key: "batch_no", label: "LOT piva (prazno = automatski: DDMMGGGG + oznaka + broj)" },
       { key: "tank", label: "Fermentor / tank", type: "combo", editable: true, options: this.db.fermentors().map((f) => f.name) },
       { key: "brewer", label: "Kuhao", type: "combo", editable: true, options: this.db.employee_names(),
-        default: this.db.get_setting("default_operator") },
+        default: opBrew(this.db) },
       { key: "note", label: "Napomena" }]);
     if (!d) return;
     if (d.tank) {
@@ -747,7 +750,7 @@ class BatchesPage extends Page {
         { key: "tank", label: "Fermentor", type: "combo", options: this.db.fermentors().map((f) => f.name) },
         { key: "brewer", label: "Kuhao", type: "combo", editable: true, options: this.db.employee_names() }],
       { planned_id: pb ? pb.id : null, recipe_id: pb ? pb.recipe_id : recipes[0].id, volume: pb ? pb.volume_l : recipes[0].batch_size_l,
-        date: today(), tank: pb ? pb.tank : null, brewer: this.db.get_setting("default_operator") }, { okText: "Započni dan kuhanja" });
+        date: today(), tank: pb ? pb.tank : null, brewer: opBrew(this.db) }, { okText: "Započni dan kuhanja" });
       if (!d) return;
       try {
         if (d.planned_id) {
@@ -776,7 +779,7 @@ class BatchesPage extends Page {
     if (mill) {
       fields.push({ key: "mill_ok", label: `Mlin (${mill.name}) pregledan prije kuhanja – uređaj je u redu`, type: "check" },
         { key: "mill_op", label: "Pregledao", type: "combo", editable: true, options: this.db.employee_names(),
-          default: b.brewer || this.db.get_setting("default_operator") });
+          default: opDoc(this.db) });
     }
     if (tank) {
       fields.push({ key: "cip", type: "check", label: cipMissing ? `Otvori zapisnik: CIP ${tank} prije ove šarže (nema zapisa!)`
@@ -807,7 +810,7 @@ class BatchesPage extends Page {
       }
     }
     if (d.ccp) {
-      await callHaccp(app, "editCcp", { batch_id: bid, date: b.brew_date, operator: b.brewer || this.db.get_setting("default_operator") }, null);
+      await callHaccp(app, "editCcp", { batch_id: bid, date: b.brew_date, operator: opDoc(this.db) }, null);
     }
     app.refreshAll();
   }
@@ -1076,7 +1079,7 @@ class KegsPage extends Page {
     fields.push({ key: "note", label: "Napomena" });
     if (action === "Napuni") {
       fields.push({ key: "operator", label: "Operater", type: "combo", editable: true, options: this.db.employee_names(),
-        default: this.db.get_setting("default_operator") },
+        default: opBrew(this.db) },
       { key: "cip", label: "CIP kegova proveden prije punjenja – otvori zapisnik", type: "check", default: 1 },
       { key: "pack", label: "Upiši u HACCP evidenciju pakiranja", type: "check", default: 1 },
       { key: "labels", label: "Nakon punjenja ispiši naljepnice", type: "check", default: 1 });
@@ -1098,7 +1101,7 @@ class KegsPage extends Page {
         try {
           init = cd(this.app, { cip_type: "CIP kegova prije punjenja", equipment: ["Kegovi", "Keg punilica"], keg_codes: codes,
             batch_no: b.batch_no, date: d.date, ver_date: d.date, review_date: d.date,
-            operator: d.operator || this.db.get_setting("default_operator") });
+            operator: d.operator || opDoc(this.db) });
         } catch (e) { console.error(e); }
         await callHaccp(this.app, "editCip", init, null);
       }

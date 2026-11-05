@@ -68,11 +68,15 @@ export async function exportAll(app) {
   return path;
 }
 
+// operater na HACCP evidencijama (Postavke HACCP): kuhanje i pakiranje imaju svog operatera
+export const opDoc = (db) => db.get_setting("haccp_doc_operator") || db.get_setting("default_operator");
+export const opBrew = (db) => db.get_setting("haccp_brew_operator") || db.get_setting("default_operator");
+
 // ------------------------------------------------------------------ obrasci koje koristi i ostatak programa
 export function cipDefaults(app, over = {}) {
   const db = app.db;
   const last = db.last_cip() || {};
-  const op = db.get_setting("default_operator");
+  const op = opDoc(db);
   const base = {
     date: today(), start_time: "", end_time: "", cip_type: K(app).CIP_TYPES[1], equipment: [],
     operator: op, closed: 1,
@@ -184,7 +188,7 @@ export async function editReceipt(app, initial = null, id = null) {
     { label: "4.–6. Odstupanja, odluka i potpisi", type: "section" },
     { key: "deviations", label: "Opis eventualnih odstupanja", type: "multi", full: true, height: 50 },
     { key: "decision", label: "Odluka o prijemu", type: "combo", options: ["PRIHVAĆENO", "NEPRIHVATLJIVO"], default: "PRIHVAĆENO" },
-    { key: "inspector", label: "Pregled izvršio", type: "combo", options: emps, editable: true, default: db.get_setting("default_operator") },
+    { key: "inspector", label: "Pregled izvršio", type: "combo", options: emps, editable: true, default: opDoc(db) },
     { key: "qm", label: "QM provjera", type: "combo", options: emps, editable: true },
     { key: "qm_date", label: "Datum", type: "date", default: today() });
   const validate = (d) => {
@@ -211,7 +215,7 @@ export async function editCcp(app, initial = null, id = null) {
   let init = { ...(initial || {}) };
   if (id) init = db.record("ccp_boil", id) || {};
   if (!("temp" in init)) init.temp = 100;
-  if (!("operator" in init)) init.operator = db.get_setting("default_operator");
+  if (!("operator" in init)) init.operator = opDoc(db);
   const validate = (d) => {
     checkTime(d.start_time, d.end_time);
     if (!d.start_time || !d.end_time) throw new Error("Upišite vrijeme početka i završetka kuhanja.");
@@ -244,7 +248,7 @@ export async function editMillCheck(app, initial = null, id = null) {
   const d = await askForm(`Kontrola mlina – ${m.name}`, [
     { key: "date", label: "Datum pregleda", type: "date", required: true, default: today() },
     { key: "note", label: "Napomena", default: "Uređaj je u redu" },
-    { key: "operator", label: "Operater", type: "combo", options: empOpts(db), editable: true, default: db.get_setting("default_operator") },
+    { key: "operator", label: "Operater", type: "combo", options: empOpts(db), editable: true, default: opDoc(db) },
     { key: "batch_id", label: "Za šaržu (neobavezno)", type: "combo", options: batchOpts(db, true) }], init);
   if (!d) return null;
   Object.assign(d, { equipment_id: m.id, kind: "kontrola" });
@@ -419,7 +423,7 @@ class FermPanel extends Panel {
       { key: "date", label: "Datum završetka", type: "date", required: true, default: today() },
       { key: "fg_sg", label: "Finalna gustoća (npr. 1,012)", type: "num", min: 0 },
       { key: "by", label: "Odgovorna osoba", type: "combo", options: empOpts(this.db), editable: true,
-        default: b.ferm_by || this.db.get_setting("default_operator") }], {}, { okText: "Završi" });
+        default: b.ferm_by || opDoc(this.db) }], {}, { okText: "Završi" });
     if (d) {
       this.db.finish_fermentation(bid, d.date, d.fg_sg || null, null, d.by || null);
       this.done();
@@ -631,7 +635,7 @@ class PackPanel extends Panel {
       { key: "total_l", label: "Stvarna ukupna količina (L) – ako zadnji keg nije pun; prazno = kom × L", type: "num", min: 0 },
       { key: "shelf_months", label: "Rok trajanja (mjeseci)", type: "num", min: 0,
         default: parseInt(this.db.get_setting("shelf_months") || 6, 10) || 6 },
-      { key: "operator", label: "Operater", type: "combo", options: empOpts(this.db), editable: true, default: this.db.get_setting("default_operator") },
+      { key: "operator", label: "Operater", type: "combo", options: empOpts(this.db), editable: true, default: opBrew(this.db) },
       { key: "note", label: "Napomena" }], init, { columns: 2 });
   }
 
@@ -860,7 +864,7 @@ class MaintPanel extends Panel {
     return askForm(title, [
       { key: "date", label: "Datum održavanja", type: "date", required: true, default: today() },
       { key: "note", label: "Napomena", default: "Uređaj je u ispravnom stanju" },
-      { key: "operator", label: "Operater", type: "combo", options: empOpts(this.db), editable: true, default: this.db.get_setting("default_operator") }], init);
+      { key: "operator", label: "Operater", type: "combo", options: empOpts(this.db), editable: true, default: opDoc(this.db) }], init);
   }
 
   async newCheck() {
@@ -937,7 +941,7 @@ class PestPanel extends RecordPanel {
   async form(rid = null) {
     const emps = empOpts(this.db);
     const init = rid ? this.db.record("pests", rid)
-      : { date: today(), operator: this.db.get_setting("default_operator"), manager: this.db.get_setting("prod_lead") };
+      : { date: today(), operator: opDoc(this.db), manager: this.db.get_setting("prod_lead") };
     const d = await askForm("Zapisnik o pojavi štetnika", [
       { label: "1. Podaci o pojavi", type: "section" },
       { key: "date", label: "Datum", type: "date", required: true }, { key: "time", label: "Vrijeme (SS:MM)" },
@@ -1071,9 +1075,12 @@ class HaccpSettingsPanel extends Panel {
       { key: "approved_by", label: "Odobrio/la (dokumente)" },
       { key: "haccp_lead", label: "Voditelj HACCP tima (verifikacija)" },
       { key: "prod_lead", label: "Voditelj proizvodnje" },
-      { key: "default_operator", label: "Zadani operater" },
-      { key: "shelf_months", label: "Rok trajanja piva (mjeseci)", type: "num", min: 0 }],
-    Object.fromEntries(["company", "approved_by", "haccp_lead", "prod_lead", "default_operator", "shelf_months"]
+      { key: "default_operator", label: "Zadani operater (ostali unosi u programu)" },
+      { key: "shelf_months", label: "Rok trajanja piva (mjeseci)", type: "num", min: 0 },
+      { key: "haccp_doc_operator", label: "Operater na HACCP dokumentima", type: "combo", editable: true, options: this.db.employee_names() },
+      { key: "haccp_brew_operator", label: "Operater – kuhanje i utrošak sirovina, pakiranje", type: "combo", editable: true, options: this.db.employee_names() },
+      { key: "_opinfo", label: "", type: "info", full: true, default: "Ako je operater upisan, ispisuje se na SVIM dokumentima te vrste (bez obzira na to tko je upisan u pojedinom zapisu). Prazno = ispisuje se osoba iz zapisa." }],
+    Object.fromEntries(["company", "approved_by", "haccp_lead", "prod_lead", "default_operator", "shelf_months", "haccp_doc_operator", "haccp_brew_operator"]
       .map((k) => [k, this.db.get_setting(k)])), 3);
     c.append(this.form.el, h("div", { style: { marginTop: "10px" } }, btn("Spremi", () => this.save())));
     const ce = h("div", { class: "card" },

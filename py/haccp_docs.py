@@ -8,6 +8,12 @@ from haccp_db import (CIP_TYPES, CIP_EQUIPMENT, RECEIPT_DOCS, RECEIPT_CHECKS_ALL
 BLANK_ROWS = 3  # prazni retci na kraju evidencija za ručni upis
 
 
+def op(db, value=None, kind="doc"):
+    """Operater na dokumentu: iz Postavki HACCP (kuhanje/pakiranje ili ostalo), inače osoba iz zapisa."""
+    v = db.get_setting("haccp_brew_operator" if kind == "brew" else "haccp_doc_operator")
+    return v or value or ""
+
+
 def d2(iso):
     if not iso:
         return ""
@@ -79,7 +85,7 @@ def doc_ferm(db, d_from, d_to, logo):
     for b in db.brewed_batches(d_from, d_to, desc=False):
         rows.append([b["batch_no"], (b["tank"] or "").replace("Fermentor ", ""), d2(b.get("ferm_start") or b["brew_date"]),
                      n(b.get("ferm_temp"), 1), d2(b.get("ferm_end")), n(b.get("fg_sg"), 3, False), n(b.get("abv"), 1),
-                     b.get("ferm_by") or ""])
+                     op(db, b.get("ferm_by"))])
     doc.add("table", ["LOT piva", "Tank br.", "Datum početka fermentacije", "Temperatura (°C)",
                       "Datum završetka fermentacije", "Finalna gustoća", "Količina etanola (%)", "Odgovorna osoba"],
             rows + blanks(8), [0.15, 0.08, 0.14, 0.11, 0.14, 0.11, 0.12, 0.15], {"size": 9})
@@ -118,7 +124,7 @@ def doc_brew(db, d_from, d_to, logo):
             if i == 0:
                 r[0:3] = [b["batch_no"], d2(b["brew_date"]), b["recipe"] or ""]
                 r[15:19] = [n(b.get("wort_l") or b["volume_l"], 1), n(b.get("og_sg"), 3, False), n(b.get("ph"), 2),
-                            b.get("brewer") or ""]
+                            op(db, b.get("brewer"), "brew")]
             for col, cat in ((3, "Slad"), (6, "Hmelj"), (9, "Kvasac"), (12, "Ostalo")):
                 if i < len(g[cat]):
                     c = g[cat][i]
@@ -144,7 +150,7 @@ def doc_pack(db, d_from, d_to, logo):
                 (f" (do {d2(p['best_before'])})" if p.get("best_before") else "")
         rows.append([d2(p["date"]), p.get("batch_no") or p.get("lot") or "", p.get("pack_type") or "",
                      p.get("pack_lot") or "", str(p.get("units") or ""), n(p.get("unit_l"), 2),
-                     n((p.get("total_l") or 0) / 100, 2), shelf.strip(), p.get("operator") or ""])
+                     n((p.get("total_l") or 0) / 100, 2), shelf.strip(), op(db, p.get("operator"), "brew")])
     doc.add("table", ["Datum pakiranja", "LOT piva", "Tip ambalaže", "LOT ambalaže", "Kom.", "Pakirana količina (L/kom)",
                       "Ukupna količina (hL)", "Rok trajanja", "Operater"],
             rows + blanks(9), [0.1, 0.12, 0.08, 0.17, 0.05, 0.1, 0.1, 0.15, 0.13], {"size": 9, "align": {4: "R", 5: "R", 6: "R"}})
@@ -161,7 +167,7 @@ def doc_ccp(db, d_from, d_to, logo):
         rows.append([d2(c["date"]), c.get("batch_no") or c.get("lot") or "", c.get("start_time") or "",
                      c.get("end_time") or "", n(c.get("temp"), 1), str(c.get("minutes") or ""),
                      "DA" if c.get("limit_ok") else "NE", c.get("result") or "", c.get("corrective") or "/",
-                     c.get("operator") or ""])
+                     op(db, c.get("operator"))])
     doc.add("table", ["Datum", "Broj serije / Lota", "Vrijeme početka kuhanja", "Vrijeme završetka kuhanja",
                       "Temperatura kuhanja (°C)", "Vrijeme kuhanja (min)", "Granica ≥ 100 °C", "Rezultat (OK/NE)",
                       "Korektivna radnja (ako postoji)", "Potpis operatera / Napomena"],
@@ -193,12 +199,12 @@ def _equipment_doc(db, key, eq, kind, d_from, d_to, logo):
         ([["Kapacitet", f"{n(eq['capacity_l'])} L"]] if eq.get("capacity_l") else []), [0.35, 0.65], {"size": 9.5})
     doc.add("space", 4)
     checks = db.eq_checks(eq["id"], kind, d_from, d_to)
-    rows = [[d2(c["date"]), c.get("note") or "", c.get("operator") or "", c.get("batch_no") or ""] for c in checks]
+    rows = [[d2(c["date"]), c.get("note") or "", op(db, c.get("operator")), c.get("batch_no") or ""] for c in checks]
     label = "Datum pregleda" if kind == "kontrola" else "Datum održavanja"
     doc.add("table", [label, "Napomena", "Operater", "Šarža"], rows + blanks(4, 5), [0.18, 0.5, 0.18, 0.14], {"size": 9.5})
     doc.add("h", "ODOBRENJE")
     last = checks[-1] if checks else {}
-    doc.add("sign", [("Operater (potpis)", last.get("operator") or db.get_setting("default_operator")),
+    doc.add("sign", [("Operater (potpis)", op(db, last.get("operator") or db.get_setting("default_operator"))),
                      ("Voditelj proizvodnje (potpis)", db.get_setting("prod_lead")),
                      ("Datum pregleda", d2(last.get("date")))])
     return doc
@@ -254,7 +260,7 @@ def doc_receipt(db, rec_id, logo):
     doc.add("checks", [("PRIHVAĆENO", ok), ("NEPRIHVATLJIVO – izolirati i obavijestiti QM", not ok)])
     doc.add("note", "Ako neprihvatljivo → ispuniti Zapis o nesukladnosti.")
     doc.add("h", "6. Potpisi")
-    doc.add("sign", [("Pregled izvršio", r.get("inspector")), ("QM provjera", r.get("qm")), ("Datum", d2(r.get("qm_date")))])
+    doc.add("sign", [("Pregled izvršio", op(db, r.get("inspector"))), ("QM provjera", r.get("qm")), ("Datum", d2(r.get("qm_date")))])
     return doc
 
 
@@ -283,7 +289,7 @@ def doc_cip(db, rec_id, logo):
     doc.add("checks", items, 2)
     doc.add("h", "3. PODACI O CIKLUSU")
     doc.add("kv", [("Datum CIP-a", d2(c.get("date"))), ("Vrijeme početka", c.get("start_time") or ""),
-                   ("Vrijeme završetka", c.get("end_time") or ""), ("Operater", c.get("operator") or "")])
+                   ("Vrijeme završetka", c.get("end_time") or ""), ("Operater", op(db, c.get("operator")))])
     doc.add("p", "Oprema ostaje zatvorena do početka proizvodnje:")
     doc.add("checks", [("DA", bool(c.get("closed"))), ("NE", not c.get("closed"))], True)
     doc.add("h", f"4. ALKALNO PRANJE ({c.get('alk_agent') or ''})")
@@ -307,7 +313,7 @@ def doc_cip(db, rec_id, logo):
     doc.add("h", "8. KOREKTIVNE RADNJE (ako ih je bilo)")
     doc.add("p", c.get("corrective") or "—")
     doc.add("h", "9. ODOBRENJE")
-    doc.add("sign", [("Operater (potpis)", c.get("op_sign") or c.get("operator")),
+    doc.add("sign", [("Operater (potpis)", op(db, c.get("op_sign") or c.get("operator"))),
                      ("Voditelj proizvodnje (potpis)", c.get("manager_sign") or db.get_setting("prod_lead")),
                      ("Datum pregleda", d2(c.get("review_date") or c.get("date")))])
     doc.add("note", "Oprema se ne smije koristiti za proizvodnju bez potvrde spremnosti sukladno ovom zapisniku.")
@@ -330,7 +336,7 @@ def doc_pest(db, rec_id, logo):
     doc.add("kv", [("Datum verifikacije", d2(p.get("ver_date"))), ("Proveo", p.get("ver_by") or ""),
                    ("Rezultat", p.get("ver_result") or "")])
     doc.add("h", "4. ODOBRENJE")
-    doc.add("sign", [("Operater (potpis)", p.get("operator")), ("Voditelj proizvodnje (potpis)", p.get("manager")),
+    doc.add("sign", [("Operater (potpis)", op(db, p.get("operator"))), ("Voditelj proizvodnje (potpis)", p.get("manager")),
                      ("Datum pregleda", d2(p.get("review_date")))])
     return doc
 

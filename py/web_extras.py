@@ -137,7 +137,8 @@ def print_recall(db, text, fmt="PDF", app=None):
     doc.add("meta", [("Upit (LOT)", text), ("Datum izvješća", d2ui(today()))])
     doc.add("table", ["Razina", "Što", "Detalj"], [[r["lvl"].strip(), r["what"], r["detail"]] for r in rows],
             [0.18, 0.34, 0.48], {"size": 9.5})
-    doc.add("sign", [("Izradio", db.get_setting("default_operator")), ("Voditelj HACCP tima", db.get_setting("haccp_lead"))])
+    doc.add("sign", [("Izradio", db.get_setting("haccp_doc_operator") or db.get_setting("default_operator")),
+                     ("Voditelj HACCP tima", db.get_setting("haccp_lead"))])
     return _render(doc, "sljedivost", fmt)
 
 

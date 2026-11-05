@@ -110,6 +110,8 @@ DEFAULT_SETTINGS = {
     "company": "Moja pivovara d.o.o.",
     "approved_by": "Ana Anić",
     "haccp_lead": "Ivo Ivić",
+    "haccp_doc_operator": "",
+    "haccp_brew_operator": "",
     "prod_lead": "Ivo Ivić",
     "default_operator": "Ivo Ivić",
     "shelf_months": "6",

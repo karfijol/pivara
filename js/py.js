@@ -5,7 +5,7 @@ const PY_FILES = ["db.py", "haccp_db.py", "extras_db.py", "docgen.py", "haccp_do
   "webutil.py", "labels.py", "webapi.py", "web_main.py", "web_extras.py", "web_haccp.py", "web_kegs.py", "web_costs.py", "web_offers.py", "web_more.py", "web_invoices.py"];
 const WHEELS = ["charset_normalizer-3.4.2-py3-none-any.whl", "reportlab-4.4.4-py3-none-any.whl",
   "python_docx-1.2.0-py3-none-any.whl", "et_xmlfile-2.0.0-py3-none-any.whl", "openpyxl-3.1.5-py2.py3-none-any.whl", "pdf417gen-0.8.1-py3-none-any.whl", "pypdf-5.4.0-py3-none-any.whl"];
-const BUNDLE = "py/app.zip?v=89705808";
+const BUNDLE = "py/app.zip?v=29750739";
 export const DB_PATH = "/data/skladiste.db";
 export const DATA_DIR = "/home/pyodide/Documents/PivovaraSkladiste";
 

@@ -5,7 +5,7 @@ import * as auth from "./auth.js";
 import { h, btn, toast, info, error, confirm, busy, openFile, dbProxy, Dialog } from "./ui.js";
 import { icon } from "./icons.js";
 
-export const VERSION = "web 2.15";
+export const VERSION = "web 2.17";
 
 // modul (datoteka u js/pages) za svaku stranicu (karticu); skupine i kartice su u auth.GROUPS
 const MOD_OF = {
@@ -146,6 +146,14 @@ class App {
     // podsjetnik za trošarine više ne iskače pri ulasku – prikazuje se kao traka na nadzornoj ploči
     this.checkDbSize();
     try { if (store.tokenExpiry) py.call("web_more.set_token_expires", store.tokenExpiry); } catch (e) { console.warn(e); }
+    // jednokratno (2.16): operateri na HACCP dokumentima – Ivan Barić, kuhanje i pakiranje Igor Ilić (mijenja se u Postavkama HACCP)
+    try {
+      if (this.db.get_setting("haccp_ops_set") !== "1") {
+        if (!this.db.get_setting("haccp_doc_operator")) this.db.set_setting("haccp_doc_operator", "Ivan Barić");
+        if (!this.db.get_setting("haccp_brew_operator")) this.db.set_setting("haccp_brew_operator", "Igor Ilić");
+        this.db.set_setting("haccp_ops_set", "1");
+      }
+    } catch (e) { console.warn(e); }
     // jednokratno: brojevi računa iz Excela "Matematika piva" za postojeće LOT-ove
     try {
       if (this.db.get_setting("excel_invoices_done") !== "1") {

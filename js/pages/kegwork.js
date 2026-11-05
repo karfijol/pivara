@@ -1,5 +1,5 @@
 // Rad s kegovima (za mobitel): istakanje, pranje, punjenje, otprema, povrat – skeniranjem QR koda ili upisom broja.
-import { h, btn, Page, Table, Dialog, Form, askForm, confirm, info, error, toast, fq, d2ui, today, num } from "../ui.js";
+import { h, btn, Page, Table, Dialog, Form, askForm, confirm, choice, info, error, toast, fq, d2ui, today, num } from "../ui.js";
 import { Scanner, beep } from "../scanner.js";
 import { qrSvg } from "../qr.js";
 
@@ -535,7 +535,12 @@ class KegWorkPage extends Page {
       const part = this.cart.filter((id) => p.litres[id] + 1e-9 < (this.consts.keg_fill || 17)).map((id) => `${byId.get(id).code} (${fq(p.litres[id], 2)} L)`);
       ask = `Punjenje: ${this.cart.length} keg(ova), ukupno ${fq(tot, 2)} L.` + (part.length ? `\n\nNisu puni: ${part.join(", ")} – ti se kegovi ne mogu izdati kupcu.` : "") + "\n\nPotvrditi?";
     }
-    if (!(await confirm(ask, f[2]))) return;
+    let printLabels = false;
+    if (this.flow === "fill") {
+      const c = await choice(ask, f[2], [["Odustani", null, "ghost"], ["Potvrdi", "ok", "ghost"], ["Potvrdi i ispiši naljepnice", "print"]]);
+      if (!c) return;
+      printLabels = c === "print";
+    } else if (!(await confirm(ask, f[2]))) return;
     let res;
     try { res = this.app.py.call("web_kegs.apply", this.flow, this.cart, p); } catch (e) { return error(e); }
     const ids = this.cart.slice();
@@ -552,7 +557,7 @@ class KegWorkPage extends Page {
       await d.show();
     } else if (this.flow === "fill") {
       toast(`Napunjeno ${res.done} keg(ova).` + (res.packaged ? " Pakiranje upisano u HACCP evidenciju." : ""));
-      if (await confirm("Ispisati naljepnice za napunjene kegove?", "Naljepnice")) {
+      if (printLabels) {
         try { const m = await import("./production.js"); await m.printKegLabels(this.app, ids); } catch (e) { error(e); }
       }
     } else toast(`${f[2]}: ${res.done} keg(ova) potvrđeno.`);

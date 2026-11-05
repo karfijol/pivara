@@ -75,7 +75,9 @@ class OfferDialog extends Dialog {
       h("div", { class: "sec", style: { marginTop: "12px" } }, "Proizvodi"),
       h("div", { class: "row gap", style: { flexWrap: "wrap", margin: "6px 0" } }, this.psel, this.pqty, btn("＋ Dodaj", () => this.addLine())),
       this.linesEl, this.totEl);
-    this.buttons("Spremi ponudu", () => this.ok());
+    this.buttons("Spremi ponudu", () => this.ok(false));
+    this.okBtn.className = "btn btn-ghost";
+    this.bar.append(btn("Spremi i izradi PDF", () => this.ok(true)));
     this.onEnter = null;
     this.toggleSaveCust();
     this.renderLines();
@@ -141,11 +143,11 @@ class OfferDialog extends Dialog {
     this.totEl.append(h("div", { class: "offer-sum" }, "UKUPNO: ", h("b", {}, `${eur(total)} €`)));
   }
 
-  ok() {
+  ok(pdf = false) {
     try {
       const d = this.form.get();
       for (const l of this.lines) if (!(Number(l.qty) > 0)) throw new Error(`Količina za „${l.name}” mora biti veća od 0.`);
-      this.close({ data: d, lines: this.lines, saveCustomer: !d.customer_id && this.saveCust.checked });
+      this.close({ data: d, lines: this.lines, saveCustomer: !d.customer_id && this.saveCust.checked, pdf });
     } catch (e) { this.err(e.message); }
   }
 }
@@ -225,7 +227,7 @@ class OffersPage extends Page {
       const oid = this.app.py.callKw("web_offers.save_offer", [res.data, res.lines], { id, save_customer: !!res.saveCustomer });
       this.app.refreshAll();
       toast("Ponuda spremljena.");
-      if (await confirm("Izraditi PDF ponude?", "Ponuda")) await this.app.doc("web_offers.offer_pdf", oid, "PDF");
+      if (res.pdf) await this.app.doc("web_offers.offer_pdf", oid, "PDF");
       return oid;
     } catch (e) {
       error(e);

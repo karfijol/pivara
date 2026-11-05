@@ -141,6 +141,16 @@ export class Dialog {
   }
 }
 
+// dijalog s više tipki: choice("Poruka", "Naslov", [["Odustani", null, "ghost"], ["Spremi", "save"], ["Spremi i ispiši", "print"]])
+export function choice(msg, title, buttons) {
+  const d = new Dialog(title, { width: 520 });
+  d.body.append(h("div", { class: "msg" }, msg));
+  d.bar.innerHTML = "";
+  for (const [label, value, kind] of buttons) d.bar.append(btn(label, () => d.close(value), kind || "primary"));
+  d.onEnter = () => d.close(buttons[buttons.length - 1][1]);
+  return d.show();
+}
+
 export function info(msg, title = "Obavijest") {
   const d = new Dialog(title, { width: 480 });
   d.body.append(h("div", { class: "msg" }, msg));

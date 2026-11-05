@@ -3,36 +3,40 @@ import * as py from "./py.js";
 import * as store from "./store.js";
 import * as auth from "./auth.js";
 import { h, btn, toast, info, error, confirm, busy, openFile, dbProxy, Dialog } from "./ui.js";
+import { icon } from "./icons.js";
 
-export const VERSION = "web 2.6";
+export const VERSION = "web 2.8";
 
+// [ključ, ikona (icons.js), naziv, modul stranice, rijetko korišteno -> skupina "Više"]
 const NAV = [
-  ["dash", "🏠", "Nadzorna ploča", "stock"],
-  [null, "", "SKLADIŠTE"],
-  ["items", "🌾", "Sirovine", "stock"],
-  ["lots", "🏷", "LOT-ovi / FIFO", "stock"],
-  ["chem", "🧪", "Kemikalije", "stock"],
-  ["kegs", "🛢", "Kegovi", "production"],
-  ["kegwork", "📱", "Rad s kegovima (QR)", "kegwork"],
-  [null, "", "PROIZVODNJA"],
-  ["recipes", "📋", "Recepture", "production"],
-  ["planner", "📅", "Planer fermentora", "production"],
-  ["batches", "🍺", "Šarže piva", "production"],
-  ["haccp", "🛡", "HACCP evidencije", "haccp"],
-  [null, "", "PRODAJA"],
-  ["offers", "💰", "Ponude", "offers"],
-  ["sales", "🤝", "Kupci i otpremnice", "production"],
-  [null, "", "NABAVA"],
-  ["reorder", "🛒", "Što naručiti", "stock"],
-  ["po", "📄", "Narudžbenice", "stock"],
-  ["suppliers", "🚚", "Dobavljači", "stock"],
-  [null, "", "IZVJEŠĆA"],
-  ["costs", "🧾", "Troškovi · knjigovođa", "costs"],
-  ["excise", "💶", "Trošarine", "production"],
-  ["recall", "🔎", "Sljedivost i povlačenje", "production"],
+  ["dash", "dash", "Nadzorna ploča", "stock"],
+  [null, "", "KEGOVI I PROIZVODNJA"],
+  ["kegwork", "kegwork", "Rad s kegovima (QR)", "kegwork"],
+  ["kegs", "kegs", "Kegovi", "production"],
+  ["batches", "batches", "Šarže piva", "production"],
+  ["recipes", "recipes", "Recepture", "production"],
+  ["planner", "planner", "Planer fermentora", "production"],
+  ["haccp", "haccp", "HACCP evidencije", "haccp"],
+  [null, "", "SKLADIŠTE I NABAVA"],
+  ["items", "items", "Sirovine", "stock"],
+  ["lots", "lots", "LOT-ovi / FIFO", "stock"],
+  ["reorder", "reorder", "Što naručiti", "stock"],
+  [null, "", "PRODAJA I IZVJEŠĆA"],
+  ["offers", "offers", "Ponude", "offers"],
+  ["sales", "sales", "Kupci i otpremnice", "production"],
+  ["costs", "costs", "Troškovi · knjigovođa", "costs"],
+  ["excise", "excise", "Trošarine", "production"],
+  ["chem", "chem", "Kemikalije", "stock", true],
+  ["po", "po", "Narudžbenice", "stock", true],
+  ["suppliers", "suppliers", "Dobavljači", "stock", true],
+  ["recall", "recall", "Sljedivost i povlačenje", "production", true],
   [null, "", ""],
-  ["settings", "⚙", "Postavke", "settings"],
+  ["settings", "settings", "Postavke", "settings"],
 ];
+const MOD_OF = Object.fromEntries(NAV.filter((n) => n[0]).map((n) => [n[0], n[3]]));
+const MODULES = ["stock", "production", "haccp", "settings", "kegwork", "costs", "offers"];
+// donja traka na mobitelu (prve dostupne prema ulozi)
+const BOTTOM = ["dash", "kegwork", "batches", "offers", "kegs", "sales", "settings"];
 
 class App {
   constructor() {
@@ -40,6 +44,8 @@ class App {
     this.py = py;
     this.pages = {};
     this.classes = {};
+    this.modules = {};
+    this._mods = {};
     this.current = null;
     this.navBtns = {};
   }
@@ -54,11 +60,7 @@ class App {
       progress("Python se ne može pokrenuti u ovom pregledniku: " + e.message + ". Koristite noviji Chrome, Edge ili Firefox.");
       throw e;
     }
-    const mods = await Promise.all(["stock", "production", "haccp", "settings", "kegwork", "costs", "offers"].map(async (m) => {
-      try { return [m, await import(`./pages/${m}.js`)]; } catch (e) { console.error(m, e); return [m, null]; }
-    }));
-    for (const [m, mod] of mods) if (mod && mod.PAGES) Object.assign(this.classes, mod.PAGES);
-    this.modules = Object.fromEntries(mods);
+    this.watchUpdates();
 
     this.sync = new store.Sync({
       getBytes: () => py.dbBytes(),
@@ -98,19 +100,42 @@ class App {
     if (this.sync.conflictLocal) this.localConflict();
   }
 
+  // stranice se učitavaju po potrebi: najprije samo ona koja se otvara, ostale u pozadini
+  loadModule(m) {
+    if (!this._mods[m]) {
+      this._mods[m] = import(`./pages/${m}.js`).then((mod) => {
+        if (mod && mod.PAGES) Object.assign(this.classes, mod.PAGES);
+        this.modules[m] = mod;
+        return mod;
+      }).catch((e) => { console.error(m, e); delete this._mods[m]; return null; });
+    }
+    return this._mods[m];
+  }
+  loadAllModules() { return Promise.all(MODULES.map((m) => this.loadModule(m))); }
+  // u pozadini, kad je program otvoren: ostale stranice, zatim alati za PDF/Word/Excel (prvi dokument je odmah gotov)
+  preload() {
+    const idle = window.requestIdleCallback || ((f) => setTimeout(f, 300));
+    idle(async () => {
+      await this.loadAllModules();
+      setTimeout(() => { py.ensureDocs().catch((e) => console.warn("alati za dokumente:", e)); }, 2500);
+    });
+  }
+
   async openApp(bytes) {
     py.openDb(bytes || null);
-    await this.loadLogos();
-    document.getElementById("splash")?.remove();
-    this.buildShell();
     const role = this.user ? this.user.role : "admin";
     const first = (auth.ROLE_PAGES[role] || ["dash"])[0];
-    const key = (location.hash || "#" + first).slice(1).split("/")[0];
+    let key = (location.hash || "#" + first).slice(1).split("/")[0];
+    if (!MOD_OF[key]) key = first;
+    await Promise.all([this.loadLogos(), this.loadModule(MOD_OF[key] || "stock")]);
+    document.getElementById("splash")?.remove();
+    this.buildShell();
     this.show(this.classes[key] ? key : first);
     window.addEventListener("hashchange", () => {
       const k = location.hash.slice(1).split("/")[0];
-      if (k && k !== this.current && this.classes[k]) this.show(k);
+      if (k && k !== this.current && MOD_OF[k]) this.show(k);
     });
+    this.preload();
     this.setupBack();
     setInterval(() => this.sync.poll(), 45000);
     document.addEventListener("visibilitychange", () => { if (!document.hidden) this.sync.poll(); });
@@ -121,17 +146,46 @@ class App {
   }
 
   afterStart() {
+    // podsjetnik za trošarine više ne iskače pri ulasku – prikazuje se kao traka na nadzornoj ploči
+    this.checkDbSize();
+  }
+
+  // baza raste s godinama: upozori ako se približi veličini kod koje spremanje postaje sporo
+  checkDbSize() {
     try {
-      const rem = this.db.excise_reminder();
-      if (rem && !this.db.is_dismissed({ key: `excise:${rem[0]}`, type: "Trošarine MI-PI" })) {
-        const k = "excise_popup_" + rem[0];
-        const t = new Date().toISOString().slice(0, 10);
-        if (localStorage.getItem(k) !== t) {
-          localStorage.setItem(k, t);
-          confirm(rem[1] + "\n\nOtvoriti Trošarine sada?", "Trošarine – podsjetnik").then((y) => { if (y) this.show("excise"); });
-        }
-      }
-    } catch (e) { console.warn(e); }
+      const n = py.dbBytes().length;
+      this.dbSize = n;
+      if (n > 5 * 1024 * 1024) toast(`Baza ima ${(n / 1048576).toFixed(1)} MB – spremanje je sporije. Javite se za arhiviranje starih podataka.`);
+    } catch { /* */ }
+  }
+
+  // ------------------------------------------------------------ nova verzija programa
+  // program se otvara odmah iz spremljene kopije; nova verzija preuzme se u pozadini i nudi se tipkom „Osvježi”
+  watchUpdates() {
+    if (!("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.getRegistration().then((reg) => {
+      if (!reg) return;
+      const offer = (w) => { if (w && navigator.serviceWorker.controller) this.updateBanner(w); };
+      if (reg.waiting) offer(reg.waiting);
+      reg.addEventListener("updatefound", () => {
+        const w = reg.installing;
+        if (w) w.addEventListener("statechange", () => { if (w.state === "installed") offer(w); });
+      });
+      setInterval(() => reg.update().catch(() => {}), 30 * 60 * 1000);
+    }).catch(() => {});
+    let reloading = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => { if (this._wantReload && !reloading) { reloading = true; location.reload(); } });
+  }
+  updateBanner(worker) {
+    if (document.getElementById("upd-banner")) return;
+    const bar = h("div", { id: "upd-banner", class: "upd-banner" }, h("span", {}, "Dostupna je nova verzija programa."),
+      btn("Osvježi", async () => {
+        try { if (this.sync && (this.sync.dirty || this.sync.saving)) await busy("Spremam…", () => this.sync.save()); } catch { /* */ }
+        this._wantReload = true;
+        worker.postMessage({ type: "skip" });
+        setTimeout(() => location.reload(), 3000);
+      }), btn("Kasnije", () => bar.remove(), "ghost"));
+    document.body.append(bar);
   }
 
   // ------------------------------------------------------------ logo
@@ -161,7 +215,7 @@ class App {
     if (!box) return;
     const u = this.logoUrl("app");
     box.innerHTML = "";
-    box.append(u ? h("img", { src: u, alt: "logo" }) : h("span", { class: "brand-txt" }, "🍺 Pivovara"));
+    box.append(u ? h("img", { src: u, alt: "logo" }) : h("img", { src: "icons/pivara-logo.png", alt: "PIVARA", class: "brand-pivara" }));
     const fav = document.querySelector("link[rel=icon]");
     const d = this.logoUrl("doc");
     if (fav && d) fav.href = d;
@@ -177,24 +231,49 @@ class App {
       h("div", { class: "brand-name", id: "brand-name" }, this.db.get_setting("brewery_name")));
     const navList = h("div", { class: "nav" });
     const role = this.user ? this.user.role : "admin";
-    for (const [key, icon, label] of NAV) {
-      if (!key) { if (!auth.ROLE_PAGES[role]) navList.append(h("div", { class: "nav-sec" }, label)); continue; }
+    let moreOpen = false;
+    try { moreOpen = localStorage.getItem("nav_more") === "1"; } catch { /* */ }
+    const moreBox = h("div", { class: "nav-more" + (moreOpen ? " open" : "") });
+    const moreBtn = h("button", { type: "button", class: "nav-btn nav-more-btn" }, h("span", { class: "ico" }, icon("more")), "Više",
+      h("span", { class: "chev" }, icon("chevron", 16)));
+    moreBtn.onclick = () => {
+      const o = moreBox.classList.toggle("open");
+      try { localStorage.setItem("nav_more", o ? "1" : "0"); } catch { /* */ }
+    };
+    for (const [key, ic, label, , rare] of NAV) {
+      if (!key) {
+        if (!auth.ROLE_PAGES[role] && label) navList.append(h("div", { class: "nav-sec" }, label));
+        else if (!label && moreBox.children.length) navList.append(moreBtn, moreBox);
+        continue;
+      }
       if (!auth.canSee(role, key)) continue;
-      const b = h("a", { class: "nav-btn", href: "#" + key, onclick: () => this.closeMenu() }, h("span", { class: "ico" }, icon), label);
+      const b = h("a", { class: "nav-btn", href: "#" + key, onclick: () => this.closeMenu() }, h("span", { class: "ico" }, icon(ic)), label);
       this.navBtns[key] = b;
-      navList.append(b);
+      (rare ? moreBox : navList).append(b);
     }
+    // mobitel: donja traka s najčešćim stranicama + "Izbornik"
+    this.bottomBtns = {};
+    const bottom = h("nav", { class: "bottom-bar" });
+    for (const key of BOTTOM.filter((k) => auth.canSee(role, k)).slice(0, 4)) {
+      const n = NAV.find((x) => x[0] === key);
+      const short = { dash: "Početna", kegwork: "Kegovi QR", batches: "Šarže", offers: "Ponude", kegs: "Kegovi", sales: "Kupci", settings: "Postavke" }[key] || n[2];
+      const b = h("a", { href: "#" + key, class: "bb-btn", onclick: () => this.closeMenu() }, icon(n[1], 22), h("span", {}, short));
+      this.bottomBtns[key] = b;
+      bottom.append(b);
+    }
+    bottom.append(h("button", { type: "button", class: "bb-btn", onclick: () => document.body.classList.toggle("menu-open") },
+      icon("menu", 22), h("span", {}, "Izbornik")));
     this.statusEl = h("div", { class: "sync-status", title: "" });
-    const who = this.user ? h("div", { class: "who" }, h("span", {}, "👤 " + this.user.name),
+    const who = this.user ? h("div", { class: "who" }, h("span", { class: "who-n" }, icon("user", 16), " " + this.user.name),
       h("a", { href: "#", onclick: (e) => { e.preventDefault(); this.logout(); } }, "Odjava")) : null;
     // tipka je uvijek vidljiva (osim kad je program već otvoren kao aplikacija); bez automatske ponude preglednika prikaže upute
     const standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
     const inst = h("a", { href: "#", class: "install" + (standalone ? " hidden" : ""), onclick: (e) => { e.preventDefault(); this.closeMenu(); this.install(); } },
-      "📲 Instaliraj kao aplikaciju");
+      icon("install", 16), " Instaliraj kao aplikaciju");
     this.side.append(brand, navList, h("div", { class: "side-foot" }, inst, who, this.statusEl, h("div", { class: "ver" }, VERSION)));
     const burger = h("button", { class: "burger", type: "button", onclick: () => document.body.classList.toggle("menu-open") }, "☰");
     const scrim = h("div", { class: "scrim", onclick: () => this.closeMenu() });
-    root.append(burger, this.side, scrim, this.main);
+    root.append(burger, this.side, scrim, this.main, bottom);
     this.applyLogo();
     this.syncStatus(this.sync.status);
     this.applyTheme();
@@ -270,14 +349,23 @@ class App {
   show(key, action = null, isBack = false) {
     const role = this.user ? this.user.role : "admin";
     if (!auth.canSee(role, key)) key = (auth.ROLE_PAGES[role] || ["dash"])[0];
+    if (!this.classes[key] && MOD_OF[key]) {
+      // stranica još nije učitana: učitaj je pa prikaži (traje djelić sekunde)
+      this.loadModule(MOD_OF[key]).then(() => { if (this.classes[key]) this.show(key, action, isBack); });
+      return null;
+    }
     const p = this.page(key);
     if (!p) return null;
     if (!isBack && this.current && this.current !== key) {
       this.backStack = (this.backStack || []).filter((k) => k !== key).concat(this.current).slice(-30);
     }
     if (this.current && this.navBtns[this.current]) this.navBtns[this.current].classList.remove("active");
+    if (this.current && this.bottomBtns && this.bottomBtns[this.current]) this.bottomBtns[this.current].classList.remove("active");
     this.current = key;
     if (this.navBtns[key]) this.navBtns[key].classList.add("active");
+    if (this.bottomBtns && this.bottomBtns[key]) this.bottomBtns[key].classList.add("active");
+    const nb = this.navBtns[key];
+    if (nb && nb.parentElement && nb.parentElement.classList.contains("nav-more")) nb.parentElement.classList.add("open");
     if (location.hash.slice(1).split("/")[0] !== key) history.replaceState(null, "", "#" + key);
     this.main.innerHTML = "";
     this.main.append(p.el);
@@ -310,7 +398,7 @@ class App {
     try { history.pushState({ pivovaraGuard: 1 }, "", location.href); } catch { /* */ }
     window.addEventListener("popstate", () => {
       const k = location.hash.slice(1).split("/")[0];
-      if (k && k !== this.current && this.classes[k]) return; // promjena adrese (#stranica) – obradi hashchange
+      if (k && k !== this.current && MOD_OF[k]) return; // promjena adrese (#stranica) – obradi hashchange
       if (this.goBack()) { try { history.pushState({ pivovaraGuard: 1 }, "", location.href); } catch { /* */ } }
     });
     // povlačenje prstom s lijeva na desno (mobitel)
@@ -385,7 +473,7 @@ class App {
     };
     pw.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
     un.addEventListener("keydown", (e) => { if (e.key === "Enter") pw.focus(); });
-    card.append(h("h1", {}, "🍺 Pivovara · Skladište"), h("p", { class: "sub" }, "Prijavite se svojim korisničkim imenom i lozinkom."),
+    card.append(h("img", { src: "icons/pivara-logo.png", alt: "PIVARA", class: "login-logo pivara-logo" }), h("h1", {}, "Skladište"), h("p", { class: "sub" }, "Prijavite se svojim korisničkim imenom i lozinkom."),
       h("label", { class: "flab" }, "Korisničko ime"), un, h("label", { class: "flab" }, "Lozinka"), pw,
       h("label", { class: "chk", style: { margin: "4px 0 12px" } }, rem, " Zapamti me na ovom uređaju (samo na svom mobitelu/računalu)"),
       msg, h("div", { class: "row gap" }, btn("Prijava", go)),
@@ -425,7 +513,7 @@ class App {
     let prev = {};
     try { prev = JSON.parse(localStorage.getItem("pivovara_sync_prev") || "{}"); } catch { /* */ }
     const c = cfg || prev;
-    card.append(h("h1", {}, "🍺 Pivovara · Skladište"), h("p", { class: "sub" },
+    card.append(h("img", { src: "icons/pivara-logo.png", alt: "PIVARA", class: "login-logo pivara-logo" }), h("h1", {}, "Skladište"), h("p", { class: "sub" },
       "Web verzija programa. Podaci se spremaju u vaš privatni GitHub repozitorij, pa su isti na svim uređajima."));
     const own = h("input", { placeholder: "npr. loopin-pivovara", value: c.owner || "" });
     const repo = h("input", { placeholder: "npr. pivovara-podaci", value: c.repo || "pivovara-podaci" });

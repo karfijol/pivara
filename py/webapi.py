@@ -77,6 +77,13 @@ def close_db():
 def flush():
     if DB_ is not None:
         DB_.con.commit()
+        try:  # sažmi bazu kad se nakupi puno praznog prostora (manja datoteka = brže spremanje na GitHub)
+            free = DB_.con.execute("PRAGMA freelist_count").fetchone()[0]
+            pages = DB_.con.execute("PRAGMA page_count").fetchone()[0]
+            if free > 64 and free > pages * 0.2:
+                DB_.con.execute("VACUUM")
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _default(o):

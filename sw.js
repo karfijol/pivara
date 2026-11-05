@@ -1,10 +1,21 @@
-// Service worker: program se može instalirati na mobitel / računalo (ikona) i brže se otvara.
-// Velike datoteke (Python, fontovi, knjižnice) čuvaju se u pregledniku; ostalo se uvijek dohvaća svježe s mreže
-// (ako nema mreže, koristi se zadnja spremljena verzija). Podaci (baza) NE idu kroz ovu predmemoriju.
-const STATIC = "pivovara-static-v2";   // pyodide, fontovi, ikone – mijenja se samo s novom verzijom Pythona
-const APP = "pivovara-app";
+// Service worker: program se otvara odmah iz spremljene kopije (i bez interneta), a nova verzija se preuzme
+// u pozadini i ponudi tipkom „Osvježi”. Velike datoteke (Python, fontovi, ikone) čuvaju se trajno.
+// Podaci (baza na GitHubu) i popis korisnika NE idu kroz ovu predmemoriju.
+// VERSION i FILES upisuje skripta za objavu (build_web.py).
+const VERSION = "web 2.8-52d8ade4";
+const FILES = ["./", "index.html", "manifest.webmanifest", "py/app.zip?v=6c2b675b", "css/app.css", "js/auth.js", "js/icons.js", "js/main.js", "js/py.js", "js/qr.js", "js/scanner.js", "js/store.js", "js/ui.js", "js/pages/costs.js", "js/pages/haccp.js", "js/pages/kegwork.js", "js/pages/offers.js", "js/pages/production.js", "js/pages/settings.js", "js/pages/stock.js", "js/vendor/jsQR.js", "js/vendor/qrcode-generator.js"];
+const STATIC = "pivovara-static-v2";   // pyodide, fontovi, ikone
+const APP = "pivovara-app-" + VERSION;
 
-self.addEventListener("install", (e) => { self.skipWaiting(); });
+self.addEventListener("install", (e) => {
+  e.waitUntil((async () => {
+    const c = await caches.open(APP);
+    await c.addAll(FILES.map((f) => new Request(f, { cache: "reload" })));
+    // prva instalacija ili prijelaz sa starog načina (bez verzija): odmah; inače čeka da korisnik klikne „Osvježi”
+    if (!self.registration.active || await caches.has("pivovara-app")) await self.skipWaiting();
+  })());
+});
+self.addEventListener("message", (e) => { if (e.data && e.data.type === "skip") self.skipWaiting(); });
 self.addEventListener("activate", (e) => {
   e.waitUntil((async () => {
     for (const k of await caches.keys()) if (k !== STATIC && k !== APP) await caches.delete(k);
@@ -18,28 +29,14 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(req.url);
   if (url.origin !== location.origin) return;          // GitHub API (podaci) – uvijek izravno
   if (url.pathname.endsWith("/users.json")) return;    // popis korisnika – uvijek svježe
-  const isStatic = /\/(pyodide|fonts|icons|js\/vendor)\//.test(url.pathname);
-  if (isStatic) {
-    e.respondWith((async () => {
-      const c = await caches.open(STATIC);
-      const hit = await c.match(req);
-      if (hit) return hit;
-      const res = await fetch(req);
-      if (res.ok) c.put(req, res.clone());
-      return res;
-    })());
-  } else {
-    e.respondWith((async () => {
-      const c = await caches.open(APP);
-      try {
-        const res = await fetch(req, { cache: "no-cache" });
-        if (res.ok) c.put(req, res.clone());
-        return res;
-      } catch (err) {
-        const hit = await c.match(req, { ignoreSearch: true });
-        if (hit) return hit;
-        throw err;
-      }
-    })());
-  }
+  const isStatic = /\/(pyodide|fonts|icons)\//.test(url.pathname);
+  e.respondWith((async () => {
+    const c = await caches.open(isStatic ? STATIC : APP);
+    const key = req.mode === "navigate" ? new Request(new URL("./", self.registration.scope).href) : req;
+    const hit = await c.match(key, { ignoreSearch: !isStatic });
+    if (hit) return hit;
+    const res = await fetch(req);
+    if (res.ok && (isStatic || req.mode === "navigate")) c.put(key, res.clone());
+    return res;
+  })());
 });

@@ -26,8 +26,12 @@ body { background: var(--bg); color: var(--text); font: 14px/1.4 "Segoe UI", sys
 /* ---------- splash / setup ---------- */
 #splash { position: fixed; inset: 0; display: grid; place-items: center; background: var(--bg); z-index: 1000; }
 .splash-box { text-align: center; max-width: 420px; padding: 24px; }
-.splash-logo { font-size: 56px; }
-.splash-title { font-size: 22px; font-weight: 700; margin: 6px 0 16px; }
+.splash-logo { width: 200px; max-width: 70vw; height: auto; display: block; margin: 0 auto; }
+.login-logo { width: 150px; height: auto; display: block; margin: 0 auto 6px; }
+.brand-pivara { width: 130px; height: auto; filter: invert(1); display: block; }
+:root[data-theme="dark"] .pivara-logo { filter: invert(1); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .pivara-logo { filter: invert(1); } }
+.splash-title { font-size: 15px; font-weight: 600; color: var(--muted); margin: 10px 0 16px; letter-spacing: .3px; }
 .splash-note { color: var(--muted); font-size: 12px; margin-top: 12px; }
 #splash-text { margin-top: 12px; }
 .spinner { width: 34px; height: 34px; border: 4px solid var(--line); border-top-color: var(--accent); border-radius: 50%;
@@ -310,3 +314,28 @@ table.grid tr.empty td { color: var(--muted); text-align: center; padding: 18px;
 .dash-alerts { margin: 0; }
 .dash-alerts > summary { font-size: 16px; flex-wrap: wrap; }
 .dash-alerts-sum { flex-basis: 100%; order: 9; font-weight: 400; }
+/* ---------- 2.8: ikone izbornika, "Više", donja traka na mobitelu, nova verzija ---------- */
+.nav-btn .ico { display: inline-flex; width: 22px; justify-content: center; align-items: center; opacity: .85; }
+.nav-btn .ico svg { width: 19px; height: 19px; }
+.nav-btn.active .ico { opacity: 1; }
+.nav-more-btn { width: 100%; background: none; border: 0; font: inherit; color: inherit; cursor: pointer; text-align: left; }
+.nav-more-btn .chev { margin-left: auto; display: inline-flex; transition: transform .15s; opacity: .7; }
+.nav-more { display: none; } .nav-more.open { display: block; }
+.nav-more-btn:has(+ .nav-more.open) .chev { transform: rotate(180deg); }
+.who-n, .install { display: inline-flex; align-items: center; gap: 4px; }
+.bottom-bar { display: none; }
+.upd-banner { position: fixed; left: 50%; transform: translateX(-50%); bottom: 18px; z-index: 900; background: var(--card); color: var(--text);
+  border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 6px 24px rgba(0,0,0,.18); padding: 10px 12px;
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap; max-width: calc(100vw - 24px); font-weight: 600; }
+@media (max-width: 700px) {
+  .bottom-bar { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 60; background: var(--card);
+    border-top: 1px solid var(--line); padding: 4px 2px calc(4px + env(safe-area-inset-bottom)); justify-content: space-around; }
+  .bb-btn { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px 2px; font-size: 10.5px;
+    color: var(--muted); text-decoration: none; background: none; border: 0; font-family: inherit; cursor: pointer; }
+  .bb-btn.active { color: var(--accent); font-weight: 700; }
+  .bb-btn svg { width: 22px; height: 22px; }
+  .main { padding-bottom: calc(70px + env(safe-area-inset-bottom)) !important; }
+  .upd-banner { bottom: calc(72px + env(safe-area-inset-bottom)); }
+  .burger { display: none !important; }
+  .page-head { padding-left: 0 !important; }
+}

@@ -5,6 +5,7 @@ const PY_FILES = ["db.py", "haccp_db.py", "extras_db.py", "docgen.py", "haccp_do
   "webutil.py", "labels.py", "webapi.py", "web_main.py", "web_extras.py", "web_haccp.py", "web_kegs.py", "web_costs.py", "web_offers.py"];
 const WHEELS = ["charset_normalizer-3.4.2-py3-none-any.whl", "reportlab-4.4.4-py3-none-any.whl",
   "python_docx-1.2.0-py3-none-any.whl", "et_xmlfile-2.0.0-py3-none-any.whl", "openpyxl-3.1.5-py2.py3-none-any.whl", "pdf417gen-0.8.1-py3-none-any.whl"];
+const BUNDLE = "py/app.zip?v=6c2b675b";
 export const DB_PATH = "/data/skladiste.db";
 export const DATA_DIR = "/home/pyodide/Documents/PivovaraSkladiste";
 
@@ -41,10 +42,18 @@ export async function init(progress = () => {}) {
   pyo.FS.mkdirTree(DATA_DIR);
   pyo.FS.mkdirTree("/out");
   progress("Učitavam program…");
-  await Promise.all(PY_FILES.map(async (f) => {
-    const r = await fetch(base + "py/" + f, { cache: "no-cache" });
-    if (r.ok) pyo.FS.writeFile("/app/" + f, await r.text());
-  }));
+  // svi Python moduli u jednoj datoteci (py/app.zip, izrađuje je skripta za objavu); ako je nema, datoteku po datoteku
+  let bundled = false;
+  try {
+    const r = await fetch(base + BUNDLE);
+    if (r.ok) { pyo.unpackArchive(await r.arrayBuffer(), "zip", { extractDir: "/app" }); bundled = true; }
+  } catch (e) { console.warn("app.zip", e); }
+  if (!bundled) {
+    await Promise.all(PY_FILES.map(async (f) => {
+      const r = await fetch(base + "py/" + f, { cache: "no-cache" });
+      if (r.ok) pyo.FS.writeFile("/app/" + f, await r.text());
+    }));
+  }
   pyo.runPython("import sys; sys.path.insert(0, '/app')");
   api = pyo.pyimport("webapi");
   return pyo;

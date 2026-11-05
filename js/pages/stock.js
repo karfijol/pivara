@@ -229,10 +229,19 @@ class DashboardPage extends Page {
     this.alertsBox.addEventListener("toggle", () => { this.alertsSum.style.display = this.alertsBox.open ? "none" : ""; });
     this.alertsSum.classList.add("dash-alerts-sum");
     this.alertsBox.querySelector("summary").append(this.alertsSum);
+    // HACCP zadaci: isto sklopljeno
+    this.tasksN = h("span", {});
+    this.tasksSum = h("div", { class: "muted dash-alerts-sum", style: { fontSize: "13px", marginTop: "4px" } });
+    this.tasksBox = h("details", { class: "card kw-recent dash-alerts" },
+      h("summary", {}, h("span", {}, "HACCP – što nedostaje"), this.tasksN, h("span", { class: "kw-recent-btn" }), this.tasksSum),
+      h("div", { class: "muted", style: { fontSize: "11.5px", margin: "0 0 6px" } }, "dvoklik = detalji / zanemari"), this.tasks.el);
+    this.tasksBox.addEventListener("toggle", () => { this.tasksSum.style.display = this.tasksBox.open ? "none" : ""; });
     const low = h("div", { class: "grid2" },
       h("div", {}, this.alertsBox),
-      h("div", {}, head("HACCP – što nedostaje"), this.tasks.el));
-    this.content.append(cards, charts, low);
+      h("div", {}, this.tasksBox));
+    // podsjetnik za trošarine (umjesto skočnog prozora pri ulasku)
+    this.exciseBar = h("div", { class: "banner warn", style: { display: "none", cursor: "pointer" }, onclick: () => this.app.show("excise") });
+    this.content.append(this.exciseBar, cards, charts, low);
   }
 
   refresh() {
@@ -273,6 +282,16 @@ class DashboardPage extends Page {
     for (const r of alerts) kinds[r.type] = (kinds[r.type] || 0) + 1;
     this.alertsSum.textContent = alerts.length ? Object.entries(kinds).map(([k, v]) => `${k}: ${v}`).join(" · ") : "✓ Sve je u redu – nema upozorenja.";
     this.tasks.setRows(tasks.length ? tasks : [{ id: 0, area: "✓", text: "HACCP evidencije su ažurne.", _tag: "ok" }]);
+    this.tasksN.textContent = tasks.length ? ` (${tasks.length})` : "";
+    const areas = {};
+    for (const r of tasks) areas[r.area] = (areas[r.area] || 0) + 1;
+    this.tasksSum.textContent = tasks.length ? Object.entries(areas).map(([k, v]) => `${k}: ${v}`).join(" · ") : "✓ HACCP evidencije su ažurne.";
+    try {
+      const rem = this.db.excise_reminder();
+      const show = rem && !this.db.is_dismissed({ key: `excise:${rem[0]}`, type: "Trošarine MI-PI" });
+      this.exciseBar.style.display = show ? "" : "none";
+      if (show) this.exciseBar.textContent = "⚠ " + rem[1] + " – kliknite za Trošarine.";
+    } catch (e) { console.warn(e); }
     let n = 0;
     const cnt = hxSync(this.app, "dismissedCount");
     try { n = cnt ? cnt(this.app) : this.db.dismissed_list().length; } catch (e) { console.error(e); }

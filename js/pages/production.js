@@ -510,13 +510,16 @@ class BatchesPage extends Page {
 // ================================================================== Kegovi
 class KegsPage extends Page {
   static title = "Skladište kegova";
-  static subtitle = "Ciklus: Čist → Pun (šarža) → Kod kupca → Prljav → Čist  ·  moguć višestruki odabir (Ctrl/Shift, na mobitelu dodirom)";
+  static subtitle = "Pregled i uređivanje kegova · svakodnevni rad (punjenje, pranje, otprema, povrat) radi se u „Rad s kegovima (QR)”";
 
   build() {
-    this.tbtn("＋ Novi kegovi", () => this.new());
-    for (const a of ["Napuni", "Isporuči", "Vrati", "Istočeno (pivnica)", "Očisti"]) {
-      this.tbtn(a, () => this.action(a), a === "Napuni" ? "primary" : "ghost");
-    }
+    this.tbtn("📱 Rad s kegovima (QR)", () => this.app.show("kegwork"));
+    this.tbtn("＋ Novi kegovi", () => this.new(), "ghost");
+    // ručna promjena statusa (ispravci) – za svakodnevni rad koristi se Rad s kegovima
+    this.manual = h("select", { class: "more", style: { width: "auto" }, title: "Ručna promjena statusa odabranih kegova" },
+      ["Ručna promjena…", "Napuni", "Isporuči", "Vrati", "Istočeno (pivnica)", "Očisti"].map((o) => h("option", { value: o }, o)));
+    this.manual.addEventListener("change", () => { const v = this.manual.value; this.manual.value = "Ručna promjena…"; if (v !== "Ručna promjena…") this.action(v); });
+    this.tb.insertBefore(this.manual, this.tbRight);
     this.tbtn("✎ Uredi", () => this.edit(), "ghost");
     this.tbtn("🗑 Obriši", () => this.delete(), "ghost");
     const opts = ["Više…", "🔳 QR oznake kegova", "🏷 Naljepnice (PDF)", "🏷 Naljepnice po vrsti piva", "Na servis", "Otpiši", "Povijest kega", "Izvoz CSV"];
@@ -664,7 +667,8 @@ class KegsPage extends Page {
       fields.push({ key: "operator", label: "Operater", type: "combo", editable: true, options: this.db.employee_names(),
         default: this.db.get_setting("default_operator") },
       { key: "cip", label: "CIP kegova proveden prije punjenja – otvori zapisnik", type: "check", default: 1 },
-      { key: "pack", label: "Upiši u HACCP evidenciju pakiranja", type: "check", default: 1 });
+      { key: "pack", label: "Upiši u HACCP evidenciju pakiranja", type: "check", default: 1 },
+      { key: "labels", label: "Nakon punjenja ispiši naljepnice", type: "check", default: 1 });
       fillFields(this, ids, fields);
     }
     if (action === "Isporuči") {
@@ -714,7 +718,7 @@ class KegsPage extends Page {
     }
     this.app.refreshAll();
     this.app.toast(`${action}: ${done} keg(ov)a.` + (action === "Napuni" && d.pack && filled.length ? " Pakiranje upisano u HACCP evidenciju." : ""));
-    if (action === "Napuni" && filled.length && await confirm("Ispisati naljepnice za napunjene kegove?", "Naljepnice")) {
+    if (action === "Napuni" && filled.length && d.labels) {
       await this.labels(filled);
     }
   }

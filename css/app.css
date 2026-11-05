@@ -1,40 +1,49 @@
-/* Izgled „Stout i jantar” (web 2.17): tamnosmeđi izbornik, krem podloga, jantarna boja; Inter + Space Grotesk */
+/* Izgled (web 2.19): svijetlo „Pjena”, tamno „Noćna pivnica”; font Inter */
 @font-face { font-family: "Inter"; font-style: normal; font-weight: 100 900; font-display: swap;
   src: url("../fonts/inter-latin-wght-normal.woff2") format("woff2-variations");
   unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
 @font-face { font-family: "Inter"; font-style: normal; font-weight: 100 900; font-display: swap;
   src: url("../fonts/inter-latin-ext-wght-normal.woff2") format("woff2-variations");
   unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
-@font-face { font-family: "Space Grotesk"; font-style: normal; font-weight: 300 700; font-display: swap;
-  src: url("../fonts/space-grotesk-latin-wght-normal.woff2") format("woff2-variations");
-  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
-@font-face { font-family: "Space Grotesk"; font-style: normal; font-weight: 300 700; font-display: swap;
-  src: url("../fonts/space-grotesk-latin-ext-wght-normal.woff2") format("woff2-variations");
-  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
 :root {
-  --accent: #D9921F; --accent-h: #C07D12; --accent-fg: #1E1915; --accent-soft: #F6E3BF;
-  --bg: #F5EFE4; --card: #FFFDF8; --text: #2A211B; --muted: #73655A; --line: #E8DDCD;
-  --side: #1E1915; --side-fg: #E0D5C7; --side-muted: #A8998A; --side-hover: #2E2620; --side-card: #2A231D;
-  --input: #FFFFFF; --input-line: #D9CCBA;
-  --bad: #B4472F; --warn: #9A5B0B; --ok: #2E7D3A; --sel: #F6E3BF; --row-alt: #FBF7F0; --head: #F2E9DB;
-  --danger: #B4472F; --shadow: 0 1px 2px rgba(42,33,27,.06), 0 2px 10px rgba(42,33,27,.04);
+  /* Svijetla tema „Pjena”: gotovo bijelo, crne glavne tipke, zlatna samo u detaljima */
+  --accent: #B8892B; --accent-h: #9C7424; --accent-fg: #FFFFFF; --accent-soft: #F4EEDF;
+  --primary: #1F1F1C; --primary-h: #3A3934; --primary-fg: #FFFFFF;
+  --bg: #FAFAF7; --card: #FFFFFF; --text: #1F1F1C; --muted: #6B6A64; --line: #ECEAE4;
+  --side: #FFFFFF; --side-fg: #3A3934; --side-muted: #6B6A64; --side-hover: #F4F2EC; --side-card: #F6F4EF;
+  --nav-act: #F1EDE3; --nav-act-fg: #1F1F1C; --side-line: #ECEAE4;
+  --input: #FFFFFF; --input-line: #DEDBD2;
+  --bad: #B4472F; --warn: #8A6418; --ok: #3E7A4A; --sel: #F4EEDF; --row-alt: #FCFBF8; --head: #F6F4EF;
+  --danger: #B4472F; --shadow: none; --card-border: 1px solid #ECEAE4;
   --font: "Inter", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
-  --font-head: "Space Grotesk", "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-head: "Inter", "Segoe UI", system-ui, sans-serif;
+  --logo-filter: none; --chart: #CFC7B6;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --accent: #E0A43A; --accent-h: #C98E26; --accent-soft: #4A3518; --bg: #16120F; --card: #221C17; --text: #EDE4D8; --muted: #A8998A;
-    --line: #3A3029; --side: #0F0C0A; --side-hover: #241D18; --side-card: #1E1813; --input: #2A231D; --input-line: #4A3D33;
-    --bad: #F08A72; --warn: #F2B544; --ok: #7FD08A; --sel: #4A3518; --row-alt: #1D1814; --head: #2A231D;
-    --shadow: 0 1px 2px rgba(0,0,0,.3); color-scheme: dark;
+    /* Tamna tema „Noćna pivnica” */
+    --accent: #E8B04B; --accent-h: #D49A35; --accent-fg: #121211; --accent-soft: #3A2F1A;
+    --primary: #E8B04B; --primary-h: #D49A35; --primary-fg: #121211;
+    --bg: #121211; --card: #1B1A18; --text: #EFEBE4; --muted: #9A948A; --line: #2B2A26;
+    --side: #0A0A09; --side-fg: #D9D4CB; --side-muted: #8F897F; --side-hover: #1A1917; --side-card: #1A1917;
+    --nav-act: #E8B04B; --nav-act-fg: #121211; --side-line: #1F1E1B;
+    --input: #1F1E1B; --input-line: #3A3833;
+    --bad: #F08A72; --warn: #E8B04B; --ok: #8FC48A; --sel: #3A2F1A; --row-alt: #171615; --head: #1F1E1B;
+    --danger: #D9604A; --shadow: none; --card-border: 1px solid #262522; --logo-filter: invert(1); --chart: #5E5749;
+    color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --accent: #E0A43A; --accent-h: #C98E26; --accent-soft: #4A3518; --bg: #16120F; --card: #221C17; --text: #EDE4D8; --muted: #A8998A;
-  --line: #3A3029; --side: #0F0C0A; --side-hover: #241D18; --side-card: #1E1813; --input: #2A231D; --input-line: #4A3D33;
-  --bad: #F08A72; --warn: #F2B544; --ok: #7FD08A; --sel: #4A3518; --row-alt: #1D1814; --head: #2A231D;
-  --shadow: 0 1px 2px rgba(0,0,0,.3); color-scheme: dark;
+  --accent: #E8B04B; --accent-h: #D49A35; --accent-fg: #121211; --accent-soft: #3A2F1A;
+  --primary: #E8B04B; --primary-h: #D49A35; --primary-fg: #121211;
+  --bg: #121211; --card: #1B1A18; --text: #EFEBE4; --muted: #9A948A; --line: #2B2A26;
+  --side: #0A0A09; --side-fg: #D9D4CB; --side-muted: #8F897F; --side-hover: #1A1917; --side-card: #1A1917;
+  --nav-act: #E8B04B; --nav-act-fg: #121211; --side-line: #1F1E1B;
+  --input: #1F1E1B; --input-line: #3A3833;
+  --bad: #F08A72; --warn: #E8B04B; --ok: #8FC48A; --sel: #3A2F1A; --row-alt: #171615; --head: #1F1E1B;
+  --danger: #D9604A; --shadow: none; --card-border: 1px solid #262522; --logo-filter: invert(1); --chart: #5E5749;
+  color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
@@ -46,7 +55,7 @@ body { background: var(--bg); color: var(--text); font: 14px/1.45 var(--font); }
 .splash-box { text-align: center; max-width: 420px; padding: 24px; }
 .splash-logo { width: 200px; max-width: 70vw; height: auto; display: block; margin: 0 auto; }
 .login-logo { width: 150px; height: auto; display: block; margin: 0 auto 6px; }
-.brand-pivara { width: 130px; height: auto; filter: invert(1); display: block; }
+.brand-pivara { width: 130px; height: auto; filter: var(--logo-filter); display: block; }
 :root[data-theme="dark"] .pivara-logo { filter: invert(1); }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .pivara-logo { filter: invert(1); } }
 .splash-title { font-size: 15px; font-weight: 600; color: var(--muted); margin: 10px 0 16px; letter-spacing: .3px; }
@@ -502,3 +511,109 @@ table.grid tbody tr.sel { background: var(--accent-soft) !important; color: var(
 .tile { background: var(--card); }
 .tile-ico { font-size: 30px; }
 #splash { background: var(--bg); }
+
+/* ---------- 2.18: jedinstvene radnje (ikone · radnje za odabrani redak · ⋯ Više) ---------- */
+.btn .lic { flex: none; }
+.btn span { white-space: nowrap; }
+.toolbar { gap: 8px; }
+.sel-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 4px 6px 4px 12px; border-radius: 14px;
+  background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); }
+.sel-bar.hidden { display: none !important; }
+.sel-bar .sel-cnt { font-size: 12.5px; font-weight: 700; color: var(--text); margin-right: 2px; }
+.sel-bar .btn { min-height: 36px; background: var(--card); }
+.sel-bar select { min-height: 36px; width: auto; }
+.sel-x { border: 0; background: transparent; color: var(--muted); width: 36px; height: 36px; border-radius: 10px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; }
+.sel-x:hover { background: var(--card); color: var(--text); }
+.menu-wrap { position: relative; }
+.menu-pop { position: absolute; right: 0; top: calc(100% + 6px); z-index: 60; min-width: 230px; background: var(--card); border: 1px solid var(--line);
+  border-radius: 14px; box-shadow: 0 12px 32px rgba(30,25,21,.18); padding: 6px; display: flex; flex-direction: column; }
+.menu-pop.hidden { display: none; }
+.menu-item { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 40px; padding: 0 12px; border: 0; border-radius: 10px;
+  background: transparent; color: var(--text); font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.menu-item:hover, .menu-item:focus-visible { background: var(--accent-soft); outline: none; }
+.menu-item.danger { color: var(--bad); }
+.menu-item .lic { color: var(--muted); }
+.menu-item.danger .lic { color: var(--bad); }
+.tile-ico .lic { width: 30px; height: 30px; }
+/* mobitel / dodir: veće tipke, radnje za odabrani zapis u traci iznad donjeg izbornika */
+@media (pointer: coarse), (max-width: 700px) {
+  .btn { min-height: 46px; padding: 0 16px; font-size: 14.5px; }
+  .btn-sm { min-height: 40px; }
+  input, select, textarea { min-height: 46px; font-size: 16px; }
+  input[type=checkbox] { min-height: 0; width: 22px; height: 22px; }
+  .nav-btn { min-height: 48px; }
+  .menu-item { min-height: 48px; font-size: 15px; }
+  .page-tab { padding: 12px 14px; }
+  .seg button { min-height: 40px; padding: 0 14px; }
+}
+@media (max-width: 700px) {
+  .toolbar > .btn, .toolbar .tb-right > .btn, .toolbar .menu-wrap > .btn { flex: 1 1 auto; }
+  .toolbar .tb-right { order: 5; width: 100%; flex-wrap: nowrap; margin-left: 0; }
+  .tb-right .search { flex: 1 1 auto; min-width: 0; width: auto; order: 0; }
+  .tb-right .menu-wrap { order: 1; flex: none; }
+  .tb-right .menu-wrap > .btn { flex: none; }
+  .sel-bar .sel-x { order: -1; }
+  .sel-bar { position: fixed; left: 8px; right: 8px; bottom: calc(70px + env(safe-area-inset-bottom)); z-index: 70; flex-wrap: nowrap;
+    overflow-x: auto; padding: 8px; box-shadow: 0 8px 28px rgba(30,25,21,.28); background: var(--card); scrollbar-width: none; }
+  .sel-bar::-webkit-scrollbar { display: none; }
+  .sel-bar .btn, .sel-bar select { min-height: 48px; flex: none; }
+  .sel-bar .sel-cnt { display: none; }
+  .sel-x { width: 48px; height: 48px; flex: none; }
+  body.has-selbar .main { padding-bottom: calc(140px + env(safe-area-inset-bottom)) !important; }
+  .menu-pop { position: fixed; left: 8px; right: 8px; top: auto; bottom: calc(70px + env(safe-area-inset-bottom)); min-width: 0;
+    border-radius: 18px; padding: 8px; z-index: 96; }
+}
+/* ikone u obavijestima (umjesto emojija) */
+.banner { display: flex; gap: 10px; align-items: flex-start; }
+.banner.warn::before, .banner.bad::before, .banner.ok::before { content: ""; flex: none; width: 18px; height: 18px; margin-top: 1px;
+  background: currentColor; -webkit-mask: var(--bi) center / contain no-repeat; mask: var(--bi) center / contain no-repeat; }
+.banner.warn, .banner.bad { --bi: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3'/%3E%3Cpath d='M12 9v4'/%3E%3Cpath d='M12 17h.01'/%3E%3C/svg%3E"); }
+.banner.ok { --bi: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='m9 12 2 2 4-4'/%3E%3C/svg%3E"); }
+.banner.dry-bar::before { display: none; }
+.banner.dry-bar { flex-direction: column; }
+/* tražilica s ikonom */
+input.search { padding-left: 36px; background: var(--input) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2373655A' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.3-4.3'/%3E%3C/svg%3E") no-repeat 11px center / 17px; }
+.modal-x { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 10px; }
+.modal-x:hover { background: var(--accent-soft); color: var(--text); }
+.subnav .side2 a { display: flex; align-items: center; gap: 10px; min-height: 40px; }
+.subnav .side2 a .lic { flex: none; opacity: .8; }
+.inv-file { display: flex; align-items: center; gap: 8px; }
+
+/* ---------- 2.19: izgled „Pjena” (svijetlo) i „Noćna pivnica” (tamno) ---------- */
+h1, h2, h3, .page-head h1, .modal-head, .kpi .val { letter-spacing: -0.02em; }
+.page-head h1 { font-weight: 700; }
+.side { border-right: 1px solid var(--side-line); }
+.nav-btn { color: var(--side-fg); }
+.nav-btn.active { background: var(--nav-act); color: var(--nav-act-fg); font-weight: 650; }
+.side-foot { border: 1px solid var(--side-line); }
+.brand-name { color: var(--side-muted); }
+.card, .kpi, .tile, .setup, .table-wrap, .seg { box-shadow: none; border: var(--card-border); }
+.kpi .bar { height: 3px; opacity: .85; }
+.btn-primary { background: var(--primary); color: var(--primary-fg); }
+.btn-primary:hover { background: var(--primary-h); }
+.btn-ghost { background: var(--card); border: 1px solid var(--input-line); }
+.btn-ghost:hover { border-color: var(--text); background: var(--card); }
+.seg button.on, .set-tabs button.on { background: var(--primary); color: var(--primary-fg); }
+.set-tabs button.on { border-color: var(--primary); }
+.page-tab.active { border-bottom-color: var(--text); }
+.sec { border-bottom-color: var(--line); }
+table.grid tbody tr.sel { background: var(--sel) !important; box-shadow: inset 3px 0 0 var(--accent); }
+table.grid tbody tr:hover { outline-color: var(--input-line); }
+.sel-bar { background: var(--card); border: 1px solid var(--input-line); }
+.bottom-bar { background: var(--side) !important; border-top: 1px solid var(--side-line) !important; }
+.bb-btn { color: var(--side-muted) !important; }
+.bb-btn.active { color: var(--text) !important; }
+:root[data-theme="dark"] .bb-btn.active { color: var(--accent) !important; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .bb-btn.active { color: var(--accent) !important; } }
+.modal { border: var(--card-border); }
+.modal-back { background: rgba(20, 20, 18, .42); }
+.menu-pop { box-shadow: 0 10px 30px rgba(20,20,18,.14); }
+/* logo pivovare u izborniku: svijetli logo na svijetloj podlozi (i obrnuto) automatski se zatamni / posvijetli */
+.brand-logo img.logo-light { filter: brightness(0); }
+:root[data-theme="dark"] .brand-logo img.logo-light { filter: none; }
+:root[data-theme="dark"] .brand-logo img.logo-dark { filter: invert(1); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .brand-logo img.logo-light { filter: none; }
+  :root:not([data-theme="light"]) .brand-logo img.logo-dark { filter: invert(1); }
+}

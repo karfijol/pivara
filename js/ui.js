@@ -1,6 +1,7 @@
 // Zajedničke komponente sučelja (web): tablice, obrasci, dijalozi, stranica.
 // Obrasci: opis polja (key, label, type, options, required, default...).
 import * as py from "./py.js";
+import { icon } from "./icons.js";
 
 // ---------------------------------------------------------------- DOM pomoćnik
 export function h(tag, attrs = {}, ...kids) {
@@ -82,9 +83,112 @@ export function checkTime(...vals) {
 }
 
 // ---------------------------------------------------------------- tipke, poruke
-export function btn(text, onClick, kind = "primary", attrs = {}) {
-  return h("button", { class: `btn btn-${kind}`, type: "button", onclick: onClick, ...attrs }, text);
+// ---------------------------------------------------------------- ikone na tipkama (jedan set: Lucide)
+// Naziv tipke može početi emojijem ili znakom (npr. "🖨 PDF", "＋ Nova ponuda"): znak se zamijeni linijskom ikonom.
+const ICON_RULES = [
+  [/^dan kuhanja/, "flame"], [/^(planiraj|＋ planiraj)/, "calplus"], [/^(nov[aio]?|dodaj)\b/, "plus"],
+  [/^uredi/, "edit"], [/^(obriši|ukloni)/, "trash"], [/ispis za mi-pi|^ispis|popis za vozača/, "printer"], [/pdf/, "pdf"],
+  [/word/, "doc"], [/excel/, "excel"], [/izvoz csv|izradi sve|arhiv|zip/, "download"], [/^povijest/, "history"],
+  [/^mjerenja/, "chart"], [/^(traži|pronađi)/, "search"], [/^kopiraj/, "copy"], [/^otpremnica|otprema/, "truck"],
+  [/^plati/, "card"], [/^pogledaj/, "eye"], [/račun|primka iz/, "receipt"], [/^slikaj/, "camera"],
+  [/poslano/, "send"], [/^zaprimi/, "pkgcheck"], [/^otkaži/, "ban"], [/^uvezi/, "upload"], [/^postavke/, "cog"],
+  [/naljepnic/, "tag"], [/qr oznake|qr kod/, "qr"], [/rad s kegovima/, "kegwork"], [/^oprema/, "scan"], [/^osvježi/, "refresh"],
+  [/naručiti|narudžbenic/, "cart"], [/haccp/, "shield"], [/zanemaren/, "belloff"], [/^(◀ )?ranije/, "left"],
+  [/kasnije/, "right"], [/^danas/, "planner"], [/cijene po kupcu|kupac|kupca/, "users"], [/prijavi \/ ne/, "check"],
+  [/prijavljeno|plaćeno|dodano/, "checkc"], [/servis/, "wrench"], [/primka/, "pkgin"], [/izdavanje/, "pkgout"],
+  [/^otpis|otpiši/, "minusc"], [/korekcija/, "sliders"], [/kartica artikla/, "card2"], [/sljedivost/, "route"],
+  [/^storno/, "undo"], [/^spremi|^✔ spremi/, "save"], [/hmelj/, "leaf"], [/sigurnosni list/, "doc"],
+  [/označi otvoreno/, "drops"], [/^(skeniraj|scan)/, "scan"], [/^zapisnik/, "clipcheck"]];
+const LEAD = /^[^\p{L}\p{N}"„(]+/u;
+export function splitLabel(text) {
+  if (typeof text !== "string") return { label: text, ic: null, had: false };
+  const m = text.match(LEAD);
+  const label = (m ? text.slice(m[0].length) : text).replace(/\s*[▶◀]$/, "").trim();
+  const low = label.toLowerCase();
+  const r = ICON_RULES.find(([re]) => re.test(low));
+  return { label, ic: r ? r[1] : null, had: !!m };
 }
+// promjena natpisa tipke bez brisanja ikone
+export function setLabel(b, text) {
+  if (!b) return;
+  const { label } = splitLabel(text);
+  const sp = b.querySelector(":scope > span");
+  if (sp) sp.textContent = label; else b.textContent = label;
+}
+export function btn(text, onClick, kind = "primary", attrs = {}) {
+  const { label, ic, had } = splitLabel(text);
+  // ikona: kad je naziv imao emoji/znak, ili kad je to tipka alatne trake (attrs.icon === true)
+  const useIc = attrs.icon === true ? ic : (typeof attrs.icon === "string" ? attrs.icon : (had ? (ic || null) : null));
+  const a = { ...attrs }; delete a.icon;
+  const b = h("button", { class: `btn btn-${kind}`, type: "button", onclick: onClick, ...a });
+  if (useIc) b.append(icon(useIc, 18));
+  if (label) b.append(h("span", {}, label));
+  else if (!useIc) b.append(text);
+  return b;
+}
+
+// ---------------------------------------------------------------- alatna traka: glavno · uz odabrani redak · ⋯ Više
+const MORE_RE = /^(obriši|ukloni|storno|otpis|izvoz csv|otkaži|korekcija|postavke|uvezi|kartica artikla|zanemarena|sigurnosni list|naljepnice|svi kegovi|qr oznake|word|osvježi|označi otvoreno|ručna primka|izdavanje|na servis|otpiši)/;
+const REC_RE = /^(uredi|pdf|ispis \/ pdf|mjerenja|povijest|sljedivost|kopiraj|otpremnica$|plati|pogledaj|račun \/ cijena|označi poslano|zaprimi|cijene po kupcu|prijavi \/ ne prijavi|primka$|označi plaćeno)/;
+export function actionGroup(label, hint) {
+  if (hint) return hint;
+  const low = String(label || "").toLowerCase();
+  if (MORE_RE.test(low)) return "more";
+  if (REC_RE.test(low)) return "rec";
+  return "main";
+}
+// owner: Page ili HACCP panel (ima tb, tbRight, _acts); table: glavna tablica ili null (bez trake za odabrani redak)
+export function layoutToolbar(owner, table) {
+  const acts = owner._acts || [];
+  if (!acts.length) return;
+  const tb = owner.tb, right = owner.tbRight;
+  const rec = table ? acts.filter((a) => a.group === "rec") : [];
+  const more = acts.filter((a) => a.group === "more" || (!table && a.group === "more"));
+  // padajući izbornici za odabrane retke (npr. „Ručna promjena…”, „Status…”) idu uz radnje za redak
+  const selects = table ? [...tb.querySelectorAll(":scope > select.more")] : [];
+  if (rec.length || selects.length) {
+    const bar = h("div", { class: "sel-bar hidden", role: "toolbar", "aria-label": "Radnje za odabrani zapis" });
+    const cnt = h("span", { class: "sel-cnt" });
+    const clear = h("button", { type: "button", class: "sel-x", "aria-label": "Poništi odabir", title: "Poništi odabir" }, icon("x", 18));
+    clear.onclick = () => { table.select([]); };
+    bar.append(cnt);
+    for (const a of rec) { a.b.classList.remove("btn-primary"); a.b.classList.add("btn-ghost"); bar.append(a.b); }
+    for (const s of selects) bar.append(s);
+    bar.append(clear);
+    tb.insertBefore(bar, right);
+    const upd = () => {
+      const n = table.sel.size;
+      bar.classList.toggle("hidden", !n);
+      cnt.textContent = n > 1 ? `${n} odabrano` : "Odabrano:";
+      document.body.classList.toggle("has-selbar", !!n && owner.el && owner.el.isConnected);
+    };
+    table.onSelChange(upd);
+    owner._selUpd = upd;
+    upd();
+  }
+  if (more.length) {
+    const menu = h("div", { class: "menu-pop hidden", role: "menu" });
+    for (const a of more) {
+      a.b.className = "menu-item";
+      a.b.setAttribute("role", "menuitem");
+      if (/^(obriši|ukloni|otpis|otpiši|storno)/.test(a.label.toLowerCase())) a.b.classList.add("danger");
+      a.b.addEventListener("click", () => menu.classList.add("hidden"));
+      menu.append(a.b);
+    }
+    const mb = btn("Više", () => {
+      const open = menu.classList.contains("hidden");
+      document.querySelectorAll(".menu-pop").forEach((m) => m.classList.add("hidden"));
+      menu.classList.toggle("hidden", !open);
+      mb.setAttribute("aria-expanded", open ? "true" : "false");
+    }, "ghost", { icon: "more", "aria-haspopup": "menu", "aria-expanded": "false" });
+    const wrap = h("div", { class: "menu-wrap" }, mb, menu);
+    right.prepend(wrap);
+  }
+}
+document.addEventListener("click", (e) => {
+  if (!e.target.closest || e.target.closest(".menu-wrap")) return;
+  document.querySelectorAll(".menu-pop:not(.hidden)").forEach((m) => m.classList.add("hidden"));
+});
 
 let toastTimer = null;
 export function toast(text, ms = 3500) {
@@ -103,7 +207,7 @@ export class Dialog {
     this.back = h("div", { class: "modal-back", style: { zIndex: ++zTop } });
     this.box = h("div", { class: "modal " + cls, style: { width: `min(${width}px, calc(100vw - 24px))` }, role: "dialog" });
     this.head = h("div", { class: "modal-head" }, h("span", {}, title),
-      h("button", { class: "modal-x", type: "button", title: "Zatvori", onclick: () => this.close(null) }, "✕"));
+      h("button", { class: "modal-x", type: "button", title: "Zatvori", "aria-label": "Zatvori", onclick: () => this.close(null) }, icon("x", 20)));
     this.body = h("div", { class: "modal-body" });
     this.errEl = h("div", { class: "modal-err" });
     this.bar = h("div", { class: "modal-bar" });
@@ -197,8 +301,8 @@ export function saveBlob(blob, name, offerOpen = false) {
       }, "ghost"));
     }
   } catch { /* stariji preglednik */ }
-  if (offerOpen) d.bar.append(h("a", { class: "btn btn-ghost", href: url, target: "_blank", rel: "noopener" }, "👁 Otvori"));
-  d.bar.append(h("a", { class: "btn btn-primary", href: url, download: name, onclick: () => setTimeout(() => d.close(), 300) }, "⬇ Preuzmi"));
+  if (offerOpen) d.bar.append(h("a", { class: "btn btn-ghost", href: url, target: "_blank", rel: "noopener" }, icon("eye", 18), h("span", {}, "Otvori")));
+  d.bar.append(h("a", { class: "btn btn-primary", href: url, download: name, onclick: () => setTimeout(() => d.close(), 300) }, icon("download", 18), h("span", {}, "Preuzmi")));
   d.show().then(() => setTimeout(() => URL.revokeObjectURL(url), 60000));
 }
 export function downloadText(text, name, type = "text/csv") {
@@ -264,7 +368,11 @@ export class Table {
     this._paintSel();
     if (this.onSelect) this.onSelect(this.selectedId());
   }
-  _paintSel() { for (const tr of this.tbody.children) tr.classList.toggle("sel", this.sel.has(tr.dataset.id)); }
+  _paintSel() {
+    for (const tr of this.tbody.children) tr.classList.toggle("sel", this.sel.has(tr.dataset.id));
+    for (const f of this._selL || []) { try { f(); } catch (e) { console.warn(e); } }
+  }
+  onSelChange(f) { (this._selL || (this._selL = [])).push(f); }
   setRows(rows) { this.rows = rows || []; this.render(); }
   setFilter(t) { this.filter = (t || "").toLowerCase().trim(); this.render(); }
   sortBy(key) {
@@ -305,6 +413,7 @@ export class Table {
     this.tbody.innerHTML = "";
     this.tbody.append(frag);
     if (!rows.length) this.tbody.append(h("tr", { class: "empty" }, h("td", { colspan: this.columns.length }, "Nema podataka.")));
+    for (const f of this._selL || []) { try { f(); } catch (e) { console.warn(e); } }
   }
   _conv(s) { const n = Number(s); return String(n) === s ? n : s; }
   selectedIds() { return [...this.sel].map((s) => this._conv(s)); }
@@ -503,13 +612,23 @@ export class Page {
   get db() { return this.app.db; }
   build() {}
   refresh() {}
+  // kind: "primary" | "ghost", može i "ghost|rec" / "|more" / "|main" (inače skupinu odredi naziv tipke)
   tbtn(text, fn, kind = "primary", right = false) {
-    const b = btn(text, async () => { try { await fn(); } catch (e) { this.err(e); } }, kind);
+    const [k, grp] = String(kind || "primary").split("|");
+    const { label } = splitLabel(text);
+    const b = btn(text, async () => { try { await fn(); } catch (e) { this.err(e); } }, k || "primary", { icon: true });
     if (right) this.tbRight.append(b); else this.tb.insertBefore(b, this.tbRight);
+    (this._acts || (this._acts = [])).push({ b, label, group: actionGroup(label, grp) });
     return b;
   }
+  // nakon build(): radnje za odabrani redak i ⋯ Više (static flat = true: stranica bez tablice za odabir)
+  layoutActions() {
+    const C = this.constructor;
+    const t = C.flat ? null : (this.mainTable || this.table || this.t || null);
+    layoutToolbar(this, t instanceof Table ? t : null);
+  }
   search(table) {
-    const s = h("input", { class: "search", placeholder: "🔍 Traži…", oninput: () => table.setFilter(s.value) });
+    const s = h("input", { class: "search", placeholder: "Traži…", oninput: () => table.setFilter(s.value) });
     this.tbRight.append(s);
     return s;
   }

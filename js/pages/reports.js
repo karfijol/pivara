@@ -93,6 +93,7 @@ function T(columns, opts = {}) {
 // ------------------------------------------------------------------ godišnji pregled
 class YearPage extends Page {
   static title = "Godišnji pregled";
+  static flat = true;
   static subtitle = "Proizvedeno pivo po mjesecima i vrsti piva, proizvedeno prema isporučenom i prodaja po kupcima";
 
   build() {
@@ -137,6 +138,7 @@ class YearPage extends Page {
 // ------------------------------------------------------------------ kegovi za povrat
 class ReturnsPage extends Page {
   static title = "Kegovi za povrat";
+  static flat = true;
   static subtitle = "Kegovi kod kupaca: koliko dugo su vani i koliko depozita je u njima · popis za vozača";
 
   build() {

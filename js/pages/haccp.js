@@ -1,5 +1,6 @@
 // HACCP evidencije (prijenos haccp_ui.py) i upozorenja / zadaci (prijenos alerts_ui.py).
-import { h, btn, Page, Table, Dialog, Form, askForm, confirm, info, error, toast, fq, d2ui, today, checkTime, sg } from "../ui.js";
+import { h, btn, Page, Table, Dialog, Form, askForm, confirm, info, error, toast, fq, d2ui, today, checkTime, sg, layoutToolbar, splitLabel, actionGroup, setLabel } from "../ui.js";
+import { icon } from "../icons.js";
 
 // ------------------------------------------------------------------ konstante iz haccp_db (jednom iz Pythona)
 let CONST = null;
@@ -273,14 +274,18 @@ class Panel {
     this.el.append(h("div", { class: "panel-head" }, h("h2", {}, C.title), C.info ? h("div", { class: "muted" }, C.info) : null),
       this.tb, this.body);
     this.build();
+    try { layoutToolbar(this, null); } catch (e) { console.error(e); }
   }
   get db() { return this.app.db; }
   build() {}
   refresh() {}
   err(e) { console.error(e); error(e instanceof Error ? e.message : String(e)); }
   tbtn(text, fn, kind = "ghost", right = false) {
-    const b = btn(text, async () => { try { await fn(); } catch (e) { this.err(e); } }, kind);
+    const [k, grp] = String(kind || "ghost").split("|");
+    const { label } = splitLabel(text);
+    const b = btn(text, async () => { try { await fn(); } catch (e) { this.err(e); } }, k || "ghost", { icon: true });
     if (right) this.tbRight.append(b); else this.tb.insertBefore(b, this.tbRight);
+    (this._acts || (this._acts = [])).push({ b, label, group: actionGroup(label, grp) });
     return b;
   }
   printButtons() {
@@ -340,7 +345,7 @@ class TasksPanel extends Panel {
     const rows = rowsFor(this.db.haccp_tasks());
     this.table.setRows(rows.length ? rows : [{ id: 0, area: "✓", text: "Sve HACCP evidencije su ažurne.", _tag: "ok" }]);
     const n = dismissedCount(this.app);
-    this.disBtn.textContent = n ? `🔕 Zanemarena (${n})` : "🔕 Zanemarena";
+    setLabel(this.disBtn, n ? `Zanemarena (${n})` : "Zanemarena");
   }
 
   async goto() { await openWarningFromTable(this.app, this.table, () => this.refresh()); }
@@ -691,7 +696,7 @@ class ReceiptPanel extends RecordPanel {
 
   refresh() {
     const n = this.db.lots_without_receipt().length;
-    this.pending.textContent = n ? `⚠ ${n} primljenih LOT-ova (zadnjih 90 dana) još nema zapisnik o prijemu.` : "";
+    this.pending.textContent = n ? `${n} primljenih LOT-ova (zadnjih 90 dana) još nema zapisnik o prijemu.` : "";
     this.pending.style.display = n ? "" : "none";
     this.table.setRows(this.db.receipts().map((r) => ({
       id: r.id, date: d2ui(r.date), material: r.material || "", type: r.mat_type || "", lot: r.lot_no || "",
@@ -1152,13 +1157,13 @@ class HaccpSettingsPanel extends Panel {
 }
 
 // ------------------------------------------------------------------ HACCP stranica
-const SECTIONS = [["tasks", "📋  Pregled i zadaci", TasksPanel], [null, "PROIZVODNJA", null],
-  ["brew", "🔥  Kuhanje i utrošak", BrewPanel], ["ccp", "🌡  CCP kuhanje sladovine", CCPPanel],
-  ["ferm", "🧫  Fermentacija", FermPanel], ["pack", "🛢  Pakiranje", PackPanel],
-  [null, "PRP / HIGIJENA", null], ["cip", "🧼  CIP postupak", CIPPanel], ["mill", "⚙  Kontrola mlina", MillPanel],
-  ["maint", "🔧  Održavanje opreme", MaintPanel], ["pest", "🐭  Štetnici", PestPanel],
-  [null, "OSTALO", null], ["receipt", "📦  Prijem robe i ambalaže", ReceiptPanel],
-  ["training", "🎓  Edukacija", TrainingPanel], ["hset", "⚙  Postavke HACCP", HaccpSettingsPanel]];
+const SECTIONS = [["tasks", "Pregled i zadaci", TasksPanel, "listc"], [null, "PROIZVODNJA", null],
+  ["brew", "Kuhanje i utrošak", BrewPanel, "flame"], ["ccp", "CCP kuhanje sladovine", CCPPanel, "thermo"],
+  ["ferm", "Fermentacija", FermPanel, "beer"], ["pack", "Pakiranje", PackPanel, "kegs"],
+  [null, "PRP / HIGIJENA", null], ["cip", "CIP postupak", CIPPanel, "drops"], ["mill", "Kontrola mlina", MillPanel, "gauge"],
+  ["maint", "Održavanje opreme", MaintPanel, "wrench"], ["pest", "Štetnici", PestPanel, "bug"],
+  [null, "OSTALO", null], ["receipt", "Prijem robe i ambalaže", ReceiptPanel, "pkgcheck"],
+  ["training", "Edukacija", TrainingPanel, "edu"], ["hset", "Postavke HACCP", HaccpSettingsPanel, "cog"]];
 
 class HaccpPage extends Page {
   static title = "HACCP evidencije";
@@ -1171,9 +1176,9 @@ class HaccpPage extends Page {
     this.content.append(h("div", { class: "subnav" }, this.nav, this.host));
     this.navb = {}; this.panels = {}; this.cur = null;
     this.classes = {};
-    for (const [key, label, cls] of SECTIONS) {
+    for (const [key, label, cls, ic] of SECTIONS) {
       if (!key) { this.nav.append(h("div", { class: "sec" }, label)); continue; }
-      const a = h("a", { href: `#haccp/${key}`, onclick: (e) => { e.preventDefault(); this.show(key); } }, label);
+      const a = h("a", { href: `#haccp/${key}`, onclick: (e) => { e.preventDefault(); this.show(key); } }, ic ? icon(ic, 18) : null, h("span", {}, label));
       this.nav.append(a);
       this.navb[key] = a;
       this.classes[key] = cls;

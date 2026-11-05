@@ -30,6 +30,7 @@ function pickFile(accept) {
 
 class CostsPage extends Page {
   static title = "Troškovi i izvještaj za knjigovođu";
+  static flat = true;
   static subtitle = "Što je kuhano u mjesecu, koje su sirovine utrošene i po kojoj cijeni (cijene bez PDV-a s računa dobavljača, po LOT-u)";
 
   build() {
@@ -101,7 +102,7 @@ class CostsPage extends Page {
       : `${this.periodName()}: nema kuhanja u ovom razdoblju.`;
     const est = d.brews.reduce((n, x) => n + x.lines.filter((l) => l.estimated).length, 0);
     const msgs = [];
-    if (d.missing_price) msgs.push(`⚠ ${d.missing_price} stavki nema nikakvu cijenu – uvezite cijene iz Excela ili upišite cijenu artiklu.`);
+    if (d.missing_price) msgs.push(`${d.missing_price} stavki nema nikakvu cijenu – uvezite cijene iz Excela ili upišite cijenu artiklu.`);
     if (est) msgs.push(`ℹ ${est} stavki ima procijenjenu cijenu (LOT bez računa – uzeta zadnja cijena artikla), označeno * u izvještaju.`);
     this.banner.style.display = msgs.length ? "" : "none";
     this.banner.className = "banner " + (d.missing_price ? "warn" : "ok");

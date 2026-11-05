@@ -5,7 +5,7 @@ import * as auth from "./auth.js";
 import { h, btn, toast, info, error, confirm, busy, openFile, dbProxy, Dialog } from "./ui.js";
 import { icon } from "./icons.js";
 
-export const VERSION = "web 2.17";
+export const VERSION = "web 2.19";
 
 // modul (datoteka u js/pages) za svaku stranicu (karticu); skupine i kartice su u auth.GROUPS
 const MOD_OF = {
@@ -16,7 +16,7 @@ const MOD_OF = {
 };
 const MODULES = ["stock", "production", "haccp", "settings", "kegwork", "costs", "offers", "reports", "invoices"];
 // donja traka na mobitelu (prve dostupne skupine prema ulozi)
-const BOTTOM = ["dash", "kegovi", "proizvodnja", "prodaja", "skladiste", "haccp", "izvjesca", "settings"];
+const BOTTOM = ["dash", "kegovi", "proizvodnja", "skladiste", "prodaja", "haccp", "izvjesca", "settings"];
 const SHORT = { dash: "Početna", kegovi: "Kegovi", proizvodnja: "Proizv.", prodaja: "Prodaja", skladiste: "Skladište",
   haccp: "HACCP", izvjesca: "Izvješća", settings: "Postavke" };
 
@@ -228,7 +228,24 @@ class App {
     if (!box) return;
     const u = this.logoUrl("app");
     box.innerHTML = "";
-    box.append(u ? h("img", { src: u, alt: "logo" }) : h("img", { src: "icons/pivara-logo.png", alt: "PIVARA", class: "brand-pivara" }));
+    if (u) {
+      // svijetli (bijeli) ili tamni logo: u izborniku se prilagodi svijetloj / tamnoj temi
+      const img = h("img", { src: u, alt: "logo" });
+      img.addEventListener("load", () => {
+        try {
+          const c = document.createElement("canvas"); const w = c.width = 48, ht = c.height = 48;
+          const x = c.getContext("2d"); x.drawImage(img, 0, 0, w, ht);
+          const d = x.getImageData(0, 0, w, ht).data; let n = 0, lum = 0, sat = 0;
+          for (let i = 0; i < d.length; i += 4) {
+            if (d[i + 3] < 128) continue;
+            const r = d[i], g = d[i + 1], b = d[i + 2]; n++;
+            lum += (0.299 * r + 0.587 * g + 0.114 * b) / 255; sat += (Math.max(r, g, b) - Math.min(r, g, b)) / 255;
+          }
+          if (n > 30 && n < w * ht * 0.92 && sat / n < 0.15) img.classList.add(lum / n > 0.75 ? "logo-light" : lum / n < 0.25 ? "logo-dark" : "logo-mid");
+        } catch { /* */ }
+      });
+      box.append(img);
+    } else box.append(h("img", { src: "icons/pivara-logo.png", alt: "PIVARA", class: "brand-pivara" }));
     const fav = document.querySelector("link[rel=icon]");
     const d = this.logoUrl("doc");
     if (fav && d) fav.href = d;
@@ -261,7 +278,7 @@ class App {
       bottom.append(b);
     }
     bottom.append(h("button", { type: "button", class: "bb-btn", onclick: () => document.body.classList.toggle("menu-open") },
-      icon("menu", 22), h("span", {}, "Izbornik")));
+      icon("more", 22), h("span", {}, "Više")));
     this.statusEl = h("div", { class: "sync-status", title: "" });
     const who = this.user ? h("div", { class: "who" }, h("span", { class: "who-n" }, icon("user", 16), " " + this.user.name,
         auth.isReadonly(this.user) ? h("span", { class: "ro" }, "samo čitanje") : null),
@@ -361,6 +378,7 @@ class App {
       const p = new C(this);
       p.key = key;
       try { p.build(); } catch (e) { console.error(e); error("Greška pri izradi stranice: " + e.message); }
+      try { if (p.layoutActions) p.layoutActions(); } catch (e) { console.error(e); }
       p.built = true;
       this.pages[key] = p;
     }
@@ -390,6 +408,8 @@ class App {
     this.main.append(p.el);
     this.main.scrollTop = 0;
     try { p.refresh(); } catch (e) { console.error(e); error(e.message); }
+    document.body.classList.remove("has-selbar");
+    if (p._selUpd) p._selUpd();
     if (action && typeof p[action] === "function") setTimeout(() => p[action](), 50);
     return p;
   }

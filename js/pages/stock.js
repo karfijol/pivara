@@ -1,6 +1,7 @@
 // Skladište i nabava: nadzorna ploča, sirovine, LOT-ovi, kemikalije, što naručiti, narudžbenice, dobavljači.
 import { h, btn, Page, Table, Form, Dialog, askForm, confirm, info, error, toast, tableDialog, saveBlob, openFile,
-  fq, money, fin, num, d2ui, today, daysLeft, EPS } from "../ui.js";
+  fq, money, fin, num, d2ui, today, daysLeft, EPS, setLabel } from "../ui.js";
+import { icon } from "../icons.js";
 import * as store from "../store.js";
 
 const CATEGORIES = ["Slad", "Hmelj", "Kvasac", "Dodaci", "Ambalaža", "Kemikalija", "Ostalo"];
@@ -104,7 +105,7 @@ class MonthBars extends ChartCard {
       const x = left + slot * i + slot / 2, last = i === n - 1;
       if (v > 0) {
         const y = top + ph - ph * v / nice;
-        c.append(S("rect", { x: x - bw / 2, y, width: bw, height: top + ph - y, fill: last ? "#E3A12B" : "#C98B1E", rx: 2 }));
+        c.append(S("rect", { x: x - bw / 2, y, width: bw, height: top + ph - y, rx: 2, style: `fill: ${last ? "var(--accent)" : "var(--chart)"}` }));
         c.append(S("text", { x, y: y - 5, "text-anchor": "middle", "font-size": 10, "font-weight": last ? 700 : 400, style: C_FG }, fmt(v)));
       }
       c.append(S("text", { x, y: hh - bottom + 16, "text-anchor": "middle", "font-size": 11, style: last ? C_FG : C_MUTED },
@@ -183,6 +184,7 @@ class HBars extends ChartCard {
 // ======================================================================== Nadzorna ploča
 class DashboardPage extends Page {
   static title = "Nadzorna ploča";
+  static flat = true;
 
   build() {
     this.tbtn("🔥 Dan kuhanja", () => this.app.show("batches", "brewDay"));
@@ -191,7 +193,7 @@ class DashboardPage extends Page {
       if (m && await m.newInvoice(this.app)) this.refresh();
     }, "ghost");
     this.tbtn("🛒 Što trebam naručiti", () => this.app.show("reorder"), "ghost");
-    this.tbtn("🛡 HACCP evidencije", () => this.app.show("haccp"), "ghost");
+    this.tbtn("🛡 HACCP evidencije", () => this.app.show("haccp"), "ghost|more");
     this.disBtn = this.tbtn("🔕 Zanemarena", () => this.showDismissed(), "ghost");
     this.dateLbl = h("span", { class: "muted", style: { fontSize: "13px" } });
     this.tbRight.append(this.dateLbl);
@@ -257,7 +259,7 @@ class DashboardPage extends Page {
     this.dryBar.style.display = due.length ? "" : "none";
     if (!due.length) return;
     this.dryBar.className = "banner dry-bar " + (due.some((x) => x.late) ? "warn" : "ok");
-    this.dryBar.append(h("b", {}, "🌿 Dry hop"));
+    this.dryBar.append(h("b", { class: "row gap" }, icon("leaf", 18), "Dry hop"));
     for (const x of due) {
       this.dryBar.append(h("div", { class: "dry-item" },
         h("span", {}, `${x.recipe} ${x.batch_no}${x.tank ? " · " + x.tank : ""} – ${x.late ? "kasni od " + d2ui(x.date) : "danas" + (x.time ? " u " + x.time : "")}`
@@ -267,7 +269,7 @@ class DashboardPage extends Page {
     const N = window.Notification;
     if (N && N.permission === "default") {
       this.dryBar.append(h("a", { href: "#", onclick: (e) => { e.preventDefault(); N.requestPermission().then(() => this.refresh()); } },
-        "🔔 Uključi obavijesti na ovom uređaju"));
+        "Uključi obavijesti na ovom uređaju"));
     }
     if (N && N.permission === "granted") {
       const today2 = today();
@@ -329,8 +331,8 @@ class DashboardPage extends Page {
       const warn = ts && ts.days <= 30;
       this.tokenBar.style.display = warn ? "" : "none";
       if (warn) this.tokenBar.textContent = ts.days < 0
-        ? `⛔ GitHub token je istekao ${d2ui(ts.date)} – spremanje ne radi. Administrator: napravite novi token i upišite ga u Postavke → Korisnici → 🔑 Zamijeni tokene.`
-        : `⚠ GitHub token ističe za ${ts.days} dana (${d2ui(ts.date)}). Administrator: na GitHubu napravite novi token i upišite ga u Postavke → Korisnici → 🔑 Zamijeni tokene.`;
+        ? `GitHub token je istekao ${d2ui(ts.date)} – spremanje ne radi. Administrator: napravite novi token i upišite ga u Postavke → Korisnici → 🔑 Zamijeni tokene.`
+        : `GitHub token ističe za ${ts.days} dana (${d2ui(ts.date)}). Administrator: na GitHubu napravite novi token i upišite ga u Postavke → Korisnici → 🔑 Zamijeni tokene.`;
     } catch (e) { console.warn(e); }
     try {
       const due = this.app.py.call("web_invoices.due_summary");
@@ -339,7 +341,7 @@ class DashboardPage extends Page {
         const t0 = today();
         const late = due.filter((r) => r.due_date < t0);
         const sum = due.reduce((a, r) => a + (r.total || 0), 0);
-        this.invBar.textContent = `💳 ${due.length} račun(a) dobavljača ${late.length ? `(dospjelo: ${late.length}) ` : ""}za platiti uskoro – `
+        this.invBar.textContent = `${due.length} račun(a) dobavljača ${late.length ? `(dospjelo: ${late.length}) ` : ""}za platiti uskoro – `
           + `${sum.toLocaleString("hr-HR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €. Kliknite za Račune.`;
       }
     } catch (e) { console.warn(e); }
@@ -347,12 +349,12 @@ class DashboardPage extends Page {
       const rem = this.db.excise_reminder();
       const show = rem && !this.db.is_dismissed({ key: `excise:${rem[0]}`, type: "Trošarine MI-PI" });
       this.exciseBar.style.display = show ? "" : "none";
-      if (show) this.exciseBar.textContent = "⚠ " + rem[1] + " – kliknite za Trošarine.";
+      if (show) this.exciseBar.textContent = rem[1] + " – kliknite za Trošarine.";
     } catch (e) { console.warn(e); }
     let n = 0;
     const cnt = hxSync(this.app, "dismissedCount");
     try { n = cnt ? cnt(this.app) : this.db.dismissed_list().length; } catch (e) { console.error(e); }
-    this.disBtn.textContent = n ? `🔕 Zanemarena (${n})` : "🔕 Zanemarena";
+    setLabel(this.disBtn, n ? `Zanemarena (${n})` : "Zanemarena");
   }
 
   async openAlert(table) {
@@ -639,10 +641,10 @@ class ChemicalsPage extends Page {
   build() {
     this.tbtn("＋ Nova kemikalija", () => this.items.new(true));
     this.tbtn("⬇ Primka", () => this.items.receive(this._item(), true));
-    this.tbtn("Označi otvoreno", () => this.openLot(), "ghost");
-    this.tbtn("⬆ Izdavanje (FIFO)", () => this.items.issue(this._item(), true), "ghost");
+    this.tbtn("Označi otvoreno", () => this.openLot(), "ghost|rec");
+    this.tbtn("⬆ Izdavanje (FIFO)", () => this.items.issue(this._item(), true), "ghost|rec");
     this.tbtn("Otpis LOT-a", () => this.writeoff(), "ghost");
-    this.tbtn("Sigurnosni list", () => this.sds(), "ghost");
+    this.tbtn("Sigurnosni list", () => this.sds(), "ghost|rec");
     this.tbtn("Uredi kemikaliju", () => { const i = this._item(); if (i) return this.items.edit(i); }, "ghost");
     this.table = new Table([
       ["name", "Kemikalija", 240, "w"], ["lot", "LOT", 120, "w"], ["qty", "Količina", 80, "e"],
@@ -1016,6 +1018,7 @@ class POPage extends Page {
 // ======================================================================== Što trebam naručiti
 class ReorderPage extends Page {
   static title = "Što trebam naručiti";
+  static flat = true;
   static subtitle = "Prijedlog = minimum + planirana kuhanja − (zaliha + već naručeno), zaokruženo na pakiranje. " +
     "Istekli LOT-ovi se ne računaju.";
 

@@ -1,6 +1,7 @@
 // Računi dobavljača: učitaj račun (PDF / e-račun XML / fotografija) -> provjeri -> primka robe jednim klikom.
 // Datoteke računa spremaju se u repozitorij s podacima (mapa racuni/GODINA/), popis je na stranici Skladište → Računi.
-import { h, btn, Page, Table, Dialog, askForm, choice, info, error, toast, fq, d2ui, today, busy, saveBlob } from "../ui.js";
+import { h, btn, Page, Table, Dialog, askForm, choice, info, error, toast, fq, d2ui, today, busy, saveBlob, setLabel } from "../ui.js";
+import { icon } from "../icons.js";
 import * as store from "../store.js";
 
 const eur = (x) => x === null || x === undefined || x === "" ? "" : Number(x).toLocaleString("hr-HR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -147,12 +148,12 @@ class InvoiceDialog extends Dialog {
     const url = URL.createObjectURL(new Blob([file.bytes], { type: file.kind === "xml" ? "text/xml" : "application/pdf" }));
     this.url = url;
     const top = h("div", { class: "inv-top" },
-      h("div", { class: "inv-file" }, "📄 ", h("b", {}, file.name || "račun"), " ",
-        h("a", { href: url, target: "_blank", rel: "noopener", class: "btn btn-ghost btn-sm" }, "👁 Pogledaj račun")),
+      h("div", { class: "inv-file" }, icon("doc", 18), h("b", {}, file.name || "račun"),
+        h("a", { href: url, target: "_blank", rel: "noopener", class: "btn btn-ghost btn-sm" }, icon("eye", 16), h("span", {}, "Pogledaj račun"))),
       h("div", { class: "muted", style: { fontSize: "12.5px" } }, note));
     this.body.append(top);
     if (hd.duplicate) this.body.append(h("div", { class: "banner warn" },
-      `⚠ Račun ${hd.inv_no} ovog dobavljača već je upisan (${d2ui(hd.duplicate.recv_date)}). Spremanjem bi se roba zaprimila dvaput.`));
+      `Račun ${hd.inv_no} ovog dobavljača već je upisan (${d2ui(hd.duplicate.recv_date)}). Spremanjem bi se roba zaprimila dvaput.`));
     // pregled računa uz obrazac (na širokom zaslonu)
     if (file.kind !== "xml" && window.matchMedia("(min-width: 1200px)").matches) {
       const det = h("details", { class: "inv-prev" }, h("summary", {}, "Prikaži račun ovdje"),
@@ -263,7 +264,7 @@ class InvoiceDialog extends Dialog {
       const per = h("span", { class: "muted per" });
       const lot = h("input", { value: l.lot_no || "", placeholder: "LOT dobavljača" });
       const exp = h("input", { type: "date", value: (l.expiry || "").slice(0, 10) });
-      const del = h("button", { type: "button", class: "btn btn-ghost btn-sm", title: "Ukloni stavku" }, "🗑");
+      const del = h("button", { type: "button", class: "btn btn-ghost btn-sm", title: "Ukloni stavku", "aria-label": "Ukloni stavku" }, icon("trash", 18));
       const row = h("div", { class: "inv-line" });
       const paint = () => {
         const need = !l.skip && !l.item_id;
@@ -335,7 +336,7 @@ class InvoiceDialog extends Dialog {
     }
     txt += ` · na skladište: ${stockN} stavki` + (need ? ` · ⚠ ${need} bez artikla` : "");
     this.sumEl.textContent = txt;
-    if (this.okBtn) this.okBtn.textContent = stockN ? "✔ Spremi račun i primku" : "✔ Spremi račun";
+    if (this.okBtn) setLabel(this.okBtn, stockN ? "Spremi račun i primku" : "Spremi račun");
   }
 
   async newItem(name) {
@@ -461,19 +462,10 @@ class InvoicesPage extends Page {
     this.tbtn("📷 Slikaj račun", () => this.load("photo"), "ghost");
     this.tbtn("💳 Plati", () => this.pay(), "ghost");
     this.tbtn("👁 Pogledaj račun", () => this.file(), "ghost");
-    const more = h("select", { class: "more", style: { width: "auto" } },
-      [["", "Više…"], ["paid", "✔ Označi plaćeno"], ["edit", "✎ Uredi podatke"], ["del", "🗑 Obriši"], ["zip", "📦 Računi za mjesec (ZIP)"]]
-        .map(([v, t]) => h("option", { value: v }, t)));
-    more.addEventListener("change", async () => {
-      const v = more.value; more.value = "";
-      try {
-        if (v === "paid") await this.markPaid();
-        else if (v === "edit") await this.edit();
-        else if (v === "del") await this.del();
-        else if (v === "zip") await this.monthZip();
-      } catch (e) { this.err(e); }
-    });
-    this.tb.insertBefore(more, this.tbRight);
+    this.tbtn("✔ Označi plaćeno", () => this.markPaid(), "ghost|rec");
+    this.tbtn("✎ Uredi podatke", () => this.edit(), "ghost|rec");
+    this.tbtn("🗑 Obriši", () => this.del(), "ghost|more");
+    this.tbtn("📦 Računi za mjesec (ZIP)", () => this.monthZip(), "ghost|more");
     this.year = h("select", { style: { width: "auto" } });
     this.status = h("select", { style: { width: "auto" } }, ["Svi", "Neplaćeni", "Plaćeni"].map((x) => h("option", { value: x }, x)));
     this.year.addEventListener("change", () => this.refresh());
@@ -486,7 +478,7 @@ class InvoicesPage extends Page {
     this.search(this.table);
     this.sum = h("div", { class: "muted", style: { fontSize: "12.5px", marginTop: "6px" } });
     // povuci i ispusti PDF na stranicu (računalo)
-    this.drop = h("div", { class: "inv-drop" }, "Povucite PDF računa ovamo ili kliknite „📄 Učitaj račun”. Na mobitelu: „📷 Slikaj račun” (sve stranice).");
+    this.drop = h("div", { class: "inv-drop" }, "Povucite PDF računa ovamo ili kliknite „Učitaj račun”. Na mobitelu: „Slikaj račun” (sve stranice).");
     this.el.addEventListener("dragover", (e) => { e.preventDefault(); this.drop.classList.add("over"); });
     this.el.addEventListener("dragleave", () => this.drop.classList.remove("over"));
     this.el.addEventListener("drop", (e) => {
@@ -510,7 +502,7 @@ class InvoicesPage extends Page {
     if (this.status.value === "Plaćeni") rows = rows.filter((r) => r.paid_date);
     this.table.setRows(rows.map((r) => ({ id: r.id, date: d2ui(r.recv_date), sup: r.supplier || "", no: r.inv_no, idate: d2ui(r.inv_date),
       total: eur(r.total), due: d2ui(r.due_date), status: r.paid_date ? `✔ ${d2ui(r.paid_date)}` : r.status, lots: r.n_lots ? `${r.n_lots} LOT` : "—",
-      file: r.file_path ? (pendingList().includes(r.file_path) ? "⏳" : "📄") : "",
+      file: r.file_path ? (pendingList().includes(r.file_path) ? "čeka prijenos" : "da") : "",
       _tag: r.paid_date ? "" : (r.status === "Dospjelo" ? "bad" : "") })));
     const unpaid = this.all.filter((r) => !r.paid_date);
     const late = unpaid.filter((r) => r.status === "Dospjelo");

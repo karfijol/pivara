@@ -3,7 +3,7 @@
 // DeliveryDialog, ExcisePage, RecallPage, ReadingsDialog, naljepnice).
 import {
   h, btn, Page, Table, Form, Dialog, askForm, confirm, info, error, toast, tableDialog,
-  fq, money, fin, num, d2ui, today, addDays, daysLeft, sg, EPS,
+  fq, money, fin, num, d2ui, today, addDays, daysLeft, sg, EPS, setLabel,
 } from "../ui.js";
 
 // ---------------------------------------------------------------- zajedničko
@@ -740,7 +740,7 @@ class BatchesPage extends Page {
     if (!id && sel && this.db.batch(sel) && this.db.batch(sel).status === "Fermentacija" && this.db.batch(sel).brew_date === today()) id = sel;
     if (!id) {
       const pb = planned.find((b) => b.id === pre);
-      const d = await askForm("🔥 Dan kuhanja", [
+      const d = await askForm("Dan kuhanja", [
         ...(planned.length ? [{ key: "planned_id", label: "Planirana šarža (ili nova)", type: "combo", full: true,
           options: [["— nova šarža —", null], ...planned.map((b) => [`${b.batch_no} · ${b.recipe} · ${d2ui(b.brew_date)}`, b.id])],
           command: (v, f) => { const b = planned.find((x) => x.id === v); if (b) { f.w.recipe_id.set(b.recipe_id); f.w.volume.set(b.volume_l); if (b.tank) f.w.tank.set(b.tank); } } }] : []),
@@ -936,10 +936,13 @@ class KegsPage extends Page {
     this.tb.insertBefore(this.manual, this.tbRight);
     this.tbtn("✎ Uredi", () => this.edit(), "ghost");
     this.tbtn("🗑 Obriši", () => this.delete(), "ghost");
-    const opts = ["Više…", "🔳 QR oznake kegova", "🏷 Naljepnice (PDF)", "🏷 Naljepnice po vrsti piva", "Na servis", "Otpiši", "Povijest kega", "Izvoz CSV"];
-    this.more = h("select", { class: "more", style: { width: "auto" } }, opts.map((o) => h("option", { value: o }, o)));
-    this.more.addEventListener("change", () => { const v = this.more.value; this.more.value = "Više…"; this._more(v); });
-    this.tb.insertBefore(this.more, this.tbRight);
+    this.tbtn("Povijest kega", () => this._more("Povijest kega"), "ghost|rec");
+    this.tbtn("🏷 Naljepnice (PDF)", () => this._more("🏷 Naljepnice (PDF)"), "ghost|rec");
+    this.tbtn("Na servis", () => this._more("Na servis"), "ghost|more");
+    this.tbtn("Otpiši", () => this._more("Otpiši"), "ghost|more");
+    this.tbtn("🔳 QR oznake kegova", () => this._more("🔳 QR oznake kegova"), "ghost|more");
+    this.tbtn("🏷 Naljepnice po vrsti piva", () => this._more("🏷 Naljepnice po vrsti piva"), "ghost|more");
+    this.tbtn("Izvoz CSV", () => this._more("Izvoz CSV"), "ghost|more");
     this.sumL = {};
     const cards = h("div", { class: "cards", style: { gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))" } });
     for (const s of K(this.app).KEG_STATUS) {
@@ -1152,6 +1155,7 @@ class KegsPage extends Page {
 // ================================================================== Planer fermentora
 class PlannerPage extends Page {
   static title = "Plan fermentora";
+  static flat = true;
   static subtitle = "Koja je šarža u kojem fermentoru i do kada · iscrtkano = procjena kraja · svijetlo = planirano";
 
   build() {
@@ -1333,7 +1337,7 @@ class SalesPage extends Page {
   build() {
     this.tbtn("＋ Nova otpremnica", () => this.newDn());
     this.tbtn("＋ Novi kupac", () => this.newC(), "ghost");
-    this.tbtn("Uredi kupca", () => this.editC(), "ghost");
+    this.tbtn("Uredi kupca", () => this.editC(), "ghost|main");
     this.tbtn("Obriši otpremnicu", () => this.delDn(), "ghost");
     this.tbtn("🖨 PDF", () => this.printDn("PDF"), "primary", true);
     this.tbtn("🖨 Word", () => this.printDn("WORD"), "ghost", true);
@@ -1447,14 +1451,14 @@ class ExcisePage extends Page {
     this.sum.textContent = v.summary;
     if (v.reported) {
       this.banner.className = "banner ok";
-      this.banner.textContent = `✔ ${this.monthLabel()} je prijavljen carini ${d2ui(v.reported)}.`;
+      this.banner.textContent = `${this.monthLabel()} je prijavljen carini ${d2ui(v.reported)}.`;
       this.repBtn.textContent = "↺ Poništi oznaku prijave";
     } else {
-      let txt = `⚠ ${this.monthLabel()} još nije prijavljen.`;
-      if (v.reminder && v.reminder[0] === period) txt = "⚠ " + v.reminder[1] + " Odaberite piva, ispišite pomoć i predajte obrazac.";
+      let txt = `${this.monthLabel()} još nije prijavljen.`;
+      if (v.reminder && v.reminder[0] === period) txt = v.reminder[1] + " Odaberite piva, ispišite pomoć i predajte obrazac.";
       this.banner.className = "banner warn";
       this.banner.textContent = txt;
-      this.repBtn.textContent = "✔ Označi kao prijavljeno";
+      setLabel(this.repBtn, "Označi kao prijavljeno");
     }
   }
 
@@ -1555,6 +1559,7 @@ class ExcisePage extends Page {
 // ================================================================== Sljedivost i povlačenje
 class RecallPage extends Page {
   static title = "Sljedivost i povlačenje";
+  static flat = true;
   static subtitle = "Upišite LOT sirovine (npr. dobavljačev LOT slada) ili LOT piva: program pokazuje šarže, pakiranja, kegove i kupce";
 
   build() {

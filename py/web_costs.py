@@ -166,7 +166,7 @@ def apply_prices(db, rows):
 
 # ------------------------------------------------------------------ izvještaj
 def _litres(db, b):
-    pk = db.val("SELECT COALESCE(SUM(total_l),0) FROM packaging WHERE batch_id=?", (b["id"],)) or 0
+    pk = b.get("packaged_l") or db.val("SELECT COALESCE(SUM(total_l),0) FROM packaging WHERE batch_id=?", (b["id"],)) or 0
     return pk, (b.get("wort_l") or b.get("volume_l") or 0)
 
 

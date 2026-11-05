@@ -68,7 +68,8 @@ class ExtrasMixin:
     def _migrate_extras(self):
         self.con.executescript(EXTRAS_SCHEMA)
         cols = {r["name"] for r in self.q("PRAGMA table_info(batches)")}
-        for c, t in [("sensory_score", "REAL"), ("sensory_note", "TEXT"), ("sensory_by", "TEXT"), ("sensory_date", "TEXT")]:
+        for c, t in [("sensory_score", "REAL"), ("sensory_note", "TEXT"), ("sensory_by", "TEXT"), ("sensory_date", "TEXT"),
+                     ("packaged_l", "REAL")]:  # 3.6: stvarno proizvedeno pivo (prebačeno u kegove) (L), upisuje se ručno
             if c not in cols:
                 self.con.execute(f"ALTER TABLE batches ADD COLUMN {c} {t}")
         cols = {r["name"] for r in self.q("PRAGMA table_info(recipes)")}

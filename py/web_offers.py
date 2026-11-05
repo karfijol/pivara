@@ -66,6 +66,15 @@ SETTINGS = {
     "offer_valid_days": "15",
     "offer_vat": "25",
     "offer_first_no": "1",
+    # HUB 3 2D kod za plaćanje (PDF417) na ponudi
+    "offer_hub3": "1",
+    "offer_iban": "HR4924020061101334527",
+    "offer_recipient": "LOOP IN d.o.o.",
+    "offer_recipient_street": "Kolodvorska 130",
+    "offer_recipient_place": "31315 Karanac",
+    "offer_model": "HR00",
+    "offer_purpose": "OTHR",
+    "offer_desc_tpl": "Ponuda br. {broj}",
 }
 PAYMENT_METHODS = ["Transakcijski račun", "Gotovina", "Kartica", "Ostalo"]
 
@@ -318,6 +327,80 @@ def totals(lines):
     return round(total, 2), by
 
 
+# ------------------------------------------------------------------ HUB 3 (2D kod za plaćanje)
+HUB3_REF_OK = re.compile(r"^[0-9A-Za-zČčĆćĐđŠšŽžQqWwXxYy ,.:\-+?'/()]*$")
+
+
+def iban_ok(iban):
+    s = re.sub(r"\s+", "", iban or "").upper()
+    if not re.fullmatch(r"[A-Z]{2}\d{2}[A-Z0-9]{10,30}", s):
+        return False
+    r = s[4:] + s[:4]
+    return int("".join(str(int(c, 36)) for c in r)) % 97 == 1
+
+
+def _cut(t, n):
+    return " ".join(str(t or "").split())[:n]
+
+
+def _split_address(addr):
+    """'Glavna 5, 31300 Beli Manastir' -> ('Glavna 5', '31300 Beli Manastir')."""
+    a = " ".join(str(addr or "").split())
+    if "," in a:
+        st, pl = a.rsplit(",", 1)
+        return st.strip(), pl.strip()
+    m = re.match(r"^(.*?)(\d{5}\s+.+)$", a)
+    return (m.group(1).strip(), m.group(2).strip()) if m else (a, "")
+
+
+def hub3_data(db, o, total):
+    """Podaci za HUB 3 2D kod (HUB3A, PDF417): 14 polja, svako završava znakom LF, UTF-8."""
+    g = db.get_setting
+    iban = re.sub(r"\s+", "", g("offer_iban") or "").upper()
+    if not iban_ok(iban):
+        raise ValueError("IBAN primatelja u Postavkama → Ponude nije ispravan.")
+    model = (g("offer_model") or "HR00").strip().upper()
+    ref = _cut(o["no"], 22)
+    if not HUB3_REF_OK.match(ref):
+        ref = re.sub(r"[^0-9A-Za-z\-]", "-", ref)
+    tpl = g("offer_desc_tpl") or "Ponuda br. {broj}"
+    desc = _cut(tpl.replace("{broj}", o["no"]).replace("{kupac}", o.get("cust_name") or ""), 35)
+    st, pl = _split_address(o.get("cust_address"))
+    fields = ["HRVHUB30", "EUR", f"{int(round(total * 100)):015d}",
+              _cut(o.get("cust_name"), 30), _cut(st, 27), _cut(pl, 27),
+              _cut(g("offer_recipient"), 25), _cut(g("offer_recipient_street"), 25), _cut(g("offer_recipient_place"), 27),
+              iban, model, ref, _cut((g("offer_purpose") or "").upper(), 4), desc]
+    return {"text": "".join(f + "\n" for f in fields), "iban": iban, "model": model, "ref": ref, "desc": desc,
+            "recipient": _cut(g("offer_recipient"), 25), "amount": total}
+
+
+def hub3_flowable(data, width_mm=58):
+    """PDF417 (stupaca 9, razina ispravljanja 4, omjer 3:1) kao vektorski crtež za reportlab."""
+    from pdf417gen import encode, render_image
+    from reportlab.graphics.shapes import Drawing, Rect
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors
+    codes = encode(data["text"], columns=9, security_level=4, encoding="utf-8")
+    img = render_image(codes, scale=1, ratio=1, padding=0).convert("1")
+    w, h = img.size
+    mod = width_mm * mm / (w + 4)          # tihi zona 2 modula sa svake strane
+    rh = mod * 3
+    d = Drawing((w + 4) * mod, (h + 4) * rh)
+    px = img.load()
+    for y in range(h):
+        x = 0
+        while x < w:
+            if px[x, y] == 0:
+                x0 = x
+                while x < w and px[x, y] == 0:
+                    x += 1
+                d.add(Rect((x0 + 2) * mod, (h - y + 1) * rh, (x - x0) * mod, rh, fillColor=colors.black,
+                           strokeColor=None, strokeWidth=0))
+            else:
+                x += 1
+    return d
+
+
 # ------------------------------------------------------------------ PDF
 def _d(iso):
     if not iso:
@@ -466,6 +549,25 @@ def offer_pdf(db, id, fmt="PDF", app=None):
                             ("RIGHTPADDING", (0, 0), (-1, -1), 4)]))
     story += [Spacer(1, 3 * mm), KeepTogether(tt), Spacer(1, 6 * mm)]
 
+    if (g("offer_hub3") or "1") == "1" and total > 0:
+        try:
+            hd = hub3_data(db, o, total)
+            bc = hub3_flowable(hd)
+            info_rows = [("Primatelj", hd["recipient"]), ("IBAN", hd["iban"]), ("Iznos", _m(total) + " €"),
+                         ("Model i poziv na broj", f"{hd['model']} {hd['ref']}"), ("Opis plaćanja", hd["desc"])]
+            it = Table([[P(a, 8, col=grey), P(b, 9, True)] for a, b in info_rows], colWidths=[cw * 0.2, cw * 0.38])
+            it.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 1),
+                                    ("BOTTOMPADDING", (0, 0), (-1, -1), 1), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
+            right = [P("Plaćanje skeniranjem 2D koda (HUB 3)", 9.5, True), Spacer(1, 1.5 * mm), it,
+                     Spacer(1, 1.5 * mm), P("Skenirajte kod u mobilnoj aplikaciji banke (Skeniraj i plati / "
+                                            "Plaćanje uplatnicom) – podaci se upišu sami.", 7.5, col=grey)]
+            box = Table([[bc, right]], colWidths=[62 * mm, cw - 62 * mm])
+            box.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("BOX", (0, 0), (-1, -1), 0.8, line),
+                                     ("LEFTPADDING", (0, 0), (-1, -1), 6), ("TOPPADDING", (0, 0), (-1, -1), 6),
+                                     ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
+            story += [KeepTogether(box), Spacer(1, 5 * mm)]
+        except ValueError as e:
+            story += [P(f"2D kod za plaćanje nije izrađen: {e}", 8.5, col=colors.HexColor("#B42318")), Spacer(1, 3 * mm)]
     if o.get("payment_desc"):
         story += [P("Opis plaćanja", 8.5, True, grey), P(o["payment_desc"], 9.5), Spacer(1, 3 * mm)]
     if o.get("note"):

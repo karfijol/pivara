@@ -4,7 +4,7 @@ import * as store from "./store.js";
 import * as auth from "./auth.js";
 import { h, btn, toast, info, error, confirm, busy, openFile, dbProxy, Dialog } from "./ui.js";
 
-export const VERSION = "web 2.3";
+export const VERSION = "web 2.6";
 
 const NAV = [
   ["dash", "🏠", "Nadzorna ploča", "stock"],
@@ -111,6 +111,7 @@ class App {
       const k = location.hash.slice(1).split("/")[0];
       if (k && k !== this.current && this.classes[k]) this.show(k);
     });
+    this.setupBack();
     setInterval(() => this.sync.poll(), 45000);
     document.addEventListener("visibilitychange", () => { if (!document.hidden) this.sync.poll(); });
     window.addEventListener("beforeunload", (e) => {
@@ -266,11 +267,14 @@ class App {
     }
     return this.pages[key];
   }
-  show(key, action = null) {
+  show(key, action = null, isBack = false) {
     const role = this.user ? this.user.role : "admin";
     if (!auth.canSee(role, key)) key = (auth.ROLE_PAGES[role] || ["dash"])[0];
     const p = this.page(key);
     if (!p) return null;
+    if (!isBack && this.current && this.current !== key) {
+      this.backStack = (this.backStack || []).filter((k) => k !== key).concat(this.current).slice(-30);
+    }
     if (this.current && this.navBtns[this.current]) this.navBtns[this.current].classList.remove("active");
     this.current = key;
     if (this.navBtns[key]) this.navBtns[key].classList.add("active");
@@ -282,6 +286,62 @@ class App {
     if (action && typeof p[action] === "function") setTimeout(() => p[action](), 50);
     return p;
   }
+  // ------------------------------------------------------------ natrag (povlačenje prstom s lijeva na desno, tipka natrag)
+  // redom: zatvori otvoreni prozor (dijalog) → izbornik → radni prikaz stranice (npr. lista kegova) → prethodna stranica
+  goBack() {
+    const modals = [...document.querySelectorAll(".modal-back")];
+    if (modals.length) {
+      const top = modals.sort((a, b) => (+a.style.zIndex || 0) - (+b.style.zIndex || 0)).pop();
+      const x = top.querySelector(".modal-x") || [...top.querySelectorAll(".modal-bar button")].find((b) => /^(Odustani|Zatvori|Ne)$/.test(b.textContent.trim()));
+      if (x) { x.click(); return true; }
+    }
+    if (document.body.classList.contains("menu-open")) { document.body.classList.remove("menu-open"); return true; }
+    const p = this.current && this.pages[this.current];
+    if (p && typeof p.onBack === "function" && p.onBack()) return true;
+    const prev = (this.backStack || []).pop();
+    if (prev) { this.show(prev, null, true); return true; }
+    return false;
+  }
+
+  setupBack() {
+    if (this._backReady) return;
+    this._backReady = true;
+    // sistemska tipka / gesta natrag (Android, preglednik): ostaje u programu dok ima kamo natrag
+    try { history.pushState({ pivovaraGuard: 1 }, "", location.href); } catch { /* */ }
+    window.addEventListener("popstate", () => {
+      const k = location.hash.slice(1).split("/")[0];
+      if (k && k !== this.current && this.classes[k]) return; // promjena adrese (#stranica) – obradi hashchange
+      if (this.goBack()) { try { history.pushState({ pivovaraGuard: 1 }, "", location.href); } catch { /* */ } }
+    });
+    // povlačenje prstom s lijeva na desno (mobitel)
+    if (!window.matchMedia("(pointer: coarse)").matches) return;
+    let st = null;
+    const scrollsX = (el) => {
+      for (let e = el; e && e !== document.body; e = e.parentElement) {
+        if (e.scrollWidth > e.clientWidth + 4 && /(auto|scroll)/.test(getComputedStyle(e).overflowX)) return true;
+        if (e.matches && e.matches("input[type=range], video, canvas, .scanner, .no-swipe")) return true;
+      }
+      return false;
+    };
+    document.addEventListener("touchstart", (e) => {
+      if (e.touches.length !== 1) { st = null; return; }
+      const t = e.touches[0];
+      // rub zaslona (≈ 20 px) prepuštamo sustavu – njegova gesta natrag dolazi kao popstate
+      st = t.clientX < 20 || scrollsX(e.target) ? null : { x: t.clientX, y: t.clientY, t: Date.now() };
+    }, { passive: true });
+    document.addEventListener("touchend", (e) => {
+      if (!st) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - st.x, dy = t.clientY - st.y, dt = Date.now() - st.t;
+      st = null;
+      if (dx > 80 && Math.abs(dy) < 60 && dx > 2.5 * Math.abs(dy) && dt < 700) {
+        const sel = window.getSelection && String(window.getSelection());
+        if (sel) return;
+        this.goBack();
+      }
+    }, { passive: true });
+  }
+
   refreshAll() {
     const n = document.getElementById("brand-name");
     if (n) n.textContent = this.db.get_setting("brewery_name");

@@ -207,12 +207,12 @@ class DashboardPage extends Page {
         h("div", { class: "bar", style: { background: col } }), h("div", { class: "lab" }, t), v, s));
       this.cardW[k] = [v, s];
     }
-    this.chProd = new MonthBars("Proizvodnja piva", "litara · zadnjih 12 mjeseci");
+    this.chProd = new MonthBars("Proizvodnja piva", "litara proizvedenog piva · zadnjih 12 mjeseci");
     this.chKegs = new Donut("Kegovi po statusu", "");
     this.chKegs.unit = "kegova";
-    this.chCov = new HBars("Zalihe u odnosu na minimum", "najkritičniji artikli");
     this.chVal = new HBars("Vrijednost zaliha po kategoriji", "");
-    const charts = h("div", { class: "grid2" }, this.chProd.el, this.chKegs.el, this.chCov.el, this.chVal.el);
+    this.chProd.el.classList.add("span2");
+    const charts = h("div", { class: "grid2" }, this.chProd.el, this.chKegs.el, this.chVal.el);
 
     this.alerts = new Table([["type", "Vrsta", 120, "w"], ["text", "Opis", 360, "w"], ["date", "Datum", 95, "center"]],
       { height: 8, onDouble: () => this.openAlert(this.alerts) });
@@ -220,8 +220,17 @@ class DashboardPage extends Page {
       { height: 8, onDouble: () => this.openAlert(this.tasks) });
     const head = (t) => h("div", { class: "row", style: { justifyContent: "space-between", gap: "8px", marginBottom: "6px" } },
       h("b", { style: { fontSize: "16px" } }, t), h("span", { class: "muted", style: { fontSize: "11.5px" } }, "dvoklik = detalji / zanemari"));
+    // upozorenja skladišta: sklopljena (sažetak po vrsti), "Prikaži sve" otvara cijeli popis
+    this.alertsN = h("span", {});
+    this.alertsSum = h("div", { class: "muted", style: { fontSize: "13px", marginTop: "4px" } });
+    this.alertsBox = h("details", { class: "card kw-recent dash-alerts" },
+      h("summary", {}, h("span", {}, "Upozorenja skladišta"), this.alertsN, h("span", { class: "kw-recent-btn" })),
+      h("div", { class: "muted", style: { fontSize: "11.5px", margin: "0 0 6px" } }, "dvoklik = detalji / zanemari"), this.alerts.el);
+    this.alertsBox.addEventListener("toggle", () => { this.alertsSum.style.display = this.alertsBox.open ? "none" : ""; });
+    this.alertsSum.classList.add("dash-alerts-sum");
+    this.alertsBox.querySelector("summary").append(this.alertsSum);
     const low = h("div", { class: "grid2" },
-      h("div", {}, head("Upozorenja skladišta"), this.alerts.el),
+      h("div", {}, this.alertsBox),
       h("div", {}, head("HACCP – što nedostaje"), this.tasks.el));
     this.content.append(cards, charts, low);
   }
@@ -248,20 +257,21 @@ class DashboardPage extends Page {
 
     const c = this.db.chart_data();
     const total = c.production.reduce((a, x) => a + x[1], 0);
-    this.chProd.set(total ? c.production : [], `${fq(total, 0)} L · zadnjih 12 mjeseci`);
+    this.chProd.set(total ? c.production : [], `${fq(total, 0)} L proizvedenog piva · zadnjih 12 mjeseci`);
     const kd = Object.entries(c.kegs).filter(([s, n]) => n || ["Čist", "Pun", "Kod kupca"].includes(s))
       .map(([s, n]) => [s, n, KEG_COLORS[s] || "#8A8F98"]);
     const kn = kd.reduce((a, x) => a + x[1], 0);
     this.chKegs.set(kn ? kd : [], `${kn} ukupno`);
-    const cov = c.coverage.map(([name, ratio, st, mn, unit]) =>
-      [name, ratio, `${fq(st)} / ${fq(mn)} ${unit}`, ratio < 1 ? "#E0675A" : (ratio < 1.5 ? "#E3A12B" : "#5BBF7A"), 1.0]);
-    this.chCov.set(cov, null, 2.0, "│ = minimalna zaliha");
     const vmax = Math.max(...(c.value.length ? c.value.map((x) => x[1]) : [1]));
     this.chVal.set(c.value.map(([cat, v], i) => [cat, v, money(v), PALETTE[i % PALETTE.length], null]),
       money(c.value.reduce((a, x) => a + x[1], 0)), vmax);
 
     alerts.sort((a, b) => (String(a.type).startsWith("Trošarine") ? 0 : 1) - (String(b.type).startsWith("Trošarine") ? 0 : 1));
     this.alerts.setRows(alerts.length ? alerts : [{ id: 0, type: "✓", text: "Sve je u redu – nema upozorenja.", _tag: "ok" }]);
+    this.alertsN.textContent = alerts.length ? ` (${alerts.length})` : "";
+    const kinds = {};
+    for (const r of alerts) kinds[r.type] = (kinds[r.type] || 0) + 1;
+    this.alertsSum.textContent = alerts.length ? Object.entries(kinds).map(([k, v]) => `${k}: ${v}`).join(" · ") : "✓ Sve je u redu – nema upozorenja.";
     this.tasks.setRows(tasks.length ? tasks : [{ id: 0, area: "✓", text: "HACCP evidencije su ažurne.", _tag: "ok" }]);
     let n = 0;
     const cnt = hxSync(this.app, "dismissedCount");

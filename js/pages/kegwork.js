@@ -366,6 +366,11 @@ class KegWorkPage extends Page {
     setTimeout(() => this.inp.focus(), 50);
   }
 
+  onBack() { // natrag: iz radne liste na početni zaslon Rada s kegovima
+    if (this.flow) { this.close(); return true; }
+    return false;
+  }
+
   close() {
     this.scanner.stop();
     this.camBtn.textContent = "📷 Uključi kameru";

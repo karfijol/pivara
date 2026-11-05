@@ -114,7 +114,8 @@ class SettingsPage extends Page {
 
     // ---------- ponude
     const co = card("Ponude", "Zaglavlje (uz logo PIVARA) i podnožje ponude te zadane vrijednosti za nove ponude.");
-    const ok = ["offer_header1", "offer_header2", "offer_footer", "offer_payment_desc", "offer_payment_method", "offer_valid_days", "offer_first_no"];
+    const ok = ["offer_header1", "offer_header2", "offer_footer", "offer_payment_desc", "offer_payment_method", "offer_valid_days", "offer_first_no",
+      "offer_hub3", "offer_iban", "offer_recipient", "offer_recipient_street", "offer_recipient_place", "offer_model", "offer_purpose", "offer_desc_tpl"];
     try { this.app.py.call("web_offers.consts"); } catch { /* */ }
     this.formO = new Form([
       { key: "offer_header1", label: "Zaglavlje – pivnica (svaki redak u novi red)", type: "multi", height: 50 },
@@ -124,11 +125,22 @@ class SettingsPage extends Page {
       { key: "offer_payment_method", label: "Način plaćanja (zadano)", type: "combo", editable: true,
         options: ["Transakcijski račun", "Gotovina", "Kartica", "Ostalo"] },
       { key: "offer_valid_days", label: "Rok plaćanja (dana od izdavanja)", type: "num", min: 0 },
-      { key: "offer_first_no", label: "Prvi redni broj ponude u godini (ako se nastavlja postojeće brojanje)", type: "num", min: 1 }],
+      { key: "offer_first_no", label: "Prvi redni broj ponude u godini (ako se nastavlja postojeće brojanje)", type: "num", min: 1 },
+      { label: "2D kod za plaćanje (HUB 3) na ponudi", type: "section" },
+      { key: "offer_hub3", label: "Ispiši HUB 3 kod za plaćanje mobilnom aplikacijom banke", type: "check", full: true },
+      { key: "offer_iban", label: "IBAN primatelja" },
+      { key: "offer_recipient", label: "Naziv primatelja (najviše 25 znakova)" },
+      { key: "offer_recipient_street", label: "Primatelj – ulica i broj" },
+      { key: "offer_recipient_place", label: "Primatelj – poštanski broj i mjesto" },
+      { key: "offer_model", label: "Model (npr. HR00)" },
+      { key: "offer_purpose", label: "Šifra namjene (npr. OTHR)" },
+      { key: "offer_desc_tpl", label: "Opis plaćanja u kodu – {broj} = broj ponude, {kupac} = kupac (najviše 35 znakova)", full: true }],
     Object.fromEntries(ok.map((k) => [k, g(k)])), 2);
     co.append(this.formO.el, h("div", { style: { marginTop: "10px" } }, btn("Spremi", () => {
       try {
         const d = this.formO.get();
+        if (d.offer_iban && !this.app.py.call("web_offers.iban_ok", d.offer_iban)) throw new Error("IBAN primatelja nije ispravan (provjerite znamenke).");
+        if (d.offer_model && !/^HR\d{2}$/i.test(d.offer_model.trim())) throw new Error("Model mora biti oblika HR i dvije znamenke, npr. HR00.");
         for (const [k, v] of Object.entries(d)) this.db.set_setting(k, v === null || v === undefined ? "" : String(v));
         toast("Postavke ponuda spremljene.");
       } catch (e) { this.err(e); }

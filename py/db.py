@@ -407,13 +407,15 @@ class DB(HaccpMixin, ExtrasMixin):
     # ---------- šarže ----------
     def batches(self):
         return self.q("""SELECT b.*, r.name AS recipe, r.style,
-                         (SELECT COUNT(*) FROM kegs k WHERE k.batch_id=b.id AND k.status IN ('Pun','Kod kupca')) AS kegs_out
+                         (SELECT COUNT(*) FROM kegs k WHERE k.batch_id=b.id AND k.status IN ('Pun','Kod kupca')) AS kegs_out,
+                         (SELECT SUM(p.total_l) FROM packaging p WHERE p.batch_id=b.id) AS packed_sum
                          FROM batches b LEFT JOIN recipes r ON r.id=b.recipe_id
                          ORDER BY COALESCE(b.brew_date,'9999') DESC, b.id DESC""")
 
     def batch(self, id):
-        return self.one("""SELECT b.*, r.name AS recipe FROM batches b LEFT JOIN recipes r ON r.id=b.recipe_id
-                           WHERE b.id=?""", (id,))
+        return self.one("""SELECT b.*, r.name AS recipe,
+                           (SELECT SUM(p.total_l) FROM packaging p WHERE p.batch_id=b.id) AS packed_sum
+                           FROM batches b LEFT JOIN recipes r ON r.id=b.recipe_id WHERE b.id=?""", (id,))
 
     def recipe_code(self, recipe_id):
         r = self.recipe(recipe_id) if recipe_id else None

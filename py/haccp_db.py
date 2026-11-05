@@ -520,6 +520,13 @@ class HaccpMixin:
         return self.visible(self.haccp_items(days))
 
     # ------------------------------------------------------------ podaci za grafove
+    def packaged_litres(self, batch_id):
+        """Stvarno istočeno pivo šarže: ručni upis, inače zbroj evidencije pakiranja (None = još nije upisano)."""
+        b = self.one("SELECT packaged_l FROM batches WHERE id=?", (batch_id,))
+        if b and b.get("packaged_l"):
+            return b["packaged_l"]
+        return self.val("SELECT SUM(total_l) FROM packaging WHERE batch_id=?", (batch_id,))
+
     def chart_data(self):
         months = []
         d = dt.date.today().replace(day=1)
@@ -527,8 +534,10 @@ class HaccpMixin:
             months.append(d.strftime("%Y-%m"))
             d = (d - dt.timedelta(days=1)).replace(day=1)
         months.reverse()
-        vol = {r["m"]: r["v"] for r in self.q("""SELECT substr(brew_date,1,7) AS m, SUM(volume_l) AS v FROM batches
-                                                 WHERE status<>'Planirano' GROUP BY m""")}
+        # proizvodnja = stvarno proizvedeno pivo (prebačeno u kegove) (ručno upisano u šarži, inače zbroj evidencije pakiranja)
+        vol = {r["m"]: r["v"] for r in self.q("""SELECT substr(b.brew_date,1,7) AS m,
+                   SUM(COALESCE(b.packaged_l, (SELECT SUM(p.total_l) FROM packaging p WHERE p.batch_id=b.id), 0)) AS v
+                   FROM batches b WHERE b.status<>'Planirano' GROUP BY m""")}
         coverage = []
         for i in self.items():
             if i["min_stock"]:

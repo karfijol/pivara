@@ -310,7 +310,7 @@ class BatchesPage extends Page {
     this.tbtn("Obriši", () => this.delete(), "ghost");
     this.table = T([
       ["no", "LOT piva", 120, "w"], ["recipe", "Pivo", 180, "w"], ["style", "Stil", 110, "w"],
-      ["date", "Datum kuhanja", 105, "center"], ["vol", "Volumen (L)", 90, "e"], ["tank", "Tank", 100, "w"],
+      ["date", "Datum kuhanja", 105, "center"], ["vol", "Sladovina (L)", 90, "e"], ["pack", "Proizvedeno (L)", 90, "e"], ["tank", "Tank", 100, "w"],
       ["og", "OG", 65, "e"], ["fg", "FG", 65, "e"], ["abv", "Alkohol %", 75, "e"],
       ["status", "Status", 110, "w"], ["kegs", "Kegova vani", 90, "center"], ["cost", "Trošak €/L", 85, "e"],
       ["note", "Napomena", 160, "w"]], { onDouble: () => this.detail() });
@@ -320,7 +320,7 @@ class BatchesPage extends Page {
 
   refresh() {
     this.table.setRows(this.db.batches().map((b) => ({
-      id: b.id, no: b.batch_no, recipe: b.recipe || "", style: b.style || "", date: d2ui(b.brew_date), vol: fq(b.wort_l || b.volume_l),
+      id: b.id, no: b.batch_no, recipe: b.recipe || "", style: b.style || "", date: d2ui(b.brew_date), vol: fq(b.wort_l || b.volume_l), pack: (b.packaged_l || b.packed_sum) ? fq(b.packaged_l || b.packed_sum, 1) + (b.packaged_l ? "" : " ⓟ") : "",
       tank: b.tank || "", og: sg(b.og_sg), fg: sg(b.fg_sg), abv: b.abv ? fq(b.abv, 1) : "", status: b.status,
       kegs: b.kegs_out || "", note: b.note || "",
       cost: b.status !== "Planirano" ? fq(this.db.batch_cost(b.id)[2], 2) : "",
@@ -438,7 +438,8 @@ class BatchesPage extends Page {
       { key: "recipe_id", label: "Pivo (receptura)", type: "combo", required: true, options: this.db.recipes().map((r) => [r.name, r.id]) },
       { key: "status", label: "Status", type: "combo", options: st },
       { key: "brew_date", label: "Datum kuhanja", type: "date", required: true },
-      { key: "volume_l", label: "Volumen (L) – stvarno skuhano", type: "num", required: true, positive: true },
+      { key: "volume_l", label: "Volumen sladovine (L) – stvarno skuhano", type: "num", required: true, positive: true },
+      { key: "packaged_l", label: `Proizvedeno piva (L) – stvarno${b.packed_sum ? ` (prazno = iz pakiranja: ${fq(b.packed_sum, 1)} L)` : " (prazno = iz evidencije pakiranja)"}`, type: "num", min: 0 },
       { key: "tank", label: "Fermentor / tank", type: "combo", editable: true, options: this.db.fermentors().map((f) => f.name) },
       { key: "brewer", label: "Kuhao", type: "combo", editable: true, options: emps },
       { label: "Mjerenja kuhanja", type: "section" },
@@ -458,7 +459,7 @@ class BatchesPage extends Page {
       { key: "sensory_note", label: "Senzorika – napomena" },
       { key: "note", label: "Napomena", type: "multi", full: true }], { ...b, volume_l: b.wort_l || b.volume_l }, { columns: 3, width: 980 });
     if (d) {
-      for (const k of ["og_sg", "fg_sg", "abv", "ph", "ferm_temp", "sensory_score"]) if (!d[k]) d[k] = null;
+      for (const k of ["og_sg", "fg_sg", "abv", "ph", "ferm_temp", "sensory_score", "packaged_l"]) if (!d[k]) d[k] = null;
       if (!d.abv && d.og_sg && d.fg_sg && d.og_sg > d.fg_sg) d.abv = Math.round((d.og_sg - d.fg_sg) * 131.25 * 100) / 100;
       // skuhana šarža: mijenja se stvarna količina (troškovi po litri, izvještaji); utrošak sirovina ostaje isti
       if (brewed) d.wort_l = d.volume_l;

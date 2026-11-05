@@ -87,6 +87,11 @@ def open_db(path):
         web_costs.ensure(DB_)
     except Exception:  # noqa: BLE001
         traceback.print_exc()
+    try:
+        import web_invoices
+        web_invoices.ensure(DB_)
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
     try:  # tablice koje se inače izrađuju tek pri prvom otvaranju ekrana (potrebno za "samo čitanje")
         DB_._ensure_excise_table()
         DB_._ensure_dismissed()

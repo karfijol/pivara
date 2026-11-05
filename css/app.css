@@ -394,3 +394,47 @@ table.grid tr.empty td { color: var(--muted); text-align: center; padding: 18px;
   .page-tab { padding: 8px 11px; font-size: 13.5px; }
 }
 @media (max-width: 700px) { .page-tabs { padding-left: 8px; min-height: 0; } }
+
+/* ---------- 2.14: računi dobavljača ---------- */
+.inv-dlg .modal-body { max-height: calc(100vh - 150px); }
+.inv-top { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.btn-sm { padding: 4px 10px; min-height: 0; font-size: 13px; }
+.inv-prev summary { cursor: pointer; color: var(--muted); font-size: 13px; margin: 4px 0; }
+.inv-prev iframe { width: 100%; height: 460px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.inv-head { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 12px; }
+.inv-head .w2 { grid-column: span 2; }
+.inv-legend { font-size: 12px; margin: -2px 0 6px; }
+.inv-lines { display: flex; flex-direction: column; gap: 6px; }
+.inv-line { display: grid; grid-template-columns: minmax(0,1.9fr) minmax(0,1.1fr) minmax(0,1.9fr) minmax(0,1.2fr) minmax(0,1fr) minmax(0,2.7fr) 36px; gap: 8px; align-items: start; padding: 8px 10px;
+  border: 1px solid var(--line); border-left: 4px solid var(--ok, #3BA55C); border-radius: 10px; background: var(--card); }
+.inv-line.need { border-left-color: var(--bad, #E0675A); background: color-mix(in srgb, var(--bad, #E0675A) 7%, var(--card)); }
+.inv-line.unsure { border-left-color: var(--warn, #F5B041); background: color-mix(in srgb, var(--warn, #F5B041) 9%, var(--card)); }
+.inv-line.skip { border-left-color: var(--line); opacity: .8; }
+.inv-line label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+.inv-line input, .inv-line select { width: 100%; min-width: 0; }
+.inv-line .row { display: flex; gap: 4px; align-items: center; flex-wrap: nowrap; }
+.inv-line .il-lot .row input:first-child { flex: 1; }
+.inv-line input.num { text-align: right; }
+.inv-line input.unit { width: 56px; flex: none; }
+.inv-line .u { font-size: 12px; color: var(--muted); min-width: 22px; }
+.inv-line .per { display: block; font-size: 11px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.inv-line .raw { font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.inv-line .il-lot input[type=date] { width: 138px; flex: none; }
+.inv-line .il-del { padding-top: 16px; }
+.inv-sum { margin: 8px 0 4px; font-size: 13px; font-weight: 600; }
+.inv-opts { display: flex; flex-direction: column; gap: 8px; }
+.inv-opts select { width: auto; max-width: 100%; }
+.inv-kv { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 16px; font-size: 13.5px; }
+.inv-drop { border: 2px dashed var(--line); border-radius: 12px; padding: 14px; text-align: center; color: var(--muted); font-size: 13px; margin-bottom: 10px; }
+.inv-drop.over { border-color: var(--accent); color: var(--text); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+@media (max-width: 1000px) {
+  .inv-line { grid-template-columns: 1fr 1fr; }
+  .inv-line .il-name, .inv-line .il-item { grid-column: span 2; }
+  .inv-line .il-lot { grid-column: span 2; }
+  .inv-line .il-del { position: absolute; }
+  .inv-line { position: relative; padding-right: 44px; }
+  .inv-line .il-del { right: 6px; top: 6px; }
+  .inv-head { grid-template-columns: 1fr 1fr; }
+  .inv-head .w2 { grid-column: span 2; }
+}
+@media (max-width: 700px) { .inv-drop { display: none; } .inv-kv { grid-template-columns: 1fr; } }

@@ -186,7 +186,10 @@ class DashboardPage extends Page {
 
   build() {
     this.tbtn("🔥 Dan kuhanja", () => this.app.show("batches", "brewDay"));
-    this.tbtn("⬇ Primka robe", () => this.app.show("items", "receive"), "ghost");
+    this.tbtn("📄 Učitaj račun (primka)", async () => {
+      const m = await this.app.loadModule("invoices");
+      if (m && await m.newInvoice(this.app)) this.refresh();
+    }, "ghost");
     this.tbtn("🛒 Što trebam naručiti", () => this.app.show("reorder"), "ghost");
     this.tbtn("🛡 HACCP evidencije", () => this.app.show("haccp"), "ghost");
     this.disBtn = this.tbtn("🔕 Zanemarena", () => this.showDismissed(), "ghost");
@@ -242,8 +245,9 @@ class DashboardPage extends Page {
     // podsjetnik za trošarine (umjesto skočnog prozora pri ulasku)
     this.exciseBar = h("div", { class: "banner warn", style: { display: "none", cursor: "pointer" }, onclick: () => this.app.show("excise") });
     this.tokenBar = h("div", { class: "banner warn", style: { display: "none", cursor: "pointer" }, onclick: () => this.app.show("settings") });
+    this.invBar = h("div", { class: "banner warn", style: { display: "none", cursor: "pointer" }, onclick: () => this.app.show("invoices") });
     this.dryBar = h("div", { class: "banner ok dry-bar", style: { display: "none" } });
-    this.content.append(this.tokenBar, this.dryBar, this.exciseBar, cards, charts, low);
+    this.content.append(this.tokenBar, this.dryBar, this.exciseBar, this.invBar, cards, charts, low);
   }
 
   // podsjetnik za dry hop (danas ili kasni) + obavijest na uređaju
@@ -329,6 +333,17 @@ class DashboardPage extends Page {
         : `⚠ GitHub token ističe za ${ts.days} dana (${d2ui(ts.date)}). Administrator: na GitHubu napravite novi token i upišite ga u Postavke → Korisnici → 🔑 Zamijeni tokene.`;
     } catch (e) { console.warn(e); }
     try {
+      const due = this.app.py.call("web_invoices.due_summary");
+      this.invBar.style.display = due.length ? "" : "none";
+      if (due.length) {
+        const t0 = today();
+        const late = due.filter((r) => r.due_date < t0);
+        const sum = due.reduce((a, r) => a + (r.total || 0), 0);
+        this.invBar.textContent = `💳 ${due.length} račun(a) dobavljača ${late.length ? `(dospjelo: ${late.length}) ` : ""}za platiti uskoro – `
+          + `${sum.toLocaleString("hr-HR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €. Kliknite za Račune.`;
+      }
+    } catch (e) { console.warn(e); }
+    try {
       const rem = this.db.excise_reminder();
       const show = rem && !this.db.is_dismissed({ key: `excise:${rem[0]}`, type: "Trošarine MI-PI" });
       this.exciseBar.style.display = show ? "" : "none";
@@ -362,7 +377,11 @@ class ItemsPage extends Page {
   build() {
     this.tbtn("＋ Novi artikl", () => this.new());
     this.tbtn("Uredi", () => this.edit(), "ghost");
-    this.tbtn("⬇ Primka (LOT)", () => this.receive());
+    this.tbtn("📄 Primka iz računa", async () => {
+      const m = await this.app.loadModule("invoices");
+      if (m && await m.newInvoice(this.app)) this.refresh();
+    });
+    this.tbtn("⬇ Ručna primka (LOT)", () => this.receive(), "ghost");
     this.tbtn("⬆ Izdavanje (FIFO)", () => this.issue(), "ghost");
     this.tbtn("Kartica artikla", () => this.card(), "ghost");
     this.tbtn("Obriši", () => this.delete(), "ghost");

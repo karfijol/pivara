@@ -13,7 +13,7 @@ export const GROUPS = [
   ["dash", "dash", "Nadzorna ploča", [["dash", "Nadzorna ploča"]]],
   ["kegovi", "kegs", "Kegovi", [["kegwork", "Rad s kegovima (QR)"], ["kegs", "Popis kegova"], ["returns", "Kegovi za povrat"]]],
   ["proizvodnja", "batches", "Proizvodnja", [["batches", "Šarže i dan kuhanja"], ["planner", "Plan"], ["recipes", "Recepture"]]],
-  ["skladiste", "items", "Skladište", [["items", "Sirovine"], ["lots", "LOT-ovi"], ["chem", "Kemikalije"], ["reorder", "Što naručiti"],
+  ["skladiste", "items", "Skladište", [["items", "Sirovine"], ["invoices", "Računi"], ["lots", "LOT-ovi"], ["chem", "Kemikalije"], ["reorder", "Što naručiti"],
     ["po", "Narudžbenice"], ["suppliers", "Dobavljači"]]],
   ["prodaja", "offers", "Prodaja", [["offers", "Ponude"], ["sales", "Otpremnice i kupci"], ["pricelist", "Cjenik"]]],
   ["izvjesca", "year", "Izvješća", [["costs", "Troškovi · knjigovođa"], ["year", "Godišnji pregled"], ["excise", "Trošarine"],
@@ -29,14 +29,14 @@ export const ROLES = [
   ["pivar", "Pivar – Proizvodnja i HACCP"],
   ["prodaja", "Prodaja – Prodaja i Kegovi"],
   ["kegovi", "Rad s kegovima – Kegovi te otpremnice i kupci"],
-  ["knjigovodja", "Knjigovođa – Izvješća, samo čitanje"],
+  ["knjigovodja", "Knjigovođa – Izvješća i računi dobavljača, samo čitanje"],
 ];
 // stranice (kartice) koje uloga vidi; uloga bez popisa vidi sve
 export const ROLE_PAGES = {
   pivar: ["batches", "planner", "recipes", "haccp", "settings"],
   prodaja: ["offers", "sales", "pricelist", "kegwork", "kegs", "returns", "settings"],
   kegovi: ["kegwork", "kegs", "returns", "sales", "settings"],
-  knjigovodja: ["costs", "year", "excise", "recall", "settings"],
+  knjigovodja: ["costs", "year", "excise", "recall", "invoices", "settings"],
 };
 export const ROLE_READONLY = { knjigovodja: true };
 

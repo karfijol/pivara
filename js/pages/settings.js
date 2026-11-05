@@ -2,12 +2,35 @@
 import { h, btn, Page, Form, confirm, info, error, busy, toast, saveBlob, tableDialog, today } from "../ui.js";
 import * as store from "../store.js";
 import * as auth from "../auth.js";
-import { Table, askForm } from "../ui.js";
+import { Table, askForm, Dialog, d2ui } from "../ui.js";
 
 function card(title, note = null) {
   const c = h("div", { class: "card" }, h("h3", {}, title));
   if (note) c.append(h("div", { class: "muted", style: { marginBottom: "8px", fontSize: "12.5px" } }, note));
   return c;
+}
+
+export async function auditDialog(app, text = "") {
+  const d = new Dialog("Povijest promjena", { width: 1000 });
+  const q = h("input", { class: "search", placeholder: "🔍 Traži (LOT, keg, ponuda, korisnik…)", value: text, style: { width: "100%" } });
+  const t = new Table([["ts", "Vrijeme", 120, "center"], ["user", "Tko", 110, "w"], ["action", "Što", 150, "w"], ["target", "Zapis", 180, "w"],
+    ["detail", "Detalji", 360, "w"]], { height: 14 });
+  const load = () => t.setRows(app.py.call("web_more.audit", q.value.trim(), 500).map((r) => ({ id: r.id, ts: d2ui(r.ts.slice(0, 10)) + r.ts.slice(10),
+    user: r.user || "—", action: r.action, target: r.target, detail: r.detail })));
+  let timer = null;
+  q.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(load, 250); });
+  d.body.append(q, h("div", { style: { height: "8px" } }), t.el,
+    h("p", { class: "note" }, "Bilježi se od verzije 2.9. Starije promjene: Postavke → 🕘 Povijest verzija (GitHub)."));
+  d.buttons(null, null, "Zatvori");
+  load();
+  return d.show();
+}
+
+async function exportCalendar(app) {
+  try {
+    const r = await app.doc("web_more.calendar_ics");
+    if (r && r.n === 0) info("U sljedećih 120 dana nema planiranih događaja.");
+  } catch (e) { error(e); }
 }
 
 function pickFile(accept) {
@@ -203,9 +226,30 @@ class SettingsPage extends Page {
     h("div", { class: "row gap", style: { marginTop: "6px" } },
       btn("Odjavi ovaj uređaj", () => this.logout(), "ghost")));
 
+    // arhiva, povijest promjena, kalendar, token
+    const ca = card("Arhiva, povijest i kalendar");
+    const now = new Date();
+    const pm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const mon = h("input", { type: "month", value: `${pm.getFullYear()}-${String(pm.getMonth() + 1).padStart(2, "0")}`, style: { width: "170px" } });
+    const tokIn = h("input", { type: "date", value: (this.db.get_setting("token_expires") || "").slice(0, 10), style: { width: "170px" } });
+    tokIn.addEventListener("change", () => { this.db.set_setting("token_expires", tokIn.value || ""); toast("Datum isteka tokena spremljen."); });
+    ca.append(
+      h("div", { class: "flab" }, "Mjesečna arhiva: baza, svi HACCP dokumenti (cijela povijest), ponude i izvještaj za knjigovođu u jednom ZIP-u"),
+      h("div", { class: "row gap", style: { margin: "4px 0 12px" } }, mon,
+        btn("📦 Izradi arhivu", () => { if (mon.value) this.app.doc("web_more.archive", mon.value); })),
+      h("div", { class: "flab" }, "Tko je što promijenio (šarže, kegovi, ponude, HACCP zapisi…)"),
+      h("div", { class: "row gap", style: { margin: "4px 0 12px" } }, btn("🕘 Povijest promjena", () => auditDialog(this.app), "ghost")),
+      h("div", { class: "flab" }, "Kalendar za mobitel: planirana kuhanja, kraj fermentacije, CIP i održavanje opreme (sljedećih 120 dana)"),
+      h("div", { class: "row gap", style: { margin: "4px 0 4px" } }, btn("📅 Preuzmi kalendar (.ics)", () => exportCalendar(this.app), "ghost")),
+      h("p", { class: "note" }, "Datoteku otvorite na mobitelu ili uvezite u Google kalendar (calendar.google.com → Postavke → Uvoz). "
+        + "Ponovni uvoz ažurira iste događaje."),
+      h("div", { class: "flab", style: { marginTop: "10px" } }, "GitHub token vrijedi do (podsjetnik 30 dana prije isteka)"),
+      h("div", { class: "row gap", style: { margin: "4px 0" } }, tokIn,
+        h("span", { class: "muted", style: { fontSize: "12px" } }, "datum vidite na GitHubu: Settings → Developer settings → Fine-grained tokens")));
+
     const role = this.app.user ? this.app.user.role : "admin";
     this.usersCard = card("Korisnici i prijava");
-    if (role === "admin") for (const x of [c, this.usersCard, cl, cs, co, cn, cd]) this.content.append(x);
+    if (role === "admin") for (const x of [c, this.usersCard, cl, cs, co, cn, cd, ca]) this.content.append(x);
     else {
       // korisnik bez administratorskih prava vidi samo izgled i svoje podatke
       [...c.children].forEach((ch, i) => { if (i > 0 && ch === this.form.el) ch.remove(); });

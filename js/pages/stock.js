@@ -241,7 +241,8 @@ class DashboardPage extends Page {
       h("div", {}, this.tasksBox));
     // podsjetnik za trošarine (umjesto skočnog prozora pri ulasku)
     this.exciseBar = h("div", { class: "banner warn", style: { display: "none", cursor: "pointer" }, onclick: () => this.app.show("excise") });
-    this.content.append(this.exciseBar, cards, charts, low);
+    this.tokenBar = h("div", { class: "banner warn", style: { display: "none", cursor: "pointer" }, onclick: () => this.app.show("settings") });
+    this.content.append(this.tokenBar, this.exciseBar, cards, charts, low);
   }
 
   refresh() {
@@ -286,6 +287,14 @@ class DashboardPage extends Page {
     const areas = {};
     for (const r of tasks) areas[r.area] = (areas[r.area] || 0) + 1;
     this.tasksSum.textContent = tasks.length ? Object.entries(areas).map(([k, v]) => `${k}: ${v}`).join(" · ") : "✓ HACCP evidencije su ažurne.";
+    try {
+      const ts = this.app.py.call("web_more.token_status");
+      const warn = ts && ts.days <= 30;
+      this.tokenBar.style.display = warn ? "" : "none";
+      if (warn) this.tokenBar.textContent = ts.days < 0
+        ? `⛔ GitHub token je istekao ${d2ui(ts.date)} – spremanje ne radi. Administrator: napravite novi token i upišite ga u Postavke → Korisnici → 🔑 Zamijeni tokene.`
+        : `⚠ GitHub token ističe za ${ts.days} dana (${d2ui(ts.date)}). Administrator: na GitHubu napravite novi token i upišite ga u Postavke → Korisnici → 🔑 Zamijeni tokene.`;
+    } catch (e) { console.warn(e); }
     try {
       const rem = this.db.excise_reminder();
       const show = rem && !this.db.is_dismissed({ key: `excise:${rem[0]}`, type: "Trošarine MI-PI" });
@@ -992,3 +1001,4 @@ class ReorderPage extends Page {
 
 export const PAGES = { dash: DashboardPage, items: ItemsPage, lots: LotsPage, chem: ChemicalsPage,
   reorder: ReorderPage, po: POPage, suppliers: SuppliersPage };
+export { MonthBars, HBars, Donut };

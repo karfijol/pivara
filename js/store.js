@@ -98,8 +98,18 @@ export async function testRepo(cfg) {
 }
 
 // Vraća {sha} ili null ako datoteka ne postoji
+// datum isteka tokena (GitHub ga šalje u zaglavlju odgovora, ako ga preglednik smije pročitati)
+export let tokenExpiry = null;
+function noteExpiry(r) {
+  try {
+    const v = r.headers.get("github-authentication-token-expiration");
+    if (v) tokenExpiry = v.slice(0, 10);
+  } catch { /* */ }
+}
+
 export async function remoteMeta(cfg, path = DB_FILE) {
   const r = await fetch(url(cfg, path) + "?t=" + Date.now(), { headers: headers(cfg), cache: "no-store" });
+  noteExpiry(r);
   if (r.status === 404) return null;
   await check(r);
   const j = await r.json();

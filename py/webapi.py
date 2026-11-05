@@ -16,6 +16,7 @@ import traceback
 from db import DB
 
 DB_ = None
+USER = ""
 DATA = os.path.join(os.path.expanduser("~"), "Documents", "PivovaraSkladiste")
 OUT = "/out"
 
@@ -38,6 +39,13 @@ class App:
 APP = App()
 
 
+def set_user(name):
+    """Ime prijavljenog korisnika / radnika na uređaju – upisuje se u povijest promjena."""
+    global USER
+    USER = name or ""
+    return True
+
+
 def open_db(path):
     global DB_
     if DB_ is not None:
@@ -56,6 +64,11 @@ def open_db(path):
     try:
         import web_offers
         web_offers.ensure(DB_)
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
+    try:
+        import web_more
+        web_more.ensure(DB_)
     except Exception:  # noqa: BLE001
         traceback.print_exc()
     try:
@@ -116,6 +129,11 @@ def call(name, args_json="[]", kwargs_json="{}"):
             res = fn(DB_, *args, **kwargs) if params and list(params)[0] == "db" else fn(*args, **kwargs)
         changed = DB_ is not None and DB_.con.total_changes != before
         if changed:
+            try:
+                import web_more
+                web_more.log_change(DB_, USER, name, args, kwargs)
+            except Exception:  # noqa: BLE001
+                pass
             DB_.con.commit()
         return json.dumps({"ok": True, "result": res, "changed": changed}, default=_default)
     except Exception as e:  # noqa: BLE001

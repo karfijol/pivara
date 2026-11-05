@@ -121,7 +121,7 @@ def products(db, active_only=False):
 
 def save_product(db, data, id=None):
     ensure(db)
-    d = {k: data.get(k) for k in ("grp", "name", "descr", "unit", "price", "vat", "active") if k in data}
+    d = {k: data.get(k) for k in ("grp", "name", "descr", "unit", "price", "vat", "active", "recipe_id", "keg_l") if k in data}
     if not (d.get("name") or "").strip() and not id:
         raise ValueError("Upišite naziv proizvoda.")
     if d.get("price") is not None and float(d["price"]) < 0:
@@ -184,6 +184,7 @@ def new_offer_defaults(db):
         days = 15
     return {"no": next_no(db), "issue_date": now.date().isoformat(), "issue_time": now.strftime("%H:%M"),
             "payment_due": (now.date() + dt.timedelta(days=days)).isoformat(),
+            "valid_until": (now.date() + dt.timedelta(days=days)).isoformat(), "price_mode": "gross",
             "payment_desc": db.get_setting("offer_payment_desc"),
             "payment_method": db.get_setting("offer_payment_method") or PAYMENT_METHODS[0],
             "operator": db.get_setting("offer_last_operator") or db.get_setting("default_operator"), "lines": []}
@@ -251,7 +252,7 @@ def save_offer(db, data, lines, id=None, save_customer=False):
     ensure(db)
     d = {k: data.get(k) for k in ("no", "issue_date", "issue_time", "customer_id", "cust_name", "cust_address",
                                   "cust_oib", "delivery_date", "delivery_place", "payment_desc", "payment_due",
-                                  "operator", "payment_method", "note", "status")}
+                                  "operator", "payment_method", "note", "status", "valid_until", "price_mode")}
     seq, year = _parse_no(d["no"])
     d["no"] = f"{seq}-{year}"
     d["seq"], d["year"] = seq, year
@@ -309,7 +310,7 @@ def copy_offer(db, id):
     o = offer(db, id)
     d = new_offer_defaults(db)
     for k in ("customer_id", "cust_name", "cust_address", "cust_oib", "delivery_place", "payment_desc",
-              "payment_method", "note"):
+              "payment_method", "note", "price_mode"):
         d[k] = o.get(k)
     return save_offer(db, d, o["lines"])
 
@@ -505,6 +506,7 @@ def offer_pdf(db, id, fmt="PDF", app=None):
         cust.append(P(f"OIB: {o['cust_oib']}", 9.5))
     info = [("Datum i vrijeme izdavanja", f"{_d(o['issue_date'])} {o.get('issue_time') or ''}".strip()),
             ("Datum isporuke", _d(o.get("delivery_date"))), ("Mjesto isporuke", o.get("delivery_place") or ""),
+            ("Ponuda vrijedi do", _d(o.get("valid_until"))),
             ("Rok plaćanja", _d(o.get("payment_due"))), ("Način plaćanja", o.get("payment_method") or ""),
             ("Operater", o.get("operator") or "")]
     inf = Table([[P(a, 8.5, col=grey), P(b, 9.5, True)] for a, b in info if b],
@@ -518,16 +520,22 @@ def offer_pdf(db, id, fmt="PDF", app=None):
                              ("LEFTPADDING", (1, 0), (1, 0), 14)]))
     story += [box, Spacer(1, 7 * mm)]
 
-    # stavke
+    # stavke (veleprodaja: cijene bez PDV-a; u bazi su uvijek cijene s PDV-om)
+    net = (o.get("price_mode") or "gross") == "net"
+
+    def up(ln):
+        r = float(ln.get("vat") or 0)
+        return float(ln["price"]) / (1 + r / 100) if net and r else float(ln["price"])
     head = [P(t, 8.5, True, colors.white, al) for t, al in
-            (("R.br.", 1), ("Proizvod / usluga", 0), ("Jed.", 1), ("Količina", 2), ("Cijena €", 2), ("Iznos €", 2))]
+            (("R.br.", 1), ("Proizvod / usluga", 0), ("Jed.", 1), ("Količina", 2),
+             ("Cijena € bez PDV" if net else "Cijena €", 2), ("Iznos € bez PDV" if net else "Iznos €", 2))]
     rows = [head]
     for n, ln in enumerate(o["lines"], 1):
         name = [P(ln["name"], 9.5, True)]
         if ln.get("descr"):
             name.append(P(ln["descr"], 8, col=grey))
         rows.append([P(f"{n}.", 9.5, align=1), name, P(ln["unit"], 9.5, align=1), P(_q(ln["qty"]), 9.5, align=2),
-                     P(_m(ln["price"]), 9.5, align=2), P(_m(ln["qty"] * ln["price"]), 9.5, True, align=2)])
+                     P(_m(up(ln)), 9.5, align=2), P(_m(ln["qty"] * up(ln)), 9.5, True, align=2)])
     tw = [0.07, 0.44, 0.1, 0.11, 0.13, 0.15]
     t = Table(rows, colWidths=[w * cw for w in tw], repeatRows=1)
     t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), accent), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
@@ -572,7 +580,8 @@ def offer_pdf(db, id, fmt="PDF", app=None):
         story += [P("Opis plaćanja", 8.5, True, grey), P(o["payment_desc"], 9.5), Spacer(1, 3 * mm)]
     if o.get("note"):
         story += [P("Napomena", 8.5, True, grey), P(o["note"], 9.5), Spacer(1, 3 * mm)]
-    story.append(P("Sve cijene su izražene u eurima (€) i uključuju PDV.", 8.5, col=grey))
+    story.append(P("Cijene su izražene u eurima (€) bez PDV-a; PDV je obračunat u zbroju." if net else
+                   "Sve cijene su izražene u eurima (€) i uključuju PDV.", 8.5, col=grey))
     sign = Table([[P("Ponudu izradio:", 8.5, col=grey), ""], [P(o.get("operator") or "", 9.5, True), ""]],
                  colWidths=[cw * 0.45, cw * 0.55])
     sign.setStyle(TableStyle([("LINEBELOW", (0, 1), (0, 1), 0.6, line), ("TOPPADDING", (0, 0), (-1, -1), 1),

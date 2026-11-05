@@ -176,7 +176,7 @@ export async function busy(text, fn) {
 
 // Datoteka iz Pythona (PDF/Word/CSV) -> otvori ili preuzmi
 const MIME = { pdf: "application/pdf", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  csv: "text/csv", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", db: "application/octet-stream", png: "image/png", zip: "application/zip", html: "text/html" };
+  csv: "text/csv", ics: "text/calendar", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", db: "application/octet-stream", png: "image/png", zip: "application/zip", html: "text/html" };
 export function openFile(path) {
   if (!path) return;
   const name = path.split("/").pop();

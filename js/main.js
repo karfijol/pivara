@@ -5,7 +5,7 @@ import * as auth from "./auth.js";
 import { h, btn, toast, info, error, confirm, busy, openFile, dbProxy, Dialog } from "./ui.js";
 import { icon } from "./icons.js";
 
-export const VERSION = "web 2.8";
+export const VERSION = "web 2.9";
 
 // [ključ, ikona (icons.js), naziv, modul stranice, rijetko korišteno -> skupina "Više"]
 const NAV = [
@@ -13,6 +13,7 @@ const NAV = [
   [null, "", "KEGOVI I PROIZVODNJA"],
   ["kegwork", "kegwork", "Rad s kegovima (QR)", "kegwork"],
   ["kegs", "kegs", "Kegovi", "production"],
+  ["returns", "returns", "Kegovi za povrat", "reports"],
   ["batches", "batches", "Šarže piva", "production"],
   ["recipes", "recipes", "Recepture", "production"],
   ["planner", "planner", "Planer fermentora", "production"],
@@ -25,6 +26,7 @@ const NAV = [
   ["offers", "offers", "Ponude", "offers"],
   ["sales", "sales", "Kupci i otpremnice", "production"],
   ["costs", "costs", "Troškovi · knjigovođa", "costs"],
+  ["year", "year", "Godišnji pregled", "reports"],
   ["excise", "excise", "Trošarine", "production"],
   ["chem", "chem", "Kemikalije", "stock", true],
   ["po", "po", "Narudžbenice", "stock", true],
@@ -34,7 +36,7 @@ const NAV = [
   ["settings", "settings", "Postavke", "settings"],
 ];
 const MOD_OF = Object.fromEntries(NAV.filter((n) => n[0]).map((n) => [n[0], n[3]]));
-const MODULES = ["stock", "production", "haccp", "settings", "kegwork", "costs", "offers"];
+const MODULES = ["stock", "production", "haccp", "settings", "kegwork", "costs", "offers", "reports"];
 // donja traka na mobitelu (prve dostupne prema ulozi)
 const BOTTOM = ["dash", "kegwork", "batches", "offers", "kegs", "sales", "settings"];
 
@@ -123,6 +125,11 @@ class App {
 
   async openApp(bytes) {
     py.openDb(bytes || null);
+    try {
+      let who = this.user ? this.user.name : "";
+      if (!who) { try { who = JSON.parse(localStorage.getItem("pivovara_user") || '""') || ""; } catch { /* */ } }
+      py.call("webapi.set_user", who);
+    } catch (e) { console.warn(e); }
     const role = this.user ? this.user.role : "admin";
     const first = (auth.ROLE_PAGES[role] || ["dash"])[0];
     let key = (location.hash || "#" + first).slice(1).split("/")[0];
@@ -148,6 +155,7 @@ class App {
   afterStart() {
     // podsjetnik za trošarine više ne iskače pri ulasku – prikazuje se kao traka na nadzornoj ploči
     this.checkDbSize();
+    try { if (store.tokenExpiry) py.call("web_more.set_token_expires", store.tokenExpiry); } catch (e) { console.warn(e); }
   }
 
   // baza raste s godinama: upozori ako se približi veličini kod koje spremanje postaje sporo
@@ -445,7 +453,9 @@ class App {
         set("Izrađujem dokument…");
         return py.call(name, ...args);
       });
-      if (Array.isArray(path)) path.forEach((p) => p && openFile(p)); else if (path) openFile(path);
+      if (Array.isArray(path)) path.forEach((p) => p && openFile(p));
+      else if (path && typeof path === "object" && path.path) openFile(path.path);
+      else if (path) openFile(path);
       return path;
     } catch (e) { error(e.message); return null; }
   }

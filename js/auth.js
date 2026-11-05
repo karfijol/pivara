@@ -14,7 +14,7 @@ export const ROLES = [
   ["kegovi", "Rad s kegovima – samo kegovi, otpremnice i kupci"],
 ];
 export const ROLE_PAGES = {
-  kegovi: ["kegwork", "kegs", "sales", "settings"],
+  kegovi: ["kegwork", "kegs", "returns", "sales", "settings"],
 };
 const ITER = 600000;
 const enc = new TextEncoder(), dec = new TextDecoder();

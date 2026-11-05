@@ -27,6 +27,42 @@ function badge(status) {
   return h("span", { class: "badge", style: { background: STATUS_COLORS[status] || "#8A8F98" } }, status);
 }
 
+// ------------------------------------------------------------------ oprema (QR): CIP, kontrola mlina, održavanje
+export async function equipmentAction(app, code) {
+  const e = app.py.call("web_more.find_equipment", code);
+  if (!e) return error(`Oprema „${code}” nije pronađena.`);
+  const lastC = e.last_check ? `${e.last_check.kind === "kontrola" ? "kontrola" : "održavanje"} ${d2ui(e.last_check.date)}` : "—";
+  const d = new Dialog(`${e.name}`, { width: 520 });
+  d.body.append(h("div", { class: "facts" },
+    h("div", { class: "fact" }, h("span", { class: "muted" }, "Vrsta"), h("b", {}, e.category || "—")),
+    h("div", { class: "fact" }, h("span", { class: "muted" }, "Zadnji CIP"), h("b", {}, d2ui(e.last_cip) || "—")),
+    h("div", { class: "fact" }, h("span", { class: "muted" }, "Zadnja kontrola / održavanje"), h("b", {}, lastC))),
+  h("div", { class: "muted", style: { margin: "8px 0" } }, "Što upisujete?"));
+  const choose = (v) => () => d.close(v);
+  const opts = [];
+  if (e.category !== "Mlin") opts.push(btn("🧼 CIP zapisnik", choose("cip")));
+  if (e.category === "Mlin") opts.push(btn("✔ Kontrola mlina", choose("mill")));
+  opts.push(btn("🔧 Održavanje", choose("maint"), "ghost"));
+  d.body.append(h("div", { class: "row gap", style: { flexWrap: "wrap" } }, ...opts));
+  d.buttons(null, null, "Zatvori");
+  const what = await d.show();
+  if (!what) return;
+  const hx = await import("./haccp.js");
+  const user = deviceUser(app) || app.db.get_setting("default_operator");
+  if (what === "cip") {
+    const init = hx.cipDefaults(app, e.category === "Fermentor"
+      ? { fermentor_id: e.id, equipment: ["Fermentor"], operator: user, op_sign: user }
+      : { other_eq: e.name, operator: user, op_sign: user });
+    if (await hx.editCip(app, init, null)) toast("CIP zapisnik spremljen.");
+  } else if (what === "mill") {
+    if (await hx.editMillCheck(app, { date: today(), operator: user }, null)) toast("Kontrola mlina spremljena.");
+  } else {
+    const v = await askForm(`Održavanje – ${e.name}`, [{ key: "date", label: "Datum", type: "date", required: true },
+      { key: "note", label: "Što je napravljeno", required: true }, { key: "operator", label: "Radnik" }], { date: today(), operator: user });
+    if (v) { app.db.save_record("eq_checks", { ...v, equipment_id: e.id, kind: "odrzavanje" }); toast("Održavanje upisano."); }
+  }
+}
+
 // ------------------------------------------------------------------ detalji kega
 export async function kegDetail(app, kegId) {
   const py = app.py;
@@ -221,6 +257,7 @@ class KegWorkPage extends Page {
     this.flow = null;
     this.tbtn("🔍 Pronađi keg", () => this.findKeg(), "ghost");
     this.tbtn("🛠 Servis kega", () => this.findKeg("service"), "ghost");
+    this.tbtn("🛡 Oprema (QR) – CIP / kontrola", () => this.scanEquipment(), "ghost");
     if (!this.app.user || this.app.user.role !== "kegovi") this.tbtn("🔳 QR oznake", () => qrManager(this.app), "ghost");
     this.home = h("div", { class: "content" });
     this.work = h("div", { class: "content hidden" });
@@ -297,11 +334,32 @@ class KegWorkPage extends Page {
     if (r) this.refresh();
   }
 
+  async scanEquipment() {
+    const dlg = new Dialog("Oprema – skenirajte QR na fermentoru, mlinu…", { width: 520 });
+    const sc = new Scanner((code) => go(code));
+    const eqs = this.app.py.call("web_more.equipment_list");
+    const sel = h("select", { style: { width: "100%" } }, h("option", { value: "" }, "— ili odaberite opremu —"),
+      eqs.map((e) => h("option", { value: e.qr }, `${e.name} (${e.category})`)));
+    const go = (text) => {
+      if (!this.app.py.call("web_more.find_equipment", text)) { beep(false); sc.flash(false); dlg.err(`„${text}” nije QR oznaka opreme.`); return; }
+      beep(true); sc.stop(); dlg.close(text);
+    };
+    sel.addEventListener("change", () => { if (sel.value) go(sel.value); });
+    dlg.body.append(sc.el, sel, h("div", { class: "row gap", style: { marginTop: "8px" } },
+      btn("📷 Skeniraj QR", async () => { try { await sc.start(); } catch (e) { dlg.err(e.message); } }),
+      btn("🖨 QR naljepnice opreme", () => this.app.doc("web_more.eq_qr_sheet"), "ghost")));
+    dlg.buttons(null, null, "Zatvori");
+    const code = await dlg.show();
+    sc.stop();
+    if (code) { await equipmentAction(this.app, code); this.refresh(); }
+  }
+
   async findKeg(mode = "detail") {
     const dlg = new Dialog(mode === "service" ? "Servis kega – odaberite keg" : "Pronađi keg", { width: 520 });
     const inp = h("input", { placeholder: "Broj kega, npr. 7 ili K30-007", style: { width: "100%" } });
     const sc = new Scanner((code) => go(code));
     const go = (text) => {
+      if (/^OPREMA-/i.test((text || "").trim())) { beep(true); sc.stop(); dlg.close(null); equipmentAction(this.app, text); return; }
       const found = this.app.py.call("web_kegs.find_keg", text);
       if (found.length === 1) { beep(true); sc.stop(); dlg.close(found[0].id); }
       else if (!found.length && /[a-z]/i.test(text)) {
@@ -397,6 +455,7 @@ class KegWorkPage extends Page {
   add(text, fromScan = false) {
     text = (text || "").trim();
     if (!text) return;
+    if (/^OPREMA-/i.test(text)) { this.say(false, "To je QR oprema – za CIP / kontrolu koristite tipku „Oprema (QR)” na početnom zaslonu."); return; }
     const found = this.app.py.call("web_kegs.find_keg", text);
     if (!found.length) {
       this.say(false, `Keg „${text}” nije u programu.`);

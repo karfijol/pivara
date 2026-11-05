@@ -296,14 +296,139 @@ class BrewPreview extends Dialog {
   }
 }
 
+// ================================================================== Dan kuhanja (mobitel)
+function beepLong() {
+  try {
+    if (navigator.vibrate) navigator.vibrate([400, 200, 400, 200, 400]);
+    const C = window.AudioContext || window.webkitAudioContext; if (!C) return;
+    const ctx = new C();
+    [0, 0.5, 1].forEach((t) => { const o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.value = 880; o.connect(g); g.connect(ctx.destination);
+      g.gain.setValueAtTime(0.25, ctx.currentTime + t); o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 0.35); });
+  } catch { /* */ }
+}
+
+class BrewDayDialog extends Dialog {
+  constructor(app, batchId) {
+    const d = app.py.call("web_more.brew_day", batchId);
+    const b = d.batch;
+    super(`Dan kuhanja · ${b.batch_no} · ${b.recipe || ""}`, { width: 900, cls: "brewday" });
+    this.app = app; this.batchId = batchId; this.d = d;
+    this.key = "brewday_" + batchId;
+    let st = {}; try { st = JSON.parse(localStorage.getItem(this.key) || "{}"); } catch { /* */ }
+    this.st = Object.assign({ checks: {}, vals: {} }, st);
+    const save = () => { try { localStorage.setItem(this.key, JSON.stringify(this.st)); } catch { /* */ } };
+    this.save = save;
+    const chk = (id, label, extra = null) => {
+      const cb = h("input", { type: "checkbox" }); cb.checked = !!this.st.checks[id];
+      cb.addEventListener("change", () => { this.st.checks[id] = cb.checked; save(); });
+      return h("label", { class: "bd-row" }, cb, h("span", { class: "bd-lab" }, label), extra);
+    };
+    this.body.append(h("div", { class: "muted" }, `${fq(b.volume_l, 0)} L · ${d.planned ? "planirana šarža – sirovine se skidaju sa skladišta kad kliknete „Završi kuhanje”" : "šarža je već skuhana – upisujete mjerenja"}`));
+    if (d.recipe_note) this.body.append(h("div", { class: "banner ok", style: { whiteSpace: "pre-line" } }, d.recipe_note));
+    // 1. sirovine
+    this.body.append(h("h3", { class: "sec" }, "1. Sirovine – odvagati"));
+    const groups = {};
+    for (const it of d.items) (groups[it.cat || "Ostalo"] = groups[it.cat || "Ostalo"] || []).push(it);
+    for (const [g, its] of Object.entries(groups)) {
+      this.body.append(h("div", { class: "bd-grp" }, g));
+      its.forEach((it, i) => this.body.append(chk(`it_${g}_${i}`, `${it.name}`,
+        h("span", { class: "bd-qty" + (it.missing > EPS ? " bad" : "") }, `${fq(it.need)} ${it.unit}` + (it.lots ? ` · LOT ${it.lots}` : "")
+          + (it.missing > EPS ? ` · nedostaje ${fq(it.missing)}` : "")))));
+    }
+    // 2. koraci s mjeračem vremena
+    this.body.append(h("h3", { class: "sec" }, "2. Koraci"));
+    if (d.mill) this.body.append(chk("mill", "Mlin pregledan prije mljevenja – uređaj je u redu (upisuje se kontrola mlina)"));
+    this.body.append(chk("mill_done", "Mljevenje slada"));
+    for (const [id, label, mins] of [["mash", "Ukomljavanje", 60], ["lauter", "Cijeđenje i ispiranje", 45], ["boil", "Kuhanje sladovine", 60],
+      ["whirl", "Whirlpool / odmor", 15]]) {
+      this.body.append(chk(id, label, this.timer(id, mins)));
+    }
+    this.body.append(chk("hops", "Dodaci hmelja prema recepturi"), chk("cool", "Hlađenje i prebacivanje u fermentor"),
+      chk("yeast", "Dodan kvasac"));
+    // 3. mjerenja
+    this.body.append(h("h3", { class: "sec" }, "3. Mjerenja i CCP kuhanja"));
+    const v = this.st.vals;
+    this.form = new Form([
+      { key: "date", label: "Datum kuhanja", type: "date" },
+      { key: "operator", label: "Kuhao", type: "combo", editable: true, options: app.db.employee_names() },
+      { key: "wort_l", label: "Volumen sladovine (L)", type: "num", min: 0 },
+      { key: "og_sg", label: "OG (npr. 1,052)", type: "num", min: 0 },
+      { key: "ph", label: "pH", type: "num", min: 0 },
+      { key: "boil_temp", label: "Temperatura kuhanja (°C) – CCP ≥ 100 °C", type: "num", min: 0 },
+      { key: "boil_start", label: "Početak kuhanja", type: "time" },
+      { key: "boil_end", label: "Kraj kuhanja", type: "time" },
+      { key: "boil_min", label: "Trajanje kuhanja (min)", type: "num", min: 0 },
+      { key: "corrective", label: "Korektivna radnja (ako < 100 °C)", full: true }],
+    { date: today(), operator: b.brewer || app.db.get_setting("default_operator"), wort_l: b.wort_l || b.volume_l, og_sg: b.og_sg, ph: b.ph, ...v }, 3);
+    this.form.el.addEventListener("change", () => { try { Object.assign(this.st.vals, this.form.get()); } catch { /* */ } save(); });
+    this.body.append(this.form.el);
+    this.bar.append(btn("Zatvori (zapamti)", () => this.close(null), "ghost"), btn("✔ Završi kuhanje i spremi", () => this.finish()));
+  }
+
+  timer(id, defMin) {
+    const t = this.st.vals["t_" + id] || {};
+    const min = h("input", { value: String(t.min || defMin), inputmode: "numeric", style: { width: "52px", textAlign: "right" } });
+    const lbl = h("span", { class: "bd-time" }, "");
+    const b = btn("▶", () => toggle(), "ghost");
+    const tick = () => {
+      const end = this.st.vals["t_" + id] && this.st.vals["t_" + id].end;
+      if (!end) { lbl.textContent = ""; b.textContent = "▶ Start"; return; }
+      const left = Math.round((end - Date.now()) / 1000);
+      if (left <= 0) {
+        lbl.textContent = "gotovo!"; lbl.classList.add("done"); b.textContent = "↺";
+        if (!this.st.vals["t_" + id].rang) { this.st.vals["t_" + id].rang = true; this.save(); beepLong();
+          if (id === "boil") { this.form.w.boil_end.set(nowHM()); this.form.w.boil_min.set(Number(min.value) || defMin); } }
+        return;
+      }
+      lbl.classList.remove("done");
+      lbl.textContent = `${String(Math.floor(left / 60)).padStart(2, "0")}:${String(left % 60).padStart(2, "0")}`;
+      b.textContent = "⏹ Stop";
+    };
+    const toggle = () => {
+      const cur = this.st.vals["t_" + id];
+      if (cur && cur.end && !cur.rang) { delete this.st.vals["t_" + id]; }
+      else {
+        const m = Math.max(1, Number(min.value) || defMin);
+        this.st.vals["t_" + id] = { min: m, end: Date.now() + m * 60000 };
+        if (id === "boil") this.form.w.boil_start.set(nowHM());
+      }
+      this.save(); tick();
+    };
+    this._timers = this._timers || [];
+    this._timers.push(setInterval(tick, 1000));
+    setTimeout(tick, 0);
+    return h("span", { class: "bd-timer" }, min, h("span", { class: "muted" }, "min"), b, lbl);
+  }
+
+  close(r) { (this._timers || []).forEach(clearInterval); super.close(r); }
+
+  async finish() {
+    let v;
+    try { v = this.form.get(); } catch (e) { return this.err(e.message); }
+    if (v.boil_temp && v.boil_temp < 100 && !v.corrective) return this.err("Temperatura kuhanja je ispod 100 °C – upišite korektivnu radnju.");
+    if (this.d.planned && !(await confirm("Sirovine će se skinuti sa skladišta (FIFO) i šarža prelazi u fermentaciju. Nastaviti?", "Završi kuhanje"))) return;
+    try {
+      for (const k of ["wort_l", "og_sg", "ph", "boil_temp", "boil_min"]) if (!v[k]) delete v[k];
+      const r = this.app.py.call("web_more.brew_day_finish", this.batchId, { ...v, mill_ok: this.d.mill && this.st.checks.mill ? 1 : 0 });
+      try { localStorage.removeItem(this.key); } catch { /* */ }
+      this.close(r);
+    } catch (e) { this.err(e.message); }
+  }
+}
+
 class BatchesPage extends Page {
   static title = "Šarže piva";
   static subtitle = "Evidencija kuhanja · kod potvrde kuhanja sirovine se automatski skidaju (FIFO)";
 
   build() {
     this.tbtn("＋ Nova šarža", () => this.new());
-    this.tbtn("🔥 Skuhaj planiranu", () => this.brew());
+    this.tbtn("🔥 Dan kuhanja", () => this.brewDay());
+    this.tbtn("Skuhaj planiranu", () => this.brew(), "ghost");
     this.tbtn("✎ Uredi šaržu", () => this.edit(), "ghost");
+    this.tbtn("🕘 Povijest", async () => {
+      const id = this.need(this.table, "šaržu"); if (!id) return;
+      const m = await import("./settings.js"); await m.auditDialog(this.app, this.db.batch(id).batch_no);
+    }, "ghost");
     this.tbtn("Sljedivost (LOT-ovi)", () => this.detail(), "ghost");
     this.tbtn("📈 Mjerenja", () => this.readings(), "ghost");
     this.tbtn("Storno kuhanja", () => this.undo(), "ghost");
@@ -357,6 +482,13 @@ class BatchesPage extends Page {
       this.app.toast(`Šarža ${b.batch_no} spremljena (${b.status}).`);
     } catch (e) { return this.err(e); }
     if (b.status !== "Planirano") await this.haccpAfterBrew(bid);
+  }
+
+  async brewDay() {
+    const id = this.need(this.table, "šaržu");
+    if (!id) return;
+    const r = await new BrewDayDialog(this.app, id).show();
+    if (r) { this.app.refreshAll(); toast(`Dan kuhanja spremljen – ${r.batch_no}.`); }
   }
 
   // Nakon kuhanja: kontrola mlina, CIP fermentora prije šarže i CCP kontrola kuhanja.

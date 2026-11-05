@@ -8,14 +8,58 @@
 // Bez ispravne lozinke iz datoteke se ne može doznati token. Lozinke se nigdje ne spremaju.
 import * as store from "./store.js";
 
+// Glavne stranice (skupine) i njihove kartice: [ključ skupine, ikona, naziv, [[ključ kartice, naziv kartice], ...]]
+export const GROUPS = [
+  ["dash", "dash", "Nadzorna ploča", [["dash", "Nadzorna ploča"]]],
+  ["kegovi", "kegs", "Kegovi", [["kegwork", "Rad s kegovima (QR)"], ["kegs", "Popis kegova"], ["returns", "Kegovi za povrat"]]],
+  ["proizvodnja", "batches", "Proizvodnja", [["batches", "Šarže i dan kuhanja"], ["planner", "Plan"], ["recipes", "Recepture"]]],
+  ["skladiste", "items", "Skladište", [["items", "Sirovine"], ["lots", "LOT-ovi"], ["chem", "Kemikalije"], ["reorder", "Što naručiti"],
+    ["po", "Narudžbenice"], ["suppliers", "Dobavljači"]]],
+  ["prodaja", "offers", "Prodaja", [["offers", "Ponude"], ["sales", "Otpremnice i kupci"], ["pricelist", "Cjenik"]]],
+  ["izvjesca", "year", "Izvješća", [["costs", "Troškovi · knjigovođa"], ["year", "Godišnji pregled"], ["excise", "Trošarine"],
+    ["recall", "Sljedivost"]]],
+  ["haccp", "haccp", "HACCP", [["haccp", "HACCP evidencije"]]],
+  ["settings", "settings", "Postavke", [["settings", "Postavke"]]],
+];
+export const GROUP_OF = Object.fromEntries(GROUPS.flatMap(([g, , , tabs]) => tabs.map(([k]) => [k, g])));
+
 export const ROLES = [
   ["admin", "Administrator – sve, uključujući korisnike i postavke"],
-  ["korisnik", "Korisnik – sav rad u programu, bez korisnika i postavki podataka"],
-  ["kegovi", "Rad s kegovima – samo kegovi, otpremnice i kupci"],
+  ["korisnik", "Korisnik – sve stranice, bez korisnika i postavki podataka"],
+  ["pivar", "Pivar – Proizvodnja i HACCP"],
+  ["prodaja", "Prodaja – Prodaja i Kegovi"],
+  ["kegovi", "Rad s kegovima – Kegovi te otpremnice i kupci"],
+  ["knjigovodja", "Knjigovođa – Izvješća, samo čitanje"],
 ];
+// stranice (kartice) koje uloga vidi; uloga bez popisa vidi sve
 export const ROLE_PAGES = {
+  pivar: ["batches", "planner", "recipes", "haccp", "settings"],
+  prodaja: ["offers", "sales", "pricelist", "kegwork", "kegs", "returns", "settings"],
   kegovi: ["kegwork", "kegs", "returns", "sales", "settings"],
+  knjigovodja: ["costs", "year", "excise", "recall", "settings"],
 };
+export const ROLE_READONLY = { knjigovodja: true };
+
+// Stranice koje korisnik vidi: vlastiti izbor skupina (polje pages) ili prema ulozi
+export function allowedPages(user) {
+  if (!user || user.role === "admin") return null;
+  if (Array.isArray(user.pages) && user.pages.length) {
+    const set = new Set(["settings"]);
+    for (const [g, , , tabs] of GROUPS) if (user.pages.includes(g)) for (const [k] of tabs) set.add(k);
+    return [...set];
+  }
+  return ROLE_PAGES[user.role] || null;
+}
+export function isReadonly(user) {
+  if (!user || user.role === "admin") return false;
+  return user.readonly != null ? !!user.readonly : !!ROLE_READONLY[user.role];
+}
+export function firstPage(user) {
+  const a = allowedPages(user);
+  if (!a) return "dash";
+  for (const [, , , tabs] of GROUPS) for (const [k] of tabs) if (a.includes(k)) return k;
+  return "settings";
+}
 const ITER = 600000;
 const enc = new TextEncoder(), dec = new TextDecoder();
 
@@ -91,6 +135,8 @@ export async function login(users, username, password) {
   let admin = null;
   if (keys.admin && users.adminVault) admin = await open(await rawKey(unb64(keys.admin)), users.adminVault);
   const user = { username: u.username, name: u.name || u.username, role: u.role || "korisnik", stamp: u.wrap.ct.slice(0, 16) };
+  if (Array.isArray(u.pages) && u.pages.length) user.pages = u.pages;
+  if (u.readonly != null) user.readonly = !!u.readonly;
   const cfg = { mode: "github", owner: team.owner, repo: team.repo, token: team.token, user,
     site: users.site, keys: u.role === "admin" ? keys : null, adminToken: admin ? admin.token : null };
   return cfg;
@@ -122,7 +168,7 @@ export async function initUsers({ owner, repo, workerToken, adminToken, site, ad
 }
 
 // Dodaj / promijeni korisnika (samo administrator: treba ključeve iz svoje prijave)
-export async function upsertUser(users, adminKeys, { username, name, role, password }, isNew) {
+export async function upsertUser(users, adminKeys, { username, name, role, password, pages, readonly }, isNew) {
   const un = normUser(username);
   if (!/^[a-z0-9._-]{3,30}$/.test(un)) throw new Error("Korisničko ime: 3–30 znakova, mala slova, brojke, točka, crtica.");
   const list = users.users || (users.users = []);
@@ -131,10 +177,13 @@ export async function upsertUser(users, adminKeys, { username, name, role, passw
   if (!isNew && !u) throw new Error(`Korisnik '${un}' ne postoji.`);
   if (!u) { u = { username: un, created: new Date().toISOString() }; list.push(u); }
   u.name = name || un;
-  const roleChanged = u.role !== role;
+  // nova lozinka treba samo kad korisnik postaje ili prestaje biti administrator (drugi ključevi)
+  const keysChanged = !isNew && (u.role === "admin") !== (role === "admin");
   u.role = role;
-  if (password || roleChanged) {
-    if (!password) throw new Error("Kod promjene uloge upišite i novu lozinku (ključevi se ponovno šifriraju).");
+  if (Array.isArray(pages) && pages.length) u.pages = pages; else delete u.pages;
+  if (readonly == null) delete u.readonly; else u.readonly = !!readonly;
+  if (isNew || password || keysChanged) {
+    if (!password) throw new Error(isNew ? "Upišite lozinku." : "Kod promjene administratorske uloge upišite i novu lozinku (ključevi se ponovno šifriraju).");
     checkPassword(password);
     const keys = role === "admin" ? adminKeys : { team: adminKeys.team };
     Object.assign(u, await wrapFor(password, keys));
@@ -174,7 +223,8 @@ export function stillValid(users, cfg) {
   return !!(u && u.wrap && u.wrap.ct.slice(0, 16) === cfg.user.stamp);
 }
 
-export function canSee(role, page) {
-  const allowed = ROLE_PAGES[role];
+// user: objekt prijavljenog korisnika (ili null = bez prijave, sve stranice)
+export function canSee(user, page) {
+  const allowed = allowedPages(user);
   return !allowed || allowed.includes(page);
 }

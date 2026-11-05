@@ -1,5 +1,5 @@
 // Zajedničke komponente sučelja (web): tablice, obrasci, dijalozi, stranica.
-// Obrasci koriste ISTI opis polja kao desktop program (key, label, type, options, required, default...).
+// Obrasci: opis polja (key, label, type, options, required, default...).
 import * as py from "./py.js";
 
 // ---------------------------------------------------------------- DOM pomoćnik
@@ -451,12 +451,13 @@ export class Form {
 }
 
 export class FormDialog extends Dialog {
-  constructor(title, fields, initial = {}, { columns = 1, width = null, okText = "Spremi", validate = null } = {}) {
+  constructor(title, fields, initial = {}, { columns = 1, width = null, okText = "Spremi", validate = null, onReady = null } = {}) {
     if (columns === 1 && fields.length > 8) columns = 2;
     super(title, { width: width || (columns === 1 ? 520 : columns === 2 ? 780 : 980) });
     this.validate = validate;
     this.form = new Form(fields, initial, columns);
     this.body.append(this.form.el);
+    if (onReady) onReady(this.form);
     this.buttons(okText, () => this.ok());
   }
   ok() {

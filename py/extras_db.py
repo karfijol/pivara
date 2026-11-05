@@ -1,3 +1,4 @@
+import sqlite3
 """Dodaci (verzija 2.1): planer fermentora, trošak šarže, kupci i otpremnice, trošarine,
 sljedivost/povlačenje, mjerenja fermentacije i senzorika."""
 import datetime as dt
@@ -355,16 +356,19 @@ class ExtrasMixin:
         self._ensure_excise_table()
         d_from, d_to = self.period_bounds(period)
         have = {r["packaging_id"] for r in self.q("SELECT packaging_id FROM excise_entries WHERE packaging_id IS NOT NULL")}
-        for p in self.packaging_rows(d_from, d_to):
-            if p["id"] in have:
-                continue
-            b = self.batch(p["batch_id"]) if p.get("batch_id") else None
-            self.con.execute("""INSERT INTO excise_entries(period,packaging_id,batch_id,date,include,trade_name,hl,abv)
-                                VALUES(?,?,?,?,?,?,?,?)""",
-                             (period, p["id"], p.get("batch_id"), p["date"], 1,
-                              ((b or {}).get("recipe") or "").upper(), round((p.get("total_l") or 0) / 100, 3),
-                              round(self.beer_abv(b), 1) if self.beer_abv(b) else None))
-        self.con.commit()
+        try:
+            for p in self.packaging_rows(d_from, d_to):
+                if p["id"] in have:
+                    continue
+                b = self.batch(p["batch_id"]) if p.get("batch_id") else None
+                self.con.execute("""INSERT INTO excise_entries(period,packaging_id,batch_id,date,include,trade_name,hl,abv)
+                                    VALUES(?,?,?,?,?,?,?,?)""",
+                                 (period, p["id"], p.get("batch_id"), p["date"], 1,
+                                  ((b or {}).get("recipe") or "").upper(), round((p.get("total_l") or 0) / 100, 3),
+                                  round(self.beer_abv(b), 1) if self.beer_abv(b) else None))
+            self.con.commit()
+        except sqlite3.OperationalError:  # samo čitanje (npr. knjigovođa): nova pakiranja upisat će netko s pravom upisa
+            self.con.rollback()
         return self.q("""SELECT e.*, b.batch_no FROM excise_entries e LEFT JOIN batches b ON b.id=e.batch_id
                          WHERE e.period=? ORDER BY e.date, e.id""", (period,))
 

@@ -208,9 +208,6 @@ class RecipesPage extends Page {
     this.tbtn("＋ Nova receptura", () => this.new());
     this.tbtn("Uredi", () => this.edit(), "ghost");
     this.tbtn("Obriši", () => this.delete(), "ghost");
-    this.tbtn("🌿 Hmeljenje / dry hop", async () => {
-      const id = this.need(this.table, "recepturu"); if (id && await hopEditor(this.app, { recipeId: id })) toast("Raspored hmelja spremljen.");
-    }, "ghost");
     this.tbtn("🏷 Naljepnice po vrsti piva", () => printBeerLabels(this.app), "ghost");
     this.table = T([["name", "Naziv", 200, "w"], ["code", "Oznaka", 65, "center"], ["style", "Stil", 120, "w"],
       ["size", "Šarža (L)", 90, "e"], ["n", "Sastojaka", 80, "center"], ["b", "Kuhano puta", 90, "center"]],
@@ -241,8 +238,8 @@ class RecipesPage extends Page {
     this.lines.setRows(rows);
   }
 
-  dialog(title, r = null, lines = []) {
-    return new LinesDialog(title, [
+  dialog(title, r = null, lines = [], recipeId = null) {
+    const d = new LinesDialog(title, [
       { key: "name", label: "Naziv piva", required: true }, { key: "style", label: "Stil" },
       { key: "code", label: "Oznaka za LOT (2 slova, npr. PA, IP, ST)" },
       { key: "batch_size_l", label: "Veličina šarže (L)", type: "num", required: true, positive: true, default: 290 },
@@ -252,18 +249,42 @@ class RecipesPage extends Page {
       { key: "label_ingredients", label: "Sastojci (prazno = automatski)" },
       { key: "label_color", label: "Boja zastavice (prazno = prema vrsti piva)", type: "combo", editable: true,
         options: [""].concat(K(this.app).LABEL_COLORS) },
-      { key: "note", label: "Napomena" }], r || {}, itemOpts(this.db), lines, { qtyLabel: "Kol./šarža" }).show();
+      { key: "note", label: "Napomena" }], r || {}, itemOpts(this.db), lines, { qtyLabel: "Kol./šarža" });
+    // raspored hmelja (minute kuhanja, dry hop) dio je recepture
+    const hopInfo = h("span", { class: "muted", style: { fontSize: "12.5px" } });
+    const hopSum = () => {
+      if (!recipeId) { hopInfo.textContent = "Raspored hmelja upisuje se nakon prvog spremanja recepture."; return; }
+      try {
+        const pl = this.app.py.callKw("web_more.hop_plan", [], { recipe_id: recipeId });
+        const n = pl.rows.filter((x) => x.stage === "boil").length, dn = pl.rows.filter((x) => x.stage === "dry").length;
+        hopInfo.textContent = !pl.hops.length ? "Receptura nema hmelja." : `Kuhanje ${pl.boil_min} min: ${n} dodavanja · dry hop: ${dn}`
+          + (dn ? (pl.dry.on ? ` (podsjetnik ${pl.dry.days}. dan u ${pl.dry.time})` : " (podsjetnik isključen)") : "");
+      } catch { hopInfo.textContent = ""; }
+    };
+    const hopBtn = btn("🌿 Raspored hmelja / dry hop", async () => {
+      if (await hopEditor(this.app, { recipeId })) { toast("Raspored hmelja spremljen."); hopSum(); }
+    }, "ghost");
+    if (!recipeId) hopBtn.disabled = true;
+    d.body.append(h("div", { class: "sec", style: { marginTop: "10px" } }, "Hmeljenje"),
+      h("div", { class: "row gap", style: { flexWrap: "wrap", alignItems: "center" } }, hopBtn, hopInfo),
+      recipeId ? h("div", { class: "muted", style: { fontSize: "12px" } }, "Raspored koristi spremljene sastojke – novi hmelj dodan gore pojavit će se nakon spremanja recepture.") : null);
+    hopSum();
+    return d.show();
   }
 
   async new() {
     const res = await this.dialog("Nova receptura");
-    if (res) { this.db.save_recipe(res[0], res[1]); this.app.refreshAll(); }
+    if (res) {
+      const id = this.db.save_recipe(res[0], res[1]); this.app.refreshAll();
+      if (id && await confirm("Receptura je spremljena. Upisati raspored hmelja (minute kuhanja, dry hop)?", "Hmeljenje", { ok: "Upiši raspored", cancel: "Kasnije" })
+        && await hopEditor(this.app, { recipeId: id })) toast("Raspored hmelja spremljen.");
+    }
   }
 
   async edit() {
     const id = this.need(this.table, "recepturu");
     if (!id) return;
-    const res = await this.dialog("Uredi recepturu", this.db.recipe(id), this.db.recipe_lines(id));
+    const res = await this.dialog("Uredi recepturu", this.db.recipe(id), this.db.recipe_lines(id), id);
     if (res) { this.db.save_recipe(res[0], res[1], id); this.app.refreshAll(); }
   }
 
@@ -1127,7 +1148,7 @@ class KegsPage extends Page {
 
 // ================================================================== Planer fermentora
 class PlannerPage extends Page {
-  static title = "Planer fermentora";
+  static title = "Plan fermentora";
   static subtitle = "Koja je šarža u kojem fermentoru i do kada · iscrtkano = procjena kraja · svijetlo = planirano";
 
   build() {
@@ -1287,7 +1308,7 @@ class DeliveryDialog extends Dialog {
     this.err("");
   }
   ok() {
-    if (!this.cmap.has(this.cust.value)) return this.err("Odaberite kupca (kupce dodajete na ekranu Kupci i otpremnice).");
+    if (!this.cmap.has(this.cust.value)) return this.err("Odaberite kupca (kupce dodajete u Prodaja → Otpremnice i kupci).");
     try {
       const nid = this.db.create_delivery(this.cmap.get(this.cust.value), this.date.value || today(), this.kegs.selectedIds(),
         this.others, this.note.value.trim() || null, this.db.get_setting("default_operator"));
@@ -1297,7 +1318,7 @@ class DeliveryDialog extends Dialog {
 }
 
 class SalesPage extends Page {
-  static title = "Kupci i otpremnice";
+  static title = "Otpremnice i kupci";
   static subtitle = "Otpremnica s LOT-om piva · kegovi na otpremnici automatski idu kupcu · pregled kegova i depozita po kupcu";
 
   static FIELDS = [{ key: "customer_type", label: "Vrsta kupca", type: "combo", options: ["Pravna osoba", "Fizička osoba"], default: "Pravna osoba" },

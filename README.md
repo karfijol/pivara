@@ -5,9 +5,9 @@ Radi u pregledniku (Chrome, Edge, Firefox, Safari) na računalu, tabletu i mobit
 
 - Stranica se poslužuje s GitHub Pages (ovaj repozitorij).
 - **Podaci NISU u ovom repozitoriju.** Spremaju se u zaseban **privatni** repozitorij (npr. `pivovara-podaci`)
-  kao datoteka `skladiste.db` – ista baza kao u programu na računalu. Svako spremanje je nova verzija
+  kao datoteka `skladiste.db`. Svako spremanje je nova verzija
   (povijest = sigurnosne kopije).
-- Program radi u pregledniku pomoću Pythona (Pyodide), s istom logikom kao desktop verzija:
+- Program radi u pregledniku pomoću Pythona (Pyodide):
   FIFO, LOT-ovi, šarže, kegovi, HACCP zapisi i dokumenti (PDF/Word), trošarine MI-PI, otpremnice, naljepnice.
 
 ## Postavljanje
@@ -15,6 +15,6 @@ Radi u pregledniku (Chrome, Edge, Firefox, Safari) na računalu, tabletu i mobit
 2. Napravite privatni repozitorij za podatke (`pivovara-podaci`, Private, s README datotekom).
 3. Napravite fine-grained token samo za taj repozitorij (Contents: Read and write).
 4. Otvorite stranicu `https://<korisnik>.github.io/<repozitorij>/`, upišite korisničko ime, repozitorij podataka i token.
-5. Učitajte `skladiste.db` iz mape `Dokumenti\PivovaraSkladiste` programa na računalu.
+5. Učitajte postojeću bazu `skladiste.db` (sigurnosnu kopiju) ili počnite s praznom bazom.
 
 Detaljne upute: dokument „Web verzija – postavljanje na GitHub”.

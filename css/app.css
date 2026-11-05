@@ -370,3 +370,27 @@ table.grid tr.empty td { color: var(--muted); text-align: center; padding: 18px;
 .tank-info .banner { margin: 0; }
 .alarm-dlg .modal-head { background: var(--accent); color: #fff; }
 .alarm-dlg .modal-bar .btn { font-size: 18px; padding: 12px 28px; }
+
+/* ---------- kartice glavne stranice (npr. Proizvodnja: Šarže · Plan · Recepture) ---------- */
+.page-tabs { position: sticky; top: 0; z-index: 20; display: flex; gap: 4px; padding: 10px 24px 0; background: var(--bg);
+  border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+.page-tabs::-webkit-scrollbar { display: none; }
+.page-tab { flex: none; padding: 9px 14px; border-radius: 10px 10px 0 0; color: var(--muted); text-decoration: none; font-weight: 600;
+  font-size: 14px; border-bottom: 3px solid transparent; white-space: nowrap; }
+.page-tab:hover { color: var(--text); background: var(--card); }
+.page-tab.active { color: var(--text); border-bottom-color: var(--accent); background: var(--card); }
+.page-tabs + .page { padding-top: 14px; }
+.who .ro { display: inline-block; margin-left: 6px; font-size: 11px; padding: 1px 6px; border-radius: 8px; background: var(--warn, #F5B041); color: #111; }
+/* kartice unutar stranice (Postavke) */
+.set-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 14px; }
+.set-tabs button { border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 18px; padding: 7px 14px;
+  font: inherit; font-weight: 600; cursor: pointer; }
+.set-tabs button.on { background: var(--accent); border-color: var(--accent); color: #111; }
+.pages-pick { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px 14px; }
+.pages-pick label { display: flex; gap: 8px; align-items: center; }
+@media (max-width: 860px) {
+  .page-tabs { padding: 8px 10px 0 58px; min-height: 52px; align-items: flex-end; }
+  .page-tabs + .page .page-head { padding-left: 0; }
+  .page-tab { padding: 8px 11px; font-size: 13.5px; }
+}
+@media (max-width: 700px) { .page-tabs { padding-left: 8px; min-height: 0; } }

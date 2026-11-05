@@ -17,6 +17,7 @@ from db import DB
 
 DB_ = None
 USER = ""
+READONLY = False
 DATA = os.path.join(os.path.expanduser("~"), "Documents", "PivovaraSkladiste")
 OUT = "/out"
 
@@ -44,6 +45,16 @@ def set_user(name):
     global USER
     USER = name or ""
     return True
+
+
+def set_readonly(on):
+    """Samo čitanje (npr. knjigovođa): baza odbija svaki upis."""
+    global READONLY
+    READONLY = bool(on)
+    if DB_ is not None:
+        DB_.con.commit()
+        DB_.con.execute("PRAGMA query_only = %d" % (1 if READONLY else 0))
+    return READONLY
 
 
 def open_db(path):
@@ -76,6 +87,15 @@ def open_db(path):
         web_costs.ensure(DB_)
     except Exception:  # noqa: BLE001
         traceback.print_exc()
+    try:  # tablice koje se inače izrađuju tek pri prvom otvaranju ekrana (potrebno za "samo čitanje")
+        DB_._ensure_excise_table()
+        DB_._ensure_dismissed()
+        DB_.con.commit()
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
+    if READONLY:
+        DB_.con.commit()
+        DB_.con.execute("PRAGMA query_only = 1")
     return True
 
 
@@ -144,5 +164,8 @@ def call(name, args_json="[]", kwargs_json="{}"):
                 DB_.con.commit()
         except Exception:  # noqa: BLE001
             pass
-        return json.dumps({"ok": False, "error": str(e) or type(e).__name__, "type": type(e).__name__,
+        msg = str(e) or type(e).__name__
+        if READONLY and "readonly" in msg.lower():
+            msg = "Imate pristup samo za čitanje – promjene nisu dopuštene."
+        return json.dumps({"ok": False, "error": msg, "type": type(e).__name__,
                            "trace": traceback.format_exc()[-2000:], "changed": changed})

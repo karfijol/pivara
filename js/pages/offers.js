@@ -201,7 +201,7 @@ async function toDelivery(app, offerId) {
   const py = app.py;
   const plan = py.call("web_more.offer_delivery_plan", offerId);
   const o = plan.offer;
-  if (o.delivery_id) return info("Za ovu ponudu otpremnica je već izrađena (Kupci i otpremnice).");
+  if (o.delivery_id) return info("Za ovu ponudu otpremnica je već izrađena (Prodaja → Otpremnice i kupci).");
   const d = new Dialog(`Otpremnica iz ponude ${o.no} – ${o.cust_name}`, { width: 760 });
   const pick = [];
   d.body.append(h("div", { class: "muted", style: { fontSize: "12.5px" } },
@@ -246,19 +246,39 @@ async function toDelivery(app, offerId) {
   } catch (e) { error(e); }
 }
 
-// ------------------------------------------------------------------ cjenik
-async function priceList(app) {
-  const py = app.py;
-  const d = new Dialog("Cjenik proizvoda za ponude", { width: 960 });
-  const t = T([["grp", "Grupa", 120, "w"], ["name", "Proizvod", 220, "w"], ["descr", "Opis", 190, "w"], ["unit", "Jed.", 55, "center"],
-    ["price", "Cijena € s PDV", 100, "e"], ["net", "bez PDV", 80, "e"], ["vat", "PDV %", 55, "e"], ["active", "U ponudi", 70, "center"]],
-  { onDouble: (id) => edit(id), height: 14 });
-  const load = () => t.setRows(py.call("web_offers.products").map((p) => ({ id: p.id, grp: p.grp || "", name: p.name, descr: p.descr || "",
-    unit: p.unit || "", price: eur(p.price), net: eur(p.price / (1 + (p.vat || 0) / 100)), vat: fq(p.vat),
-    active: p.active ? "✔" : (p.price > 0 ? "—" : "upišite cijenu"), _tag: p.active ? "" : "muted" })));
-  const groups = py.call("web_offers.consts").groups.concat(["Veleprodaja – kegovi"]);
-  const recipes = [["— nije pivo u kegu —", null]].concat(app.db.recipes().map((r) => [r.name, r.id]));
-  const form = async (init, title) => {
+// ------------------------------------------------------------------ cjenik (stranica Prodaja → Cjenik)
+class PriceListPage extends Page {
+  static title = "Cjenik";
+  static subtitle = "Proizvodi za ponude · cijene s PDV-om i bez · posebne cijene po kupcu";
+
+  build() {
+    const py = this.app.py;
+    this.tbtn("＋ Novi proizvod", async () => { const v = await this.form({}, "Novi proizvod"); if (v) { try { py.call("web_offers.save_product", v); this.refresh(); } catch (e) { error(e); } } });
+    this.tbtn("✎ Uredi", () => this.edit(), "ghost");
+    this.tbtn("👥 Cijene po kupcu", () => { const id = this.need(this.t, "proizvod"); if (id !== null && id !== undefined) customerPrices(this.app, id); }, "ghost");
+    this.tbtn("🗑 Obriši", async () => {
+      const id = this.need(this.t, "proizvod"); if (id === null || id === undefined) return;
+      if (await confirm("Obrisati proizvod iz cjenika? (Izdane ponude se ne mijenjaju.)", "Brisanje", { danger: true })) { py.call("web_offers.delete_product", id); this.refresh(); }
+    }, "ghost");
+    this.t = T([["grp", "Grupa", 120, "w"], ["name", "Proizvod", 220, "w"], ["descr", "Opis", 190, "w"], ["unit", "Jed.", 55, "center"],
+      ["price", "Cijena € s PDV", 100, "e"], ["net", "bez PDV", 80, "e"], ["vat", "PDV %", 55, "e"], ["active", "U ponudi", 70, "center"]],
+    { onDouble: (id) => this.edit(id) });
+    this.search(this.t);
+    this.content.append(h("div", { class: "muted", style: { fontSize: "12.5px", marginBottom: "6px" } },
+      "Cijene su u eurima i uključuju PDV. Promjena cijene vrijedi za nove ponude – izdane ponude ostaju kakve jesu. "
+      + "Stopu PDV-a po proizvodu provjerite s knjigovođom."), this.t.el);
+  }
+
+  refresh() {
+    this.t.setRows(this.app.py.call("web_offers.products").map((p) => ({ id: p.id, grp: p.grp || "", name: p.name, descr: p.descr || "",
+      unit: p.unit || "", price: eur(p.price), net: eur(p.price / (1 + (p.vat || 0) / 100)), vat: fq(p.vat),
+      active: p.active ? "✔" : (p.price > 0 ? "—" : "upišite cijenu"), _tag: p.active ? "" : "muted" })));
+  }
+
+  async form(init, title) {
+    const app = this.app, py = app.py;
+    const groups = py.call("web_offers.consts").groups.concat(["Veleprodaja – kegovi"]);
+    const recipes = [["— nije pivo u kegu —", null]].concat(app.db.recipes().map((r) => [r.name, r.id]));
     const r0 = Number((init || {}).vat ?? 25);
     const v = await askForm(title, [
       { key: "grp", label: "Grupa", type: "combo", editable: true, options: groups },
@@ -279,29 +299,15 @@ async function priceList(app) {
     if (v.active && !(v.price > 0)) { await info("Proizvod bez cijene ne može se nuditi – upišite cijenu.", "Cjenik"); v.active = 0; }
     if (v.recipe_id && !v.keg_l) v.keg_l = parseFloat(app.db.get_setting("keg_size_l") || 18) || 18;
     return v;
-  };
-  const edit = async (id) => {
-    id = id ?? t.selectedId();
-    if (id === null || id === undefined) return info("Odaberite proizvod.");
-    const p = py.call("web_offers.products").find((x) => x.id === id);
-    const v = await form(p, `Proizvod: ${p.name}`);
-    if (v) { try { py.call("web_offers.save_product", v, id); load(); } catch (e) { error(e); } }
-  };
-  t.el.style.marginTop = "6px";
-  d.body.append(h("div", { class: "muted", style: { fontSize: "12.5px" } },
-    "Cijene su u eurima i uključuju PDV (kao u cjeniku od 10.09.2026.). Promjena cijene vrijedi za nove ponude – izdane ponude ostaju kakve jesu. "
-    + "Stopu PDV-a po proizvodu provjerite s knjigovođom."),
-  h("div", { class: "row gap", style: { marginTop: "8px", flexWrap: "wrap" } },
-    btn("＋ Novi proizvod", async () => { const v = await form({}, "Novi proizvod"); if (v) { try { py.call("web_offers.save_product", v); load(); } catch (e) { error(e); } } }),
-    btn("✎ Uredi", () => edit(), "ghost"),
-    btn("👥 Cijene po kupcu", () => { const id = t.selectedId(); if (id === null) return info("Odaberite proizvod."); customerPrices(app, id); }, "ghost"),
-    btn("🗑 Obriši", async () => {
-      const id = t.selectedId(); if (id === null) return info("Odaberite proizvod.");
-      if (await confirm("Obrisati proizvod iz cjenika? (Izdane ponude se ne mijenjaju.)", "Brisanje", { danger: true })) { py.call("web_offers.delete_product", id); load(); }
-    }, "ghost")), t.el);
-  d.buttons(null, null, "Zatvori");
-  load();
-  await d.show();
+  }
+
+  async edit(id) {
+    id = id ?? this.need(this.t, "proizvod");
+    if (id === null || id === undefined) return;
+    const p = this.app.py.call("web_offers.products").find((x) => x.id === id);
+    const v = await this.form(p, `Proizvod: ${p.name}`);
+    if (v) { try { this.app.py.call("web_offers.save_product", v, id); this.refresh(); } catch (e) { error(e); } }
+  }
 }
 
 // ------------------------------------------------------------------ stranica
@@ -314,7 +320,6 @@ class OffersPage extends Page {
     this.tbtn("✎ Uredi", () => this.edit(), "ghost");
     this.tbtn("⧉ Kopiraj", () => this.copy(), "ghost");
     this.tbtn("🗑 Obriši", () => this.del(), "ghost");
-    this.tbtn("📋 Cjenik", async () => { await priceList(this.app); }, "ghost");
     this.status = h("select", { class: "more", style: { width: "auto" } },
       ["Status…", "Izrađena", "Poslana", "Prihvaćena", "Odbijena"].map((x) => h("option", { value: x }, x)));
     this.status.addEventListener("change", () => {
@@ -391,4 +396,4 @@ class OffersPage extends Page {
   }
 }
 
-export const PAGES = { offers: OffersPage };
+export const PAGES = { offers: OffersPage, pricelist: PriceListPage };

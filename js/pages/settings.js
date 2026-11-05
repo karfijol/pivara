@@ -119,21 +119,38 @@ class SettingsPage extends Page {
         btn("Odaberi…", () => this.pickLogo(which)), btn("Ukloni", () => this.removeLogo(which), "ghost")));
     }
 
-    // ---------- prodaja
-    const cs = card("Prodaja i troškovi");
-    const k2 = ["keg_size_l", "keg_fill_l", "keg_deposit", "extra_cost_l", "dn_prefix", "dn_company", "dn_address", "company_oib", "dn_contact", "dn_iban"];
-    this.form2 = new Form([
-      { key: "keg_size_l", label: "Osnovna veličina kega (L)", type: "num", required: true, positive: true },
-      { key: "keg_fill_l", label: "Piva u punom kegu (L) – kupcu se izdaju samo kegovi s ovom količinom", type: "num", required: true, positive: true },
-      { key: "keg_deposit", label: "Depozit po kegu (€)", type: "num", min: 0 },
-      { key: "extra_cost_l", label: "Ostali troškovi po litri piva (€) – ambalaža, energija, rad", type: "num", min: 0 },
-      { key: "dn_prefix", label: "Prefiks broja otpremnice" },
-      { key: "dn_company", label: "Isporučitelj na otpremnici (naziv tvrtke)" },
-      { key: "dn_address", label: "Adresa isporučitelja" },
+    // ---------- tvrtka (otpremnice, ponude, dokumenti)
+    const cco = card("Podaci o tvrtki", "Ispisuju se na otpremnicama i drugim dokumentima.");
+    const kco = ["dn_company", "dn_address", "company_oib", "dn_contact", "dn_iban", "dn_prefix"];
+    this.formCo = new Form([
+      { key: "dn_company", label: "Naziv tvrtke (isporučitelj)" },
+      { key: "dn_address", label: "Adresa" },
       { key: "company_oib", label: "OIB tvrtke" },
       { key: "dn_contact", label: "Kontakt (telefon / e-mail, neobavezno)" },
-      { key: "dn_iban", label: "IBAN (neobavezno)" }], Object.fromEntries(k2.map((k) => [k, g(k)])), 3);
-    cs.append(this.form2.el, h("div", { style: { marginTop: "10px" } }, btn("Spremi", () => this.save2())));
+      { key: "dn_iban", label: "IBAN (neobavezno)" },
+      { key: "dn_prefix", label: "Prefiks broja otpremnice" }], Object.fromEntries(kco.map((k) => [k, g(k)])), 3);
+    cco.append(this.formCo.el, h("div", { style: { marginTop: "10px" } }, btn("Spremi", () => this.saveForm(this.formCo, (d) => {
+      const oib = (d.company_oib || "").trim();
+      if (oib && !/^\d{11}$/.test(oib)) throw new Error("OIB mora imati točno 11 znamenki.");
+    }))));
+
+    // ---------- prodaja i troškovi
+    const cs = card("Troškovi");
+    this.formSale = new Form([
+      { key: "extra_cost_l", label: "Ostali troškovi po litri piva (€) – ambalaža, energija, rad", type: "num", min: 0 }],
+    { extra_cost_l: g("extra_cost_l") }, 2);
+    cs.append(this.formSale.el, h("div", { style: { marginTop: "10px" } }, btn("Spremi", () => this.saveForm(this.formSale))));
+
+    // ---------- kegovi
+    const ck = card("Kegovi");
+    const kk = ["keg_size_l", "keg_fill_l", "keg_deposit"];
+    this.formKeg = new Form([
+      { key: "keg_size_l", label: "Osnovna veličina kega (L)", type: "num", required: true, positive: true },
+      { key: "keg_fill_l", label: "Piva u punom kegu (L) – kupcu se izdaju samo kegovi s ovom količinom", type: "num", required: true, positive: true },
+      { key: "keg_deposit", label: "Depozit po kegu (€)", type: "num", min: 0 }], Object.fromEntries(kk.map((k) => [k, g(k)])), 3);
+    ck.append(this.formKeg.el, h("div", { style: { marginTop: "10px" } }, btn("Spremi", () => this.saveForm(this.formKeg, (d) => {
+      if (d.keg_fill_l > d.keg_size_l) throw new Error("Količina piva u kegu ne može biti veća od veličine kega.");
+    }))));
 
     // ---------- ponude
     const co = card("Ponude", "Zaglavlje (uz logo PIVARA) i podnožje ponude te zadane vrijednosti za nove ponude.");
@@ -218,11 +235,11 @@ class SettingsPage extends Page {
     }
     cd.append(h("div", { class: "row gap", style: { marginTop: "6px" } },
       btn("💾 Preuzmi bazu (.db)", () => this.backup()),
-      btn("📤 Učitaj bazu iz desktop programa…", () => this.replaceDb(), "ghost"),
+      btn("📤 Učitaj bazu (.db)…", () => this.replaceDb(), "ghost"),
       btn("Učitaj demo podatke", () => this.demo(), "ghost"),
       btn("📥 Uvezi povijesne podatke…", () => this.importHistory(), "ghost")),
-    h("p", { class: "note" }, "Preuzeta datoteka skladiste.db može se kopirati u Dokumenti\\PivovaraSkladiste i otvoriti u programu na " +
-      "računalu (i obrnuto). Ne radite istovremeno u obje verzije – vrijedi zadnja spremljena baza."),
+    h("p", { class: "note" }, "Preuzeta datoteka skladiste.db je potpuna kopija svih podataka (sigurnosna kopija). " +
+      "„Učitaj bazu” zamjenjuje sve podatke odabranom datotekom – stara verzija ostaje u povijesti verzija."),
     h("div", { class: "row gap", style: { marginTop: "6px" } },
       btn("Odjavi ovaj uređaj", () => this.logout(), "ghost")));
 
@@ -249,8 +266,26 @@ class SettingsPage extends Page {
 
     const role = this.app.user ? this.app.user.role : "admin";
     this.usersCard = card("Korisnici i prijava");
-    if (role === "admin") for (const x of [c, this.usersCard, cl, cs, co, cn, cd, ca]) this.content.append(x);
-    else {
+    if (role === "admin") {
+      const tabs = [["firma", "Tvrtka i dokumenti", [c, cco, cl]], ["prodaja", "Prodaja i ponude", [co, cs]],
+        ["kegovi", "Kegovi", [ck, cn]], ["korisnici", "Korisnici", [this.usersCard]], ["podaci", "Podaci i arhiva", [cd, ca]]];
+      let cur = "firma";
+      try { cur = localStorage.getItem("set_tab") || cur; } catch { /* */ }
+      if (!tabs.some((t) => t[0] === cur)) cur = "firma";
+      const bar = h("div", { class: "set-tabs" });
+      const panes = {};
+      for (const [k, label, cards] of tabs) {
+        panes[k] = h("div", { class: "set-pane" + (k === cur ? "" : " hidden") }, cards);
+        const b = h("button", { type: "button", class: k === cur ? "on" : "" }, label);
+        b.onclick = () => {
+          bar.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+          for (const [pk, pe] of Object.entries(panes)) pe.classList.toggle("hidden", pk !== k);
+          try { localStorage.setItem("set_tab", k); } catch { /* */ }
+        };
+        bar.append(b);
+      }
+      this.content.append(bar, ...Object.values(panes));
+    } else {
       // korisnik bez administratorskih prava vidi samo izgled i svoje podatke
       [...c.children].forEach((ch, i) => { if (i > 0 && ch === this.form.el) ch.remove(); });
       c.querySelectorAll(".btn").forEach((b) => { if (b.textContent.includes("Spremi postavke")) b.remove(); });
@@ -267,7 +302,9 @@ class SettingsPage extends Page {
     const users = this.app.users;
     const me = this.app.user;
     if (me && me.role !== "admin") {
-      box.append(h("div", {}, `Prijavljeni ste kao `, h("b", {}, `${me.name} (${me.username})`), ` · uloga: ${me.role}.`),
+      const rn = Object.fromEntries(auth.ROLES.map(([k, d]) => [k, d.split(" – ")[0]]));
+      box.append(h("div", {}, `Prijavljeni ste kao `, h("b", {}, `${me.name} (${me.username})`), ` · uloga: ${rn[me.role] || me.role}`
+        + (auth.isReadonly(me) ? " · samo čitanje" : "") + "."),
         h("p", { class: "note" }, "Promjenu lozinke napravit će administrator (Postavke → Korisnici)."),
         btn("Odjava", () => this.app.logout(), "ghost"));
       return;
@@ -277,7 +314,7 @@ class SettingsPage extends Page {
         "Uključite prijavu da se svaki radnik prijavljuje svojim korisničkim imenom i lozinkom, bez tokena."));
       if (cfg.mode === "github") box.append(h("div", { class: "row gap", style: { marginTop: "10px" } },
         btn("👥 Uključi prijavu korisnika…", () => this.enableUsers())));
-      else box.append(h("p", { class: "note" }, "Najprije povežite program s GitHubom (kartica Podaci i spremanje)."));
+      else box.append(h("p", { class: "note" }, "Najprije povežite program s GitHubom (kartica Podaci i arhiva)."));
       return;
     }
     if (!cfg.keys || !cfg.adminToken) {
@@ -286,24 +323,68 @@ class SettingsPage extends Page {
       return;
     }
     const roleName = Object.fromEntries(auth.ROLES.map(([k, d]) => [k, d.split(" – ")[0]]));
-    this.uT = new Table([["username", "Korisničko ime", 140, "w"], ["name", "Ime i prezime", 180, "w"], ["role", "Uloga", 130, "w"],
-      ["created", "Dodan", 100, "center"]], { onDouble: () => this.editUser(), height: 8 });
-    this.uT.setRows(users.users.map((u) => ({ id: u.username, username: u.username, name: u.name || "", role: roleName[u.role] || u.role,
+    const seen = (u) => {
+      const a = auth.allowedPages(u);
+      if (!a) return "sve";
+      return auth.GROUPS.filter(([g, , , tabs]) => g !== "settings" && tabs.some(([k]) => a.includes(k))).map((g) => g[2]).join(", ")
+        + (auth.isReadonly(u) ? " · samo čitanje" : "");
+    };
+    this.uT = new Table([["username", "Korisničko ime", 140, "w"], ["name", "Ime i prezime", 170, "w"], ["role", "Uloga", 120, "w"],
+      ["seen", "Vidi", 260, "w"], ["created", "Dodan", 95, "center"]], { onDouble: () => this.editUser(), height: 8 });
+    this.uT.setRows(users.users.map((u) => ({ id: u.username, username: u.username, name: u.name || "", role: roleName[u.role] || u.role, seen: seen(u),
       created: (u.created || "").slice(0, 10).split("-").reverse().join(".") + ".", _tag: u.username === me.username ? "bold" : "" })));
     box.append(this.uT.el, h("div", { class: "row gap", style: { marginTop: "10px" } },
       btn("＋ Novi korisnik", () => this.newUser()), btn("✎ Uredi / nova lozinka", () => this.editUser(), "ghost"),
       btn("🗑 Obriši", () => this.deleteUser(), "ghost"), btn("🔑 Zamijeni tokene", () => this.replaceTokens(), "ghost")),
-    h("p", { class: "note" }, "Uloge: " + auth.ROLES.map(([, d]) => d).join(" · ") + ". Lozinke se ne spremaju nigdje – " +
-      "ako ih netko zaboravi, administrator postavlja novu. Kad netko ode iz tvrtke: obrišite ga i zamijenite tokene."));
+    h("p", { class: "note" }, "Uloge: " + auth.ROLES.map(([, d]) => d).join(" · ") + ". Svakom korisniku možete i ručno odabrati stranice " +
+      "i „samo čitanje”. Napomena: skrivene stranice skrivene su u programu – svi prijavljeni korisnici koriste istu bazu podataka. " +
+      "Lozinke se ne spremaju nigdje – ako ih netko zaboravi, administrator postavlja novu. Kad netko ode iz tvrtke: obrišite ga i zamijenite tokene."));
   }
 
   userFields(isNew, u = {}) {
+    const groups = auth.GROUPS.filter((g) => g[0] !== "settings");
+    const userGroups = auth.allowedPages(u.role ? u : { role: "korisnik" });
+    const chosen = groups.filter(([, , , tabs]) => !userGroups || tabs.some(([k]) => userGroups.includes(k))).map((g) => g[2]);
     return [
       { key: "username", label: "Korisničko ime (mala slova, bez razmaka)", required: true, default: u.username },
       { key: "name", label: "Ime i prezime", required: true, default: u.name },
       { key: "role", label: "Uloga", type: "combo", options: auth.ROLES.map(([k, d]) => [d, k]), default: u.role || "korisnik", full: true },
+      { key: "pages", label: "Stranice koje korisnik vidi (Postavke uvijek; promjena uloge postavlja zadane)", type: "multicheck",
+        options: groups.map((g) => g[2]), per_row: 4, default: chosen },
+      { key: "readonly", label: "Samo čitanje – može gledati i ispisivati, ne može ništa mijenjati", type: "check", default: auth.isReadonly(u.role ? u : null) ? 1 : 0, full: true },
       { key: "password", label: isNew ? "Lozinka (najmanje 10 znakova)" : "Nova lozinka (prazno = bez promjene)", required: isNew },
       { key: "password2", label: "Ponovite lozinku", required: isNew }];
+  }
+
+  // uloga mijenja zadane stranice i "samo čitanje"; administrator uvijek vidi sve
+  userFormReady(form) {
+    const groups = auth.GROUPS.filter((g) => g[0] !== "settings");
+    const sync = (reset) => {
+      const role = form.w.role.get() || "korisnik";
+      const admin = role === "admin";
+      form.w.pages.el.querySelectorAll("input").forEach((cb) => { cb.disabled = admin; });
+      form.w.readonly.el.disabled = admin;
+      if (!reset && !admin) return;
+      const pages = auth.ROLE_PAGES[role];
+      form.w.pages.set(groups.filter(([, , , tabs]) => !pages || tabs.some(([k]) => pages.includes(k))).map((g) => g[2]));
+      form.w.readonly.set(admin ? 0 : (auth.ROLE_READONLY[role] ? 1 : 0));
+    };
+    form.w.role.el.addEventListener("change", () => sync(true));
+    sync(false);
+  }
+
+  // iz obrasca u zapis korisnika: stranice i "samo čitanje" spremaju se samo ako se razlikuju od zadanih za ulogu
+  userExtras(d) {
+    const role = d.role || "korisnik";
+    if (role === "admin") return { pages: null, readonly: null };
+    const def = auth.ROLE_PAGES[role];
+    const groups = auth.GROUPS.filter((g) => g[0] !== "settings");
+    const keys = groups.filter((g) => (d.pages || []).includes(g[2])).map((g) => g[0]);
+    if (!keys.length) throw new Error("Odaberite barem jednu stranicu koju korisnik vidi.");
+    const defKeys = groups.filter(([, , , tabs]) => !def || tabs.some(([k]) => def.includes(k))).map((g) => g[0]);
+    const same = keys.length === defKeys.length && keys.every((k) => defKeys.includes(k));
+    const ro = !!d.readonly;
+    return { pages: same ? null : keys, readonly: ro === !!auth.ROLE_READONLY[role] ? null : ro };
   }
 
   async saveUsersFile(users, msg) {
@@ -318,14 +399,15 @@ class SettingsPage extends Page {
   }
 
   async newUser() {
-    const d = await askForm("Novi korisnik", this.userFields(true), {}, { columns: 2, validate: (x) => {
+    const d = await askForm("Novi korisnik", this.userFields(true), {}, { columns: 2, onReady: (f) => this.userFormReady(f), validate: (x) => {
       if (x.password !== x.password2) throw new Error("Lozinke se ne podudaraju.");
       auth.checkPassword(x.password);
+      this.userExtras(x);
     } });
     if (!d) return;
     try {
       const users = structuredClone(this.app.users);
-      await auth.upsertUser(users, store.getConfig().keys, d, true);
+      await auth.upsertUser(users, store.getConfig().keys, { ...d, ...this.userExtras(d) }, true);
       await this.saveUsersFile(users, `Korisnik ${auth.normUser(d.username)} dodan. Neka se prijavi na adresi stranice.`);
     } catch (e) { this.err(e); }
   }
@@ -336,17 +418,19 @@ class SettingsPage extends Page {
     const u = this.app.users.users.find((x) => x.username === String(id));
     const fields = this.userFields(false, u);
     fields[0] = { key: "username", label: "Korisničko ime", type: "info", default: u.username };
-    const d = await askForm(`Korisnik ${u.username}`, fields, {}, { columns: 2, validate: (x) => {
+    const d = await askForm(`Korisnik ${u.username}`, fields, {}, { columns: 2, onReady: (f) => this.userFormReady(f), validate: (x) => {
       if ((x.password || "") !== (x.password2 || "")) throw new Error("Lozinke se ne podudaraju.");
       if (x.password) auth.checkPassword(x.password);
-      if (x.role !== u.role && !x.password) throw new Error("Kod promjene uloge upišite novu lozinku za korisnika.");
+      if ((x.role === "admin") !== (u.role === "admin") && !x.password)
+        throw new Error("Kod promjene u administratora ili iz administratora upišite novu lozinku (ključevi se ponovno šifriraju).");
+      this.userExtras(x);
     } });
     if (!d) return;
     try {
       const users = structuredClone(this.app.users);
       const admins = users.users.filter((x) => x.role === "admin");
       if (u.role === "admin" && d.role !== "admin" && admins.length === 1) throw new Error("Mora ostati barem jedan administrator.");
-      await auth.upsertUser(users, store.getConfig().keys, { ...d, username: u.username }, false);
+      await auth.upsertUser(users, store.getConfig().keys, { ...d, ...this.userExtras(d), username: u.username }, false);
       await this.saveUsersFile(users, `Korisnik ${u.username} spremljen.` + (d.password ? " Nova lozinka vrijedi odmah." : ""));
       if (u.username === this.app.user.username && d.password) {
         await info("Promijenili ste svoju lozinku – prijavite se ponovno novom lozinkom.");
@@ -471,12 +555,10 @@ class SettingsPage extends Page {
       toast("Postavke spremljene.");
     } catch (e) { this.err(e); }
   }
-  save2() {
+  saveForm(form, check = null) {
     try {
-      const d = this.form2.get();
-      const oib = (d.company_oib || "").trim();
-      if (oib && !/^\d{11}$/.test(oib)) throw new Error("OIB mora imati točno 11 znamenki.");
-      if (d.keg_fill_l > d.keg_size_l) throw new Error("Količina piva u kegu ne može biti veća od veličine kega.");
+      const d = form.get();
+      if (check) check(d);
       for (const [k, v] of Object.entries(d)) this.db.set_setting(k, v ?? "");
       toast("Postavke spremljene.");
     } catch (e) { this.err(e); }

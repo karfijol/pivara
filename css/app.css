@@ -175,6 +175,7 @@ table.grid tr.empty td { color: var(--muted); text-align: center; padding: 18px;
 .modal-bar { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px 16px; flex-wrap: wrap; }
 .msg { white-space: pre-line; padding: 4px 0 8px; }
 .msg.pre { white-space: pre-wrap; }
+.msg.warn { white-space: normal; border-left: 3px solid var(--warn); background: var(--sel); padding: 8px 12px; border-radius: 8px; margin: 4px 0 8px; }
 .form { display: grid; gap: 4px 14px; }
 .fcell { display: flex; flex-direction: column; padding: 3px 0; min-width: 0; }
 .fcell.full { grid-column: 1 / -1; }

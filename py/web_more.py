@@ -842,8 +842,8 @@ def offer_to_delivery(db, offer_id, keg_ids, other_line_ids, date=None, operator
 
 # ------------------------------------------------------------------ brisanje LOT-ova (LOT-ovi i zalihe)
 def lots_delete_check(db, lot_ids):
-    """Koji se od označenih LOT-ova mogu obrisati. LOT utrošen u šarži piva ne briše se (sljedivost, HACCP)."""
-    ok, blocked = [], []
+    """Podaci o LOT-ovima za potvrdu brisanja; za LOT utrošen u šaržama vraća popis šarži."""
+    out = []
     for lid in lot_ids or []:
         l = db.one("SELECT l.id, l.lot_no, l.qty_received, l.qty_left, i.name AS item, i.unit FROM lots l "
                    "JOIN items i ON i.id=l.item_id WHERE l.id=?", (lid,))
@@ -851,21 +851,64 @@ def lots_delete_check(db, lot_ids):
             continue
         used = [r["batch_no"] for r in db.q("SELECT DISTINCT b.batch_no FROM batch_consumption c JOIN batches b ON b.id=c.batch_id "
                                              "WHERE c.lot_id=? ORDER BY b.batch_no", (lid,))]
-        (blocked if used else ok).append({**l, "batches": used})
-    return {"ok": ok, "blocked": blocked}
+        out.append({**l, "batches": used})
+    return {"ok": out, "used": [l for l in out if l["batches"]]}
 
 
 def delete_lots(db, lot_ids):
-    """Briše LOT-ove koji nisu utrošeni u šaržama, zajedno s njihovim skladišnim kretanjima (zaliha se smanji).
+    """Briše LOT-ove s njihovim kretanjima. Ako je LOT bio utrošen u šaržama, briše se i taj dio evidencije utroška
+    (šarže ostaju bez tog LOT-a dok se ne pokrene Inventura, koja utrošak ponovno raspodijeli po FIFO).
     HACCP zapis o prijemu robe ostaje, samo se odvoji od LOT-a."""
     chk = lots_delete_check(db, lot_ids)
     ids = [l["id"] for l in chk["ok"]]
     with db.con:
         for lid in ids:
+            db.con.execute("DELETE FROM batch_consumption WHERE lot_id=?", (lid,))
             db.con.execute("DELETE FROM movements WHERE lot_id=?", (lid,))
             try:
                 db.con.execute("UPDATE receipts SET lot_id=NULL WHERE lot_id=?", (lid,))
             except Exception:  # noqa: BLE001
                 pass
             db.con.execute("DELETE FROM lots WHERE id=?", (lid,))
-    return {"deleted": len(ids), "blocked": chk["blocked"]}
+    return {"deleted": len(ids), "batches": sorted({b for l in chk["used"] for b in l["batches"]})}
+
+
+# ------------------------------------------------------------------ uređivanje LOT-a (broj, datum primitka, rok)
+def edit_lot(db, lot_id, data):
+    """Mijenja broj LOT-a, datum primitka i rok. Sljedivost i HACCP vežu se na LOT (id), pa novi broj vrijedi svuda;
+    promjena se bilježi na kartici artikla (kretanje „PROMJENA LOT” s količinom 0)."""
+    l = db.one("SELECT * FROM lots WHERE id=?", (lot_id,))
+    if not l:
+        raise ValueError("LOT ne postoji.")
+    new_no = (data.get("lot_no") or "").strip()
+    if not new_no:
+        raise ValueError("Upišite broj LOT-a.")
+    rec = (data.get("received_date") or l["received_date"] or "")[:10]
+    if not rec:
+        raise ValueError("Odaberite datum primitka.")
+    exp = (data.get("expiry_date") or "")[:10] or None
+    if exp and exp < rec:
+        raise ValueError("Rok trajanja ne može biti prije datuma primitka.")
+    if db.val("SELECT COUNT(*) FROM lots WHERE item_id=? AND lot_no=? AND id<>?", (l["item_id"], new_no, lot_id)):
+        raise ValueError(f"Ovaj artikl već ima LOT „{new_no}”.")
+    ch = []
+    if new_no != l["lot_no"]:
+        ch.append(f"LOT {l['lot_no']} → {new_no}")
+    if rec != (l["received_date"] or "")[:10]:
+        ch.append(f"primljeno {l['received_date'] or '-'} → {rec}")
+    if (exp or None) != ((l["expiry_date"] or "")[:10] or None):
+        ch.append(f"rok {l['expiry_date'] or '-'} → {exp or '-'}")
+    if not ch:
+        return {"changed": 0}
+    ts = __import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M")
+    with db.con:
+        db.con.execute("UPDATE lots SET lot_no=?, received_date=?, expiry_date=? WHERE id=?", (new_no, rec, exp, lot_id))
+        if new_no != l["lot_no"]:
+            db.con.execute("UPDATE movements SET ref=? WHERE lot_id=? AND ref=?", (new_no, lot_id, l["lot_no"]))
+            try:
+                db.con.execute("UPDATE receipts SET lot_no=? WHERE lot_id=?", (new_no, lot_id))
+            except Exception:  # noqa: BLE001
+                pass
+        db.con.execute("INSERT INTO movements(ts,item_id,lot_id,qty,type,ref,note) VALUES(?,?,?,?,?,?,?)",
+                       (ts, l["item_id"], lot_id, 0, "PROMJENA LOT", new_no, "; ".join(ch)))
+    return {"changed": len(ch), "what": ch}

@@ -2,10 +2,11 @@
 import * as py from "./py.js";
 import * as store from "./store.js";
 import * as auth from "./auth.js";
+import * as undo from "./undo.js";
 import { h, btn, toast, info, error, confirm, busy, openFile, dbProxy, Dialog } from "./ui.js";
 import { icon } from "./icons.js";
 
-export const VERSION = "web 2.30";
+export const VERSION = "web 2.33";
 
 // modul (datoteka u js/pages) za svaku stranicu (karticu); skupine i kartice su u auth.GROUPS
 const MOD_OF = {
@@ -52,7 +53,7 @@ class App {
     this.sync.onConflict = () => this.conflict();
     this.sync.journalLen = () => py.journal.length;
     this.sync.journalDone = (n) => py.journal.splice(0, n);
-    py.setOnChange(() => this.sync.changed());
+    py.setOnChange((name) => { undo.changed(name); this.sync.changed(); });
 
     let cfg = store.getConfig();
     // prijava korisnika (ako je administrator uključio korisnike – users.json u repozitoriju stranice)
@@ -140,12 +141,63 @@ class App {
       if (this.sync.dirty || this.sync.saving) { this.sync.save(); e.preventDefault(); e.returnValue = ""; }
     });
     this.afterStart();
+    undo.init();
+    this.setupUndo();
+  }
+
+  // ↶ Poništi zadnju promjenu: tipka u izborniku, plutajuća tipka nakon promjene i Ctrl+Z
+  setupUndo() {
+    if (auth.isReadonly(this.user)) return;
+    const fab = h("button", { type: "button", class: "undo-fab hidden", onclick: () => this.undo() }, icon("undo", 18), h("span", {}, "Poništi"));
+    document.body.append(fab);
+    let hideT = null;
+    undo.onUpdate(() => {
+      const e = undo.last();
+      if (this.undoBtn) {
+        this.undoBtn.classList.toggle("hidden", !e);
+        this.undoBtn.title = e ? `Poništi: ${e.label}` : "";
+      }
+      clearTimeout(hideT);
+      if (e && Date.now() - e.ts < 2000) {
+        fab.title = `Poništi: ${e.label}`;
+        fab.classList.remove("hidden");
+        hideT = setTimeout(() => fab.classList.add("hidden"), 12000);
+      } else fab.classList.add("hidden");
+    });
+    document.addEventListener("keydown", (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.key.toLowerCase() !== "z") return;
+      const t = e.target;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      if (document.querySelector(".modal-back")) return;
+      e.preventDefault();
+      this.undo();
+    });
+  }
+
+  async undo() {
+    const e = undo.last();
+    if (!e) return info("Nema promjena koje se mogu poništiti (pamti se zadnjih 15 radnji na ovom uređaju od otvaranja programa).", "Poništi");
+    if (!(await confirm(`Poništiti zadnju promjenu?\n\n${e.label}\n(${undo.ago(e.ts)})\n\nBaza se vraća na stanje prije te radnje. `
+      + "Datoteke već spremljene na GitHub (npr. PDF računa) ostaju, ali se više ne vide u programu.", "Poništi", { ok: "Poništi" }))) return;
+    const r = undo.undo();
+    if (!r) return;
+    this.sync.changed();
+    this.refreshAll();
+    const n = undo.last();
+    toast(`Poništeno: ${r.label}` + (n ? " · ponovno ↶ Poništi za prethodnu promjenu" : ""), 5000);
   }
 
   afterStart() {
     // podsjetnik za trošarine više ne iskače pri ulasku – prikazuje se kao traka na nadzornoj ploči
     this.checkDbSize();
     try { if (store.tokenExpiry) py.call("web_more.set_token_expires", store.tokenExpiry); } catch (e) { console.warn(e); }
+    // jednokratno (2.33): prazni kegovi bez kupca, šarže i piva – ostaje samo u povijesti kega
+    try {
+      if (this.db.get_setting("keg_empty_clear") !== "1") {
+        py.call("web_kegs.clear_returned_customers");
+        this.db.set_setting("keg_empty_clear", "1");
+      }
+    } catch (e) { console.warn(e); }
     // jednokratno (2.16): operateri na HACCP dokumentima – Ivan Barić, kuhanje i pakiranje Igor Ilić (mijenja se u Postavkama HACCP)
     try {
       if (this.db.get_setting("haccp_ops_set") !== "1") {
@@ -287,7 +339,9 @@ class App {
     const standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
     const inst = h("a", { href: "#", class: "install" + (standalone ? " hidden" : ""), onclick: (e) => { e.preventDefault(); this.closeMenu(); this.install(); } },
       icon("install", 16), " Instaliraj kao aplikaciju");
-    this.side.append(brand, navList, h("div", { class: "side-foot" }, inst, who, this.statusEl, h("div", { class: "ver" }, VERSION)));
+    this.undoBtn = h("a", { href: "#", class: "undo-link hidden", onclick: (e) => { e.preventDefault(); this.closeMenu(); this.undo(); } },
+      icon("undo", 16), " Poništi zadnju promjenu");
+    this.side.append(brand, navList, h("div", { class: "side-foot" }, inst, this.undoBtn, who, this.statusEl, h("div", { class: "ver" }, VERSION)));
     const burger = h("button", { class: "burger", type: "button", onclick: () => document.body.classList.toggle("menu-open") }, "☰");
     const scrim = h("div", { class: "scrim", onclick: () => this.closeMenu() });
     root.append(burger, this.side, scrim, this.main, bottom);

@@ -503,7 +503,8 @@ class DB(HaccpMixin, ExtrasMixin):
 
     def undo_brew(self, batch_id):
         b = self.batch(batch_id)
-        if self.val("SELECT COUNT(*) FROM kegs WHERE batch_id=?", (batch_id,)):
+        if self.val("SELECT COUNT(*) FROM kegs WHERE batch_id=?", (batch_id,)) or \
+                self.val("SELECT COUNT(*) FROM keg_log WHERE batch_id=?", (batch_id,)):
             raise ValueError("Šarža je već punjena u kegove – storno nije moguć.")
         with self.con:
             for c in self.q("SELECT * FROM batch_consumption WHERE batch_id=?", (batch_id,)):
@@ -733,7 +734,8 @@ class DB(HaccpMixin, ExtrasMixin):
                 raise ValueError(err)
             upd["customer"] = customer
         elif action in ("Vrati", "Istočeno (pivnica)"):
-            upd["fill_l"] = None
+            # prazan keg: bez kupca, šarže i piva (sve ostaje zapisano u povijesti kega – sljedivost)
+            upd.update(fill_l=None, customer=None, batch_id=None, filled_date=None)
         elif action in ("Očisti", "Otpiši", "Na servis"):
             upd.update(batch_id=None, customer=None, filled_date=None, fill_l=None)
         with self.con:

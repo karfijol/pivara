@@ -34,6 +34,16 @@ def ensure(db):
     db.con.commit()
 
 
+def clear_returned_customers(db):
+    """Jednokratno: prazni kegovi (nisu puni ni kod kupca) – bez kupca, šarže i piva; to ostaje samo u povijesti kega."""
+    w = "status NOT IN ('Pun','Kod kupca')"
+    n = db.val(f"SELECT COUNT(*) FROM kegs WHERE {w} AND (COALESCE(customer,'')<>'' OR batch_id IS NOT NULL "
+               "OR filled_date IS NOT NULL OR fill_l IS NOT NULL)") or 0
+    if n:
+        db.x(f"UPDATE kegs SET customer=NULL, batch_id=NULL, filled_date=NULL, fill_l=NULL WHERE {w}")
+    return n
+
+
 def consts(db):
     return {"workflows": {k: {"action": v[0], "from": v[1], "to": v[2], "name": v[3]} for k, v in WORKFLOWS.items()},
             "service_items": SERVICE_ITEMS, "keg_size": db.keg_size_default(), "keg_fill": db.keg_fill_default()}

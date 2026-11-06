@@ -46,7 +46,7 @@ def ensure(db):
     # 2.10: raspored hmelja (kuhanje) i podsjetnik za dry hop
     cols = {r["name"] for r in db.q("PRAGMA table_info(recipes)")}
     for col, typ in (("hop_schedule", "TEXT"), ("boil_min", "INTEGER"), ("dry_hop", "INTEGER DEFAULT 0"),
-                     ("dry_hop_days", "INTEGER DEFAULT 3"), ("dry_hop_time", "TEXT DEFAULT '09:00'")):
+                     ("dry_hop_days", "INTEGER DEFAULT 3"), ("dry_hop_time", "TEXT DEFAULT '09:00'"), ("hop_alpha", "TEXT")):
         if col not in cols:
             c.execute(f"ALTER TABLE recipes ADD COLUMN {col} {typ}")
     cols = {r["name"] for r in db.q("PRAGMA table_info(batches)")}
@@ -54,6 +54,9 @@ def ensure(db):
                      ("dry_hop_date", "TEXT"), ("dry_hop_time", "TEXT"), ("dry_hop_done", "TEXT")):
         if col not in cols:
             c.execute(f"ALTER TABLE batches ADD COLUMN {col} {typ}")
+    # 2.25: alfa kiseline hmelja na LOT-u (s deklaracije / certifikata)
+    if "alpha" not in {r["name"] for r in db.q("PRAGMA table_info(lots)")}:
+        c.execute("ALTER TABLE lots ADD COLUMN alpha REAL")
     for k, v in (("keg_return_days", "30"), ("token_expires", "")):
         c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", (k, v))
     # veleprodaja: keg 18 L za svaku recepturu (cijena se upisuje u cjeniku; dok je 0, ne nudi se)
@@ -361,12 +364,31 @@ def calendar_ics(db, days_ahead=120):
                   f"SUMMARY:{_ics_text(title)}", f"DESCRIPTION:{_ics_text(desc)}",
                   "BEGIN:VALARM", "TRIGGER:PT0M", "ACTION:DISPLAY", f"DESCRIPTION:{_ics_text(title)}", "END:VALARM",
                   "END:VEVENT"]
+    # podsjetnici: obavijest mjesec dana prije, tjedan dana prije i na dan isteka
+    n_rem = 0
+    try:
+        import web_reminders
+        lim = (today + dt.timedelta(days=730)).isoformat()
+        for r in web_reminders.reminders(db):
+            if not (today.isoformat() <= r["due_date"] <= lim):
+                continue
+            d0 = r["due_date"].replace("-", "")
+            d1 = (dt.date.fromisoformat(r["due_date"]) + dt.timedelta(days=1)).isoformat().replace("-", "")
+            title = "Ističe: " + r["title"] + (f" ({r['person']})" if r.get("person") else "")
+            lines += ["BEGIN:VEVENT", f"UID:rem-{r['id']}@pivara", f"DTSTAMP:{stamp}", f"DTSTART;VALUE=DATE:{d0}",
+                      f"DTEND;VALUE=DATE:{d1}", f"SUMMARY:{_ics_text(title)}", f"DESCRIPTION:{_ics_text(r.get('note') or 'Podsjetnik iz programa PIVARA')}"]
+            for trig, txt in (("-P29DT15H", "za mjesec dana"), ("-P6DT15H", "za tjedan dana"), ("PT9H", "danas")):
+                lines += ["BEGIN:VALARM", f"TRIGGER:{trig}", "ACTION:DISPLAY", f"DESCRIPTION:{_ics_text(title + ' – ' + txt)}", "END:VALARM"]
+            lines.append("END:VEVENT")
+            n_rem += 1
+    except Exception:  # noqa: BLE001
+        pass
     lines.append("END:VCALENDAR")
     os.makedirs(os.path.join(OUT, "kalendar"), exist_ok=True)
     path = os.path.join(OUT, "kalendar", "PIVARA_kalendar.ics")
     with open(path, "w", encoding="utf-8", newline="") as f:
         f.write("\r\n".join(lines) + "\r\n")
-    return {"path": path, "n": len(ev) + len(timed)}
+    return {"path": path, "n": len(ev) + len(timed) + n_rem}
 
 
 # ------------------------------------------------------------------ kegovi za povrat
@@ -434,17 +456,26 @@ def year_overview(db, year=None):
     rep = web_costs.report_data(db, d_from, d_to)
     litres = {m: 0.0 for m in months}
     cost = {m: 0.0 for m in months}
+    pack = {m: 0.0 for m in months}
+    pcost = {m: 0.0 for m in months}
     per_beer = {}
     for b in rep["brews"]:
         m = b["date"][:7]
         if m in litres:
             litres[m] += b["litres"] or 0
             cost[m] += b["cost"] or 0
-        pb = per_beer.setdefault(b["beer"] or "?", {"beer": b["beer"] or "?", "litres": 0.0, "cost": 0.0, "brews": 0})
+            if b["packaged_l"]:
+                pack[m] += b["packaged_l"]
+                pcost[m] += b["cost"] or 0
+        pb = per_beer.setdefault(b["beer"] or "?", {"beer": b["beer"] or "?", "litres": 0.0, "cost": 0.0, "brews": 0,
+                                                     "pack": 0.0, "pcost": 0.0})
         pb["litres"] += b["litres"] or 0
         pb["cost"] += b["cost"] or 0
+        if b["packaged_l"]:
+            pb["pack"] += b["packaged_l"]
+            pb["pcost"] += b["cost"] or 0
         pb["brews"] += 1
-    per_l = [(m, round(cost[m] / litres[m], 4) if litres[m] else 0) for m in months]
+    per_l = [(m, round(pcost[m] / pack[m], 4) if pack[m] else 0) for m in months]  # €/L prema pakiranoj količini
     # proizvedeno po mjesecima i vrsti piva (složeni stupci) + isporučeno na otpremnicama po mjesecima
     by_beer_month = {}
     for b in rep["brews"]:
@@ -476,13 +507,14 @@ def brew_day(db, batch_id):
     if not b:
         raise ValueError("Šarža ne postoji.")
     r = db.recipe(b["recipe_id"]) if b.get("recipe_id") else {}
-    needs = db.preview_brew(b["recipe_id"], b["volume_l"]) if b["status"] == "Planirano" else [
+    needs = alpha_adjust_needs(db, batch_id, db.preview_brew(b["recipe_id"], b["volume_l"])) if b["status"] == "Planirano" else [
         {"name": c["name"], "need": c["qty"], "unit": c["unit"], "missing": 0,
          "alloc": [[c["lot_id"], c["lot_no"], c["qty"]]]} for c in db.batch_consumption(batch_id)]
     items = []
     for n in needs:
         cat = db.val("SELECT category FROM items WHERE name=?", (n["name"],)) or ""
         items.append({"name": n["name"], "need": n["need"], "unit": n["unit"], "cat": cat, "missing": n.get("missing", 0),
+                      "alpha_adjusted": n.get("alpha_adjusted", False),
                       "lots": ", ".join(f"{a[1]}" for a in n.get("alloc", []))})
     order = {"Slad": 0, "Hmelj": 1, "Kvasac": 2}
     items.sort(key=lambda x: (order.get(x["cat"], 3), x["name"]))
@@ -569,8 +601,13 @@ def hop_plan(db, batch_id=None, recipe_id=None):
             continue
         name, q, unit = needs[x["item_id"]]
         g = round(_grams(q * float(x.get("frac") or 0), unit), 1)
-        out.append({"item_id": x["item_id"], "name": name, "stage": x.get("stage") or "boil",
-                    "min": int(x.get("min") or 0), "frac": float(x.get("frac") or 0), "g": g,
+        stg = x.get("stage") or "boil"
+        mn = int(x.get("min") or 0)
+        adj = x.get("adj")
+        if adj is None:
+            adj = _auto_adj(stg, mn, boil)
+        out.append({"item_id": x["item_id"], "name": name, "stage": stg,
+                    "min": mn, "frac": float(x.get("frac") or 0), "g": g, "adj": bool(adj),
                     "unit": "g" if (unit or "").lower() in ("kg", "g") else unit})
     out.sort(key=lambda x: (x["stage"] != "boil", x["min"], x["name"]))
     on = (b or {}).get("dry_hop_on")
@@ -582,12 +619,76 @@ def hop_plan(db, batch_id=None, recipe_id=None):
         date = (dt.date.fromisoformat(b["brew_date"][:10]) + dt.timedelta(days=days)).isoformat()
     hops = [{"item_id": iid, "name": n, "g": round(_grams(q, u), 1), "unit": "g" if (u or "").lower() in ("kg", "g") else u}
             for iid, (n, q, u) in needs.items()]
+    # korekcija prema alfa kiselinama: recept (alfa u recepturi) / LOT koji se troši (FIFO ili stvarno utrošen)
+    alpha = _alpha_info(db, b, r, needs)
+    for x in out:
+        f = (alpha.get(x["item_id"]) or {}).get("factor")
+        if x["stage"] == "boil" and x["adj"] and f and abs(f - 1) > 1e-6:
+            x["g_adj"] = round(x["g"] * f, 1)
+    for hp in hops:
+        hp["alpha"] = alpha.get(hp["item_id"]) or {}
     return {"rows": out, "boil_min": boil, "hops": hops, "dry": {"on": on, "days": days, "time": tm, "date": date,
                                                                  "done": (b or {}).get("dry_hop_done")},
-            "recipe": r.get("name") or "", "recipe_id": rid}
+            "recipe": r.get("name") or "", "recipe_id": rid, "alpha": {str(k): v for k, v in alpha.items()}}
 
 
-def save_hop_plan(db, rows, boil_min=60, dry=None, batch_id=None, recipe_id=None, as_default=False):
+def _auto_adj(stage, minute, boil):
+    """Dodatak za gorčinu (korigira se prema alfi): u kuhanju i kuha se barem 30 min."""
+    return stage == "boil" and (int(boil or 60) - int(minute or 0)) >= 30
+
+
+def _recipe_alpha(r):
+    try:
+        d = json.loads((r or {}).get("hop_alpha") or "{}")
+        return {int(k): float(v) for k, v in d.items() if v not in (None, "")}
+    except (ValueError, TypeError):
+        return {}
+
+
+def _alpha_info(db, b, r, needs):
+    """{item_id: {recipe, lot, factor, lots}} – lot = ponderirana alfa LOT-ova koji se troše."""
+    ra = _recipe_alpha(r)
+    out = {}
+    for iid, (name, q, unit) in needs.items():
+        info = {"recipe": ra.get(iid), "lot": None, "factor": None, "lots": []}
+        if b and b.get("status") != "Planirano":
+            used = db.q("""SELECT l.lot_no, l.alpha, c.qty FROM batch_consumption c JOIN lots l ON l.id=c.lot_id
+                           WHERE c.batch_id=? AND c.item_id=?""", (b["id"], iid))
+            parts = [(u["lot_no"], u["alpha"], u["qty"]) for u in used]
+        else:
+            alloc, _miss = db.allocate_fifo(iid, q)
+            parts = []
+            for lid, lot_no, qty in alloc:
+                parts.append((lot_no, db.val("SELECT alpha FROM lots WHERE id=?", (lid,)), qty))
+        info["lots"] = [{"lot": p[0], "alpha": p[1]} for p in parts]
+        tot = sum(p[2] for p in parts)
+        if parts and tot > 0 and all(p[1] for p in parts):
+            info["lot"] = round(sum(p[1] * p[2] for p in parts) / tot, 2)
+        if info["recipe"] and info["lot"]:
+            info["factor"] = round(info["recipe"] / info["lot"], 4)
+        out[iid] = info
+    return out
+
+
+def alpha_adjust_needs(db, batch_id, prev):
+    """Kuhanje: količinu hmelja za gorčinu skida se prema alfi LOT-a (prev iz preview_brew se mijenja na mjestu)."""
+    b = db.batch(batch_id)
+    plan = hop_plan(db, batch_id)
+    for p in prev:
+        a = (plan.get("alpha") or {}).get(str(p["item_id"])) or {}
+        f = a.get("factor")
+        if not f or abs(f - 1) < 1e-6:
+            continue
+        frac_adj = sum(x["frac"] for x in plan["rows"] if x["item_id"] == p["item_id"] and x["stage"] == "boil" and x["adj"])
+        if frac_adj <= 0:
+            continue
+        new = round(p["need"] * (1 + frac_adj * (f - 1)), 4)
+        alloc, missing = db.allocate_fifo(p["item_id"], new)
+        p.update({"need": new, "alloc": alloc, "missing": missing, "alpha_adjusted": True})
+    return prev
+
+
+def save_hop_plan(db, rows, boil_min=60, dry=None, batch_id=None, recipe_id=None, as_default=False, alpha=None):
     """rows: [{item_id, stage, min, g}] – g se preračuna u dio ukupne količine (frac)."""
     b = db.batch(batch_id) if batch_id else None
     rid = b["recipe_id"] if b else recipe_id
@@ -604,7 +705,10 @@ def save_hop_plan(db, rows, boil_min=60, dry=None, batch_id=None, recipe_id=None
         mn = int(float(x.get("min") or 0))
         if x.get("stage", "boil") == "boil" and not 0 <= mn <= int(boil_min or 60):
             raise ValueError(f"{needs[iid][0]}: minuta mora biti između 0 (početak) i {boil_min} (kraj kuhanja).")
-        clean.append({"item_id": iid, "stage": x.get("stage") or "boil", "min": mn, "frac": round(g / tot, 4)})
+        row = {"item_id": iid, "stage": x.get("stage") or "boil", "min": mn, "frac": round(g / tot, 4)}
+        if x.get("adj") is not None and bool(x.get("adj")) != _auto_adj(row["stage"], mn, boil_min):
+            row["adj"] = bool(x["adj"])  # ručno odabrano (inače automatski: gorčina = kuha se ≥ 30 min)
+        clean.append(row)
     js = json.dumps(clean)
     d = dry or {}
     on = 1 if d.get("on") else 0
@@ -620,6 +724,17 @@ def save_hop_plan(db, rows, boil_min=60, dry=None, batch_id=None, recipe_id=None
     if as_default or not b:
         db.x("UPDATE recipes SET hop_schedule=?, boil_min=?, dry_hop=?, dry_hop_days=?, dry_hop_time=? WHERE id=?",
              (js, int(boil_min or 60), on, days, tm, rid))
+    if alpha is not None:  # alfa kiseline u recepturi (uvijek za recepturu)
+        clean_a = {str(int(k)): float(v) for k, v in alpha.items() if v not in (None, "", 0)}
+        db.x("UPDATE recipes SET hop_alpha=? WHERE id=?", (json.dumps(clean_a), rid))
+    return True
+
+
+def set_lot_alpha(db, lot_ids, alpha):
+    v = float(alpha) if alpha not in (None, "") else None
+    for lid in lot_ids if isinstance(lot_ids, list) else [lot_ids]:
+        db.con.execute("UPDATE lots SET alpha=? WHERE id=?", (v, lid))
+    db.con.commit()
     return True
 
 

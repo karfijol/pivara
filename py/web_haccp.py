@@ -28,6 +28,8 @@ def _fmts(fmt):
     f = str(fmt or "PDF").upper()
     if f in ("BOTH", "OBOJE", "PDF I WORD", "PDF+WORD"):
         return ["PDF", "WORD"]
+    if f in ("EXCEL", "XLSX", "XLS"):
+        return ["EXCEL"]
     return ["WORD" if f.startswith("W") or f == "DOCX" else "PDF"]
 
 

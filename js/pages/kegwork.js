@@ -358,7 +358,7 @@ class KegWorkPage extends Page {
 
   async findKeg(mode = "detail") {
     const dlg = new Dialog(mode === "service" ? "Servis kega – odaberite keg" : "Pronađi keg", { width: 520 });
-    const inp = h("input", { placeholder: "Broj kega, npr. 7 ili K30-007", style: { width: "100%" } });
+    const inp = h("input", { placeholder: "Keg-001, 001 ili 1", style: { width: "100%" } });
     const sc = new Scanner((code) => go(code));
     const go = (text) => {
       if (/^OPREMA-/i.test((text || "").trim())) { beep(true); sc.stop(); dlg.close(null); equipmentAction(this.app, text); return; }
@@ -390,7 +390,7 @@ class KegWorkPage extends Page {
     this.wHint = h("div", { class: "muted" });
     this.scanner = new Scanner((code) => this.add(code, true));
     this.camBtn = btn("📷 Uključi kameru", () => this.toggleCam(), "primary");
-    this.inp = h("input", { placeholder: "Broj kega (npr. 7, K30-007) – Enter", inputmode: "text", autocomplete: "off", style: { flex: "1", minWidth: "160px" } });
+    this.inp = h("input", { placeholder: "Keg-001, 001 ili 1 – Enter", inputmode: "text", autocomplete: "off", style: { flex: "1", minWidth: "160px" } });
     this.inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); this.add(this.inp.value); this.inp.value = ""; } });
     this.msg = h("div", { class: "scan-msg" });
     this.cartT = new Table([["code", "Keg", 90, "w"], ["size", "L", 50, "e"], ["status", "Status", 90, "w"],

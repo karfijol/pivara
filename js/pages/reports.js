@@ -130,7 +130,7 @@ class YearPage extends Page {
     this.chC.set(d.total_l || d.total_delivered ? [{ a: prod, b: d.delivered, la: "Proizvedeno", lb: "Isporučeno (otpremnice)" }] : [],
       `${fq(d.total_l, 0)} L proizvedeno · ${fq(d.total_delivered, 0)} L isporučeno`);
     this.beers.setRows(d.beers.map((b, i) => ({ id: i, beer: b.beer, brews: b.brews, litres: fq(b.litres, 0), cost: eur(b.cost),
-      perl: b.litres ? eur(b.cost / b.litres, 3) : "" })));
+      perl: b.pack ? eur(b.pcost / b.pack, 3) : "nije pakirano" })));
     this.sales.setRows(d.sales.map((s, i) => ({ id: i, customer: s.customer, notes: s.notes, kegs: s.kegs || "", litres: fq(s.litres, 0) })));
   }
 }

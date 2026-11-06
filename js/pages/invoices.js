@@ -264,6 +264,8 @@ class InvoiceDialog extends Dialog {
       const per = h("span", { class: "muted per" });
       const lot = h("input", { value: l.lot_no || "", placeholder: "LOT dobavljača" });
       const exp = h("input", { type: "date", value: (l.expiry || "").slice(0, 10) });
+      const isHop = it && it.category === "Hmelj";
+      const alpha = h("input", { value: l.alpha ? fin(l.alpha, 2) : "", inputmode: "decimal", placeholder: "α %", title: "Alfa kiseline % s deklaracije", class: "alpha" });
       const del = h("button", { type: "button", class: "btn btn-ghost btn-sm", title: "Ukloni stavku", "aria-label": "Ukloni stavku" }, icon("trash", 18));
       const row = h("div", { class: "inv-line" });
       const paint = () => {
@@ -284,6 +286,7 @@ class InvoiceDialog extends Dialog {
       amt.addEventListener("change", () => { l.amount = n2(amt.value); paint(); });
       lot.addEventListener("change", () => { l.lot_no = lot.value.trim(); });
       exp.addEventListener("change", () => { l.expiry = exp.value || null; l.expiry_guess = false; });
+      alpha.addEventListener("change", () => { l.alpha = n2(alpha.value) || null; });
       sel.addEventListener("change", async () => {
         let v = sel.value;
         if (v === NEW) {
@@ -314,7 +317,8 @@ class InvoiceDialog extends Dialog {
         h("div", { class: "il-item" }, h("label", {}, "Artikl u skladištu" + (l.learned ? " · zapamćeno" : "")), sel),
         stockPart,
         h("div", { class: "il-amt" }, h("label", {}, "Iznos € bez PDV"), amt),
-        l.skip ? h("div", {}) : h("div", { class: "il-lot" }, h("label", {}, "LOT · rok trajanja"), h("div", { class: "row" }, lot, exp)),
+        l.skip ? h("div", {}) : h("div", { class: "il-lot" }, h("label", {}, isHop ? "LOT · rok · alfa %" : "LOT · rok trajanja"),
+          h("div", { class: "row" }, lot, exp, isHop ? alpha : null)),
         h("div", { class: "il-del" }, del));
       this.rowsEl.append(row);
       paint();

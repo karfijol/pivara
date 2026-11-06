@@ -19,7 +19,7 @@ export const GROUPS = [
   ["izvjesca", "year", "Izvješća", [["costs", "Troškovi · knjigovođa"], ["year", "Godišnji pregled"], ["excise", "Trošarine"],
     ["recall", "Sljedivost"]]],
   ["haccp", "haccp", "HACCP", [["haccp", "HACCP evidencije"]]],
-  ["settings", "settings", "Postavke", [["settings", "Postavke"]]],
+  ["settings", "settings", "Postavke", [["settings", "Postavke"], ["reminders", "Podsjetnici"]]],
 ];
 export const GROUP_OF = Object.fromEntries(GROUPS.flatMap(([g, , , tabs]) => tabs.map(([k]) => [k, g])));
 

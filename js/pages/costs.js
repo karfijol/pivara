@@ -93,20 +93,59 @@ class CostsPage extends Page {
     const d = this.app.py.call("web_costs.report_data", a, b);
     this.data = d;
     this.brews.setRows(d.brews.map((x) => ({ id: x.id, date: d2ui(x.date), lot: x.lot, beer: x.beer, brewed: fq(x.brewed_l, 0),
-      packaged: x.packaged_l ? fq(x.packaged_l, 0) : "—", cost: eur(x.cost, 2), perl: eur(x.per_l, 4),
+      packaged: x.packaged_l ? fq(x.packaged_l, 0) : "—", cost: eur(x.cost, 2), perl: x.per_l != null ? eur(x.per_l, 4) : "nije pakirano",
       _tag: x.lines.some((l) => l.estimated) ? "warn" : "" })));
     this.mats.setRows(d.materials.map((m, i) => ({ id: i, name: m.name, category: m.category, qty: fq(m.qty), unit: m.unit,
       avg: eur(m.avg, 4), value: eur(m.value, 2), invoices: m.invoices })));
     this.sum.textContent = d.brews.length
-      ? `${this.periodName()}: ${d.brews.length} kuhanja · ${fq(d.total_litres, 0)} L · sirovine ${money(d.total_cost)} · ${eur(d.per_l, 4)} €/L`
+      ? `${this.periodName()}: ${d.brews.length} kuhanja · ${fq(d.total_litres, 0)} L · sirovine ${money(d.total_cost)} · ${d.per_l != null ? eur(d.per_l, 4) + " €/L pakiranog piva" : "još ništa nije pakirano"}`
+        + (d.unpacked && d.per_l != null ? ` (bez ${d.unpacked} nepakiranih kuhanja)` : "")
       : `${this.periodName()}: nema kuhanja u ovom razdoblju.`;
     const est = d.brews.reduce((n, x) => n + x.lines.filter((l) => l.estimated).length, 0);
     const msgs = [];
     if (d.missing_price) msgs.push(`${d.missing_price} stavki nema nikakvu cijenu – uvezite cijene iz Excela ili upišite cijenu artiklu.`);
     if (est) msgs.push(`ℹ ${est} stavki ima procijenjenu cijenu (LOT bez računa – uzeta zadnja cijena artikla), označeno * u izvještaju.`);
+    let miss = [];
+    try { miss = this.app.py.call("web_costs.missing_invoices", a, b); } catch (e) { console.warn(e); }
+    if (miss.length) msgs.push(`${miss.length} utrošenih LOT-ova nema broj računa (najčešće LOT-ovi iz uvoza starog utroška ili već potrošeni LOT-ovi, koji se na popisu LOT-ova vide tek uz „Prikaži i potrošene”).`);
     this.banner.style.display = msgs.length ? "" : "none";
-    this.banner.className = "banner " + (d.missing_price ? "warn" : "ok");
-    this.banner.textContent = msgs.join("  ");
+    this.banner.className = "banner " + (d.missing_price || miss.length ? "warn" : "ok");
+    this.banner.innerHTML = "";
+    this.banner.append(h("div", { style: { flex: 1 } }, msgs.map((m) => h("div", {}, m.replace(/^ℹ /, "")))));
+    if (miss.length) this.banner.append(btn("Upiši brojeve računa…", () => this.fixInvoices(miss), "ghost", { icon: "receipt" }));
+  }
+
+  // LOT-ovi bez broja računa: upis jednim prozorom (s prijedlogom iz zadnje nabave istog artikla)
+  async fixInvoices(miss) {
+    const d = new Dialog("Utrošeni LOT-ovi bez broja računa", { width: 980 });
+    d.body.append(h("p", { class: "muted", style: { fontSize: "12.5px", marginTop: 0 } },
+      "Upišite broj računa za svaki LOT. Gdje postoji, predložen je račun zadnje nabave istog artikla – provjerite ga prije spremanja. " +
+      "LOT-ovi označeni „iz uvoza” nastali su pri uvozu starog utroška (LOT iz evidencije kuhanja nije pronađen u nabavi)."));
+    const inputs = [];
+    const grid = h("div", { class: "fix-inv" });
+    grid.append(h("div", { class: "fi-h" }, "Artikl · LOT"), h("div", { class: "fi-h" }, "Utrošeno u"), h("div", { class: "fi-h" }, "Broj računa"),
+      h("div", { class: "fi-h" }, "Prijedlog"));
+    for (const r of miss) {
+      const inp = h("input", { value: r.suggest ? r.suggest.invoice_no : "", placeholder: "broj računa" });
+      const price = h("input", { type: "checkbox" }); price.checked = !r.unit_price && !!(r.suggest && r.suggest.unit_price);
+      inputs.push({ r, inp, price });
+      grid.append(
+        h("div", {}, h("b", {}, r.item), h("div", { class: "muted" }, `LOT ${r.lot_no} · primljeno ${d2ui(r.received_date)}` + (r.placeholder ? " · iz uvoza" : ""))),
+        h("div", { class: "muted" }, `${(r.batches || "").split(",").join(", ")} · ${fq(r.used)} ${r.unit}`),
+        inp,
+        r.suggest ? h("div", { class: "muted" }, `LOT ${r.suggest.lot_no} od ${d2ui(r.suggest.received_date)}`,
+          !r.unit_price && r.suggest.unit_price ? h("label", { class: "chk", style: { display: "flex", marginTop: "2px" } }, price, ` i cijena ${eur(r.suggest.unit_price, 4)} €`) : null)
+          : h("div", { class: "muted" }, "nema prijedloga"));
+    }
+    d.body.append(grid);
+    d.buttons("Spremi", () => d.close(true));
+    if (!(await d.show())) return;
+    const rows = inputs.filter((x) => x.inp.value.trim()).map((x) => ({ lot_id: x.r.id, invoice_no: x.inp.value.trim(),
+      unit_price: x.price.checked && x.r.suggest ? x.r.suggest.unit_price : null }));
+    if (!rows.length) return;
+    const n = this.app.py.call("web_costs.fix_lot_invoices", rows);
+    toast(`Broj računa upisan za ${n} LOT-ova.`);
+    this.app.refreshAll();
   }
 
   brewDetail(id) {
@@ -118,7 +157,7 @@ class CostsPage extends Page {
     t.setRows(b.lines.map((l, i) => ({ id: i, name: l.name + (l.estimated ? " *" : ""), lot: l.lot, qty: fq(l.qty), unit: l.unit,
       price: eur(l.price, 4), value: eur(l.value, 2), invoice: l.invoice || (l.estimated ? "procjena" : "") })));
     dlg.body.append(t.el, h("div", { class: "msg", style: { fontWeight: 700 } },
-      `Ukupno ${money(b.cost)} · ${fq(b.litres, 0)} L · ${eur(b.per_l, 4)} €/L`));
+      `Ukupno ${money(b.cost)} · ` + (b.per_l != null ? `${fq(b.packaged_l, 0)} L pakirano · ${eur(b.per_l, 4)} €/L` : `${fq(b.brewed_l, 0)} L skuhano · još nije pakirano`)));
     dlg.bar.append(btn("Zatvori", () => dlg.close(), "ghost"));
     dlg.show();
   }

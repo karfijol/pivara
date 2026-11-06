@@ -2,6 +2,7 @@
 import { h, btn, Page, Table, Form, Dialog, askForm, confirm, info, error, toast, tableDialog, saveBlob, openFile,
   fq, money, fin, num, d2ui, today, daysLeft, EPS, setLabel } from "../ui.js";
 import { icon } from "../icons.js";
+import * as auth from "../auth.js";
 import * as store from "../store.js";
 
 const CATEGORIES = ["Slad", "Hmelj", "Kvasac", "Dodaci", "Ambalaža", "Kemikalija", "Ostalo"];
@@ -248,8 +249,9 @@ class DashboardPage extends Page {
     this.exciseBar = h("div", { class: "banner warn", style: { display: "none", cursor: "pointer" }, onclick: () => this.app.show("excise") });
     this.tokenBar = h("div", { class: "banner warn", style: { display: "none", cursor: "pointer" }, onclick: () => this.app.show("settings") });
     this.invBar = h("div", { class: "banner warn", style: { display: "none", cursor: "pointer" }, onclick: () => this.app.show("invoices") });
+    this.remBar = h("div", { class: "banner warn rem-bar", style: { display: "none", cursor: "pointer" }, onclick: () => this.app.show("reminders") });
     this.dryBar = h("div", { class: "banner ok dry-bar", style: { display: "none" } });
-    this.content.append(this.tokenBar, this.dryBar, this.exciseBar, this.invBar, cards, charts, low);
+    this.content.append(this.tokenBar, this.remBar, this.dryBar, this.exciseBar, this.invBar, cards, charts, low);
   }
 
   // podsjetnik za dry hop (danas ili kasni) + obavijest na uređaju
@@ -333,6 +335,19 @@ class DashboardPage extends Page {
       if (warn) this.tokenBar.textContent = ts.days < 0
         ? `GitHub token je istekao ${d2ui(ts.date)} – spremanje ne radi. Administrator: napravite novi token i upišite ga u Postavke → Korisnici → 🔑 Zamijeni tokene.`
         : `GitHub token ističe za ${ts.days} dana (${d2ui(ts.date)}). Administrator: na GitHubu napravite novi token i upišite ga u Postavke → Korisnici → 🔑 Zamijeni tokene.`;
+    } catch (e) { console.warn(e); }
+    try {
+      const rd = auth.canSee(this.app.user, "reminders") ? this.app.py.call("web_reminders.due") : [];
+      this.remBar.style.display = rd.length ? "" : "none";
+      this.remBar.innerHTML = "";
+      if (rd.length) {
+        const urgent = rd.some((r) => r.stage === "late" || r.stage === "today");
+        this.remBar.className = "banner rem-bar " + (urgent ? "bad" : "warn");
+        const box = h("div", { class: "rem-list" }, h("b", {}, rd.length === 1 ? "Podsjetnik" : `Podsjetnici (${rd.length})`),
+          ...rd.slice(0, 4).map((r) => h("div", {}, r.message)), rd.length > 4 ? h("div", { class: "muted" }, `… i još ${rd.length - 4} – kliknite za sve podsjetnike.`) : null);
+        this.remBar.append(box);
+        import("./reminders.js").then((m) => m.notifyReminders(this.app, rd)).catch(() => {});
+      }
     } catch (e) { console.warn(e); }
     try {
       const due = this.app.py.call("web_invoices.due_summary");
@@ -470,16 +485,19 @@ class ItemsPage extends Page {
       { key: "supplier_id", label: "Dobavljač", type: "combo", options: supplierOpts(this.db) },
       { key: "unit_price", label: "Cijena €/jed. (bez PDV-a, s računa)", type: "num", min: 0 },
       { key: "invoice_no", label: "Broj računa dobavljača (za izvještaj knjigovođi)" },
+      { key: "alpha", label: "Alfa kiseline % (samo hmelj, s deklaracije)", type: "num", min: 0 },
       { key: "note", label: "Napomena (br. otpremnice…)" },
       { key: "haccp", label: "Odmah ispuni HACCP zapisnik o prijemu (sirovine i ambalaža)", type: "check" },
     ], { item_id: itemId, supplier_id: it ? it.supplier_id : null, unit_price: it ? it.price : 0, haccp: chem ? 0 : 1 });
     if (!d) return;
     const want = d.haccp;
-    delete d.haccp;
+    const alpha = d.alpha;
+    delete d.haccp; delete d.alpha;
     let lotId;
     try {
       lotId = this.db.receive_lot(d.item_id, d.qty, d.lot_no, d.received, d.expiry, d.supplier_id, d.unit_price || 0, null, d.note);
       if (d.invoice_no) this.app.py.call("web_costs.set_lot_invoice", [lotId], d.invoice_no);
+      if (alpha) this.app.py.call("web_more.set_lot_alpha", [lotId], alpha);
       this.app.refreshAll();
       this.app.toast("Primka spremljena.");
     } catch (e) { this.err(e); return; }
@@ -542,7 +560,7 @@ class LotsPage extends Page {
 
   build() {
     this.tbtn("Sljedivost LOT-a", () => this.trace());
-    this.tbtn("🧾 Račun / cijena", () => this.invoice(), "ghost");
+    this.tbtn("🧾 Račun / cijena / alfa", () => this.invoice(), "ghost|rec");
     this.tbtn("Korekcija količine", () => this.adjust(), "ghost");
     this.tbtn("Otpis LOT-a", () => this.writeoff(), "ghost");
     this.tbtn("Izvoz CSV", () => this.table.exportCsv("lotovi"), "ghost");
@@ -551,7 +569,7 @@ class LotsPage extends Page {
       ["item", "Artikl", 230, "w"], ["lot", "LOT", 140, "w"], ["received", "Primljeno", 95, "center"],
       ["qty_r", "Primljeno kol.", 100, "e"], ["qty_l", "Preostalo", 90, "e"], ["unit", "Jed.", 50, "center"],
       ["expiry", "Rok", 95, "center"], ["days", "Dana do isteka", 105, "e"],
-      ["supplier", "Dobavljač", 160, "w"], ["invoice", "Račun", 120, "w"], ["price", "Cijena €", 80, "e"],
+      ["supplier", "Dobavljač", 160, "w"], ["invoice", "Račun", 120, "w"], ["price", "Cijena €", 80, "e"], ["alpha", "Alfa %", 65, "e"],
       ["fifo", "FIFO", 60, "center"]], { onDouble: () => this.trace(), multi: true });
     this.search(this.table);
     this.content.append(this.table.el);
@@ -571,7 +589,7 @@ class LotsPage extends Page {
       rows.push({ id: l.id, item: l.item_name, lot: l.lot_no, received: d2ui(l.received_date),
         qty_r: fq(l.qty_received), qty_l: fq(l.qty_left), unit: l.unit, expiry: d2ui(l.eff_expiry),
         days: dl === null ? "" : dl, supplier: l.supplier_name || "", invoice: l.invoice_no || "",
-        price: l.unit_price ? fq(l.unit_price, 4) : "", fifo, _tag: tag });
+        price: l.unit_price ? fq(l.unit_price, 4) : "", alpha: l.alpha ? fq(l.alpha, 1) : "", fifo, _tag: tag });
     }
     this.table.setRows(rows);
   }
@@ -598,10 +616,12 @@ class LotsPage extends Page {
     const d = await askForm(ids.length > 1 ? `Račun – ${ids.length} LOT-ova` : `Račun – LOT ${l.lot_no}`, [
       { key: "info", label: "Artikl", type: "info", default: ids.length > 1 ? `${ids.length} označenih LOT-ova` : `${l.item_name} · primljeno ${d2ui(l.received_date)}` },
       { key: "invoice_no", label: "Broj računa dobavljača" },
-      ...(ids.length === 1 ? [{ key: "unit_price", label: "Cijena €/jed. (bez PDV-a)", type: "num", min: 0 }] : [])],
-    { invoice_no: l.invoice_no || "", unit_price: l.unit_price || 0 });
+      ...(ids.length === 1 ? [{ key: "unit_price", label: "Cijena €/jed. (bez PDV-a)", type: "num", min: 0 }] : []),
+      ...(ids.length === 1 && l.category === "Hmelj" ? [{ key: "alpha", label: "Alfa kiseline % (s deklaracije)", type: "num", min: 0 }] : [])],
+    { invoice_no: l.invoice_no || "", unit_price: l.unit_price || 0, alpha: l.alpha || null });
     if (!d) return;
     this.app.py.call("web_costs.set_lot_invoice", ids, d.invoice_no || "", ids.length === 1 ? d.unit_price : null);
+    if (ids.length === 1 && l.category === "Hmelj") this.app.py.call("web_more.set_lot_alpha", ids, d.alpha || null);
     this.refresh();
     toast("Račun spremljen.");
   }
@@ -865,7 +885,7 @@ class ReceivePODialog extends Dialog {
       h("label", { class: "row", style: { gap: "8px" } }, "Datum primitka:", this.date),
       h("label", { class: "row", style: { gap: "8px" } }, "Broj računa:", this.inv),
       h("label", { class: "chk" }, this.haccp, " Odmah ispuni HACCP zapisnike o prijemu")));
-    const heads = ["Artikl", "Naručeno", "Već zaprimljeno", "Zaprimam sad", "LOT broj", "Rok trajanja"];
+    const heads = ["Artikl", "Naručeno", "Već zaprimljeno", "Zaprimam sad", "LOT broj", "Rok trajanja", "Alfa %"];
     const tbody = h("tbody");
     this.rows = [];
     for (const ln of db.po_lines(poId)) {
@@ -873,9 +893,11 @@ class ReceivePODialog extends Dialog {
       const q = h("input", { inputmode: "decimal", style: { width: "90px" } }); q.value = fin(rem);
       const lot = h("input", { placeholder: "auto", style: { width: "130px" } });
       const exp = h("input", { type: "date", style: { width: "150px" } });
+      const isHop = (db.item(ln.item_id) || {}).category === "Hmelj";
+      const al = h("input", { inputmode: "decimal", placeholder: isHop ? "npr. 4,1" : "—", disabled: !isHop, style: { width: "80px" } });
       tbody.append(h("tr", {}, h("td", { style: { whiteSpace: "normal", minWidth: "160px" } }, `${ln.name} (${ln.unit})`), h("td", { class: "al-e" }, fq(ln.qty)),
-        h("td", { class: "al-e" }, fq(ln.qty_received)), h("td", {}, q), h("td", {}, lot), h("td", {}, exp)));
-      this.rows.push([ln.id, q, lot, exp]);
+        h("td", { class: "al-e" }, fq(ln.qty_received)), h("td", {}, q), h("td", {}, lot), h("td", {}, exp), h("td", {}, al)));
+      this.rows.push([ln.id, q, lot, exp, al]);
     }
     const tbl = h("table", { class: "grid recv", style: { tableLayout: "auto" } }, h("thead", {}, h("tr", {}, heads.map((x, i) =>
       h("th", { class: i === 1 || i === 2 ? "al-e" : "al-w" }, x)))), tbody);
@@ -888,7 +910,9 @@ class ReceivePODialog extends Dialog {
       const date = this.date.value || today();
       const rc = this.rows.map(([lid, q, lot, exp]) => ({ line_id: lid, qty: num(q.value), lot_no: lot.value.trim() || null, expiry: exp.value || null }));
       if (!rc.some((r) => r.qty > 0)) throw new Error("Nema količina za zaprimanje.");
+      const alphas = this.rows.filter(([, q]) => num(q.value) > 0).map((r) => r[4].value.trim() ? num(r[4].value) : null);
       lots = this.db.receive_po(this.poId, rc, date);
+      lots.forEach((lid, i) => { if (alphas[i]) window.APP.py.call("web_more.set_lot_alpha", [lid], alphas[i]); });
       if (this.inv.value.trim() && lots.length) window.APP.py.call("web_costs.set_lot_invoice", lots, this.inv.value.trim());
     } catch (e) { return this.err(e.message); }
     this.close(this.haccp.checked ? lots : true);

@@ -446,11 +446,109 @@ def render_docx(doc, path):
     return path
 
 
+# ================================================================== Excel (tablični dokumenti, npr. evidencija kuhanja)
+def _xl_num(v):
+    """'25,00' / '1.234,5' -> broj; ostalo ostaje tekst."""
+    import re
+    t = str(v if v is not None else "").strip()
+    if re.fullmatch(r"-?\d{1,3}(\.\d{3})*(,\d+)?|-?\d+(,\d+)?", t):
+        try:
+            return float(t.replace(".", "").replace(",", ".")), (len(t.split(",")[1]) if "," in t else 0)
+        except ValueError:
+            pass
+    return None, 0
+
+
+def render_xlsx(doc, path):
+    import openpyxl
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    m = doc.meta
+    ws.title = (m.get("code") or "Evidencija")[:31]
+    thin = Side(style="thin", color="BFBFBF")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    head_fill = PatternFill("solid", fgColor="EDEAE3")
+    r = 1
+    ws.cell(r, 1, m.get("title") or "").font = Font(bold=True, size=14)
+    r += 1
+    ws.cell(r, 1, doc.company or "").font = Font(size=10)
+    r += 1
+    ws.cell(r, 1, f"Šifra: {m.get('code', '')} · Verzija: {m.get('version', '')} · Datum: {m.get('vdate', '')}").font = Font(size=9, color="666666")
+    r += 2
+    widths = {}
+    for b in doc.blocks:
+        kind = b[0]
+        if kind in ("title", "h", "pb"):
+            ws.cell(r, 1, b[1]).font = Font(bold=True, size=12 if kind != "pb" else 11)
+            r += 1
+        elif kind in ("p", "note"):
+            ws.cell(r, 1, b[1]).font = Font(size=9 if kind == "note" else 10, italic=kind == "note")
+            r += 1
+        elif kind in ("meta", "kv", "sign"):
+            for k, v in b[1]:
+                ws.cell(r, 1, f"{k}:").font = Font(bold=True, size=10)
+                ws.cell(r, 2, v or "")
+                r += 1
+            r += 1
+        elif kind == "table":
+            head, rows = b[1], b[2]
+            share = b[3] if len(b) > 3 else None
+            opts = b[4] if len(b) > 4 and isinstance(b[4], dict) else {}
+            rows = [x for x in rows if any(str(c or "").strip() for c in x)]  # bez praznih redaka za ručni upis
+            top = r
+            for j, t in enumerate(head, 1):
+                c = ws.cell(r, j, t)
+                c.font = Font(bold=True, size=10)
+                c.fill = head_fill
+                c.border = border
+                c.alignment = Alignment(wrap_text=True, vertical="center", horizontal="center")
+            r += 1
+            for row in rows:
+                al = opts.get("align") or {}
+                for j, v in enumerate(row, 1):
+                    # brojevi samo u brojčanim stupcima (desno poravnanje) ili s decimalnim zarezom – LOT ostaje tekst
+                    num, dec = _xl_num(v) if (al.get(j - 1) == "R" or "," in str(v or "")) else (None, 0)
+                    c = ws.cell(r, j, num if num is not None else (v if v not in (None, "") else None))
+                    c.border = border
+                    c.alignment = Alignment(vertical="top", wrap_text=True)
+                    if num is not None:
+                        c.number_format = "#,##0" + ("." + "0" * dec if dec else "")
+                    widths[j] = max(widths.get(j, 0), min(40, len(str(v or "")) + 2))
+                r += 1
+            # spojene ćelije (npr. LOT piva kroz sve retke sirovina)
+            orig = [x for x in b[2]]
+            idx, k = {}, 0
+            for i, x in enumerate(orig):
+                if any(str(c or "").strip() for c in x):
+                    idx[i] = k
+                    k += 1
+            for r0, r1 in opts.get("merge", []):
+                if r0 in idx and r1 in idx and idx[r1] > idx[r0]:
+                    for col in opts.get("merge_cols", []):
+                        a, z = top + 1 + idx[r0], top + 1 + idx[r1]
+                        ws.merge_cells(start_row=a, start_column=col + 1, end_row=z, end_column=col + 1)
+            for j, t in enumerate(head, 1):
+                widths[j] = max(widths.get(j, 0), min(18, len(str(t)) + 2), 8)
+            ws.freeze_panes = ws.cell(top + 1, 1)
+            r += 1
+    for j, w in widths.items():
+        ws.column_dimensions[get_column_letter(j)].width = w
+    ws.page_setup.orientation = "landscape" if doc.landscape else "portrait"
+    ws.page_setup.fitToWidth = 1
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_setup.fitToHeight = 0
+    wb.save(path)
+    return path
+
+
 def render(doc, folder, fmt="PDF"):
     os.makedirs(folder, exist_ok=True)
     safe = "".join(ch if ch.isalnum() or ch in "-_ .–(),#" else "_" for ch in doc.filename).strip(" .")
     safe = safe[:150].rstrip(" .")
-    ext = ".docx" if fmt.upper().startswith("W") or fmt.upper() == "DOCX" else ".pdf"
+    F = fmt.upper()
+    ext = ".xlsx" if F in ("EXCEL", "XLSX", "XLS") else ".docx" if F.startswith("W") or F == "DOCX" else ".pdf"
     path = os.path.join(folder, safe + ext)
     n = 2
     while os.path.exists(path):
@@ -460,6 +558,8 @@ def render(doc, folder, fmt="PDF"):
         except OSError:
             path = os.path.join(folder, f"{safe} ({n}){ext}")
             n += 1
+    if ext == ".xlsx":
+        return render_xlsx(doc, path)
     return render_docx(doc, path) if ext == ".docx" else render_pdf(doc, path)
 
 

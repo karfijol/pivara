@@ -510,6 +510,7 @@ class BrewPanel extends Panel {
     this.tbtn("Utrošak sirovina…", () => this.consumption());
     this.tbtn("+ CCP zapis", () => this.ccp());
     this.printButtons();
+    this.tbtn("📊 Excel", () => this.print("EXCEL"), "ghost", true);
     this.table = new Table([
       ["lot", "LOT piva", 120, "w"], ["date", "Datum kuhanja", 100, "center"], ["recipe", "Recept / stil", 160, "w"],
       ["vol", "Volumen sladovine (L)", 130, "e"], ["og", "OG (g/cm³)", 85, "e"], ["ph", "pH", 55, "e"],

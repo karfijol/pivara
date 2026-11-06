@@ -481,6 +481,11 @@ class DB(HaccpMixin, ExtrasMixin):
         if b["status"] != "Planirano":
             raise ValueError("Šarža je već skuhana.")
         prev = self.preview_brew(b["recipe_id"], b["volume_l"])
+        try:  # hmelj za gorčinu prema alfa kiselinama LOT-a (web verzija)
+            import web_more
+            prev = web_more.alpha_adjust_needs(self, batch_id, prev)
+        except ImportError:
+            pass
         short = [p for p in prev if p["missing"] > EPS]
         if short:
             raise ShortageError(short)

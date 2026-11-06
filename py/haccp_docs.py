@@ -113,7 +113,7 @@ def doc_brew(db, d_from, d_to, logo):
     meta_line(db, doc)
     doc.add("note", period_txt(d_from, d_to))
     head = ["LOT piva", "Datum kuhanja", "Recept / stil", "Slad", "kg", "LOT", "Hmelj", "g", "LOT", "Kvasac", "g",
-            "LOT", "Ostali dodaci", "kol.", "LOT", "Vol. sladovine (L)", "OG (g/cm³)", "pH", "Kuhao"]
+            "LOT", "Ostali dodaci", "kol.", "LOT", "Sladovi-\nna (L)", "Proizve-\ndeno (L)", "OG", "pH", "Kuhao"]
     rows, merge = [], []
     for b in db.brewed_batches(d_from, d_to, desc=False):
         g = db.batch_consumption_by_cat(b["id"])
@@ -123,19 +123,20 @@ def doc_brew(db, d_from, d_to, logo):
             r = [""] * len(head)
             if i == 0:
                 r[0:3] = [b["batch_no"], d2(b["brew_date"]), b["recipe"] or ""]
-                r[15:19] = [n(b.get("wort_l") or b["volume_l"], 1), n(b.get("og_sg"), 3, False), n(b.get("ph"), 2),
-                            op(db, b.get("brewer"), "brew")]
+                prod = db.packaged_litres(b["id"])  # stvarno proizvedeno (Šarže piva) ili zbroj pakiranja
+                r[15:20] = [n(b.get("wort_l") or b["volume_l"], 1), n(prod, 1) if prod else "", n(b.get("og_sg"), 3, False),
+                            n(b.get("ph"), 2), op(db, b.get("brewer"), "brew")]
             for col, cat in ((3, "Slad"), (6, "Hmelj"), (9, "Kvasac"), (12, "Ostalo")):
                 if i < len(g[cat]):
                     c = g[cat][i]
                     r[col:col + 3] = [c["name"], _amount(c, cat), c["lot_no"]]
             rows.append(r)
         merge.append((start, len(rows) - 1))
-    w = [0.075, 0.062, 0.055, 0.07, 0.03, 0.07, 0.06, 0.035, 0.07, 0.065, 0.03, 0.06, 0.06, 0.035, 0.06,
-         0.042, 0.035, 0.026, 0.055]
+    w = [0.07, 0.056, 0.05, 0.064, 0.028, 0.064, 0.055, 0.032, 0.064, 0.06, 0.028, 0.056, 0.055, 0.032, 0.056,
+         0.048, 0.054, 0.034, 0.03, 0.05]
     doc.add("table", head, rows + blanks(len(head)), w,
-            {"size": 6.5, "merge": merge, "merge_cols": [0, 1, 2, 15, 16, 17, 18],
-             "align": {4: "R", 7: "R", 10: "R", 15: "R", 16: "R", 17: "R"}})
+            {"size": 6.3, "merge": merge, "merge_cols": [0, 1, 2, 15, 16, 17, 18, 19],
+             "align": {4: "R", 7: "R", 10: "R", 15: "R", 16: "R", 17: "R", 18: "R"}})
     doc.add("note", "Slad u kg, hmelj i kvasac u g (ako se vode u kg/g). LOT piva: DDMMGGGG + oznaka piva + redni broj.")
     return doc
 

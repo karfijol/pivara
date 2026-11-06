@@ -212,7 +212,7 @@ def report_data(db, d_from, d_to):
         litres = pack or brewed
         brews.append({"id": b["id"], "date": b["brew_date"], "lot": b["batch_no"], "beer": b["recipe"] or "",
                       "brewed_l": brewed, "packaged_l": pack, "litres": litres, "cost": cost,
-                      "per_l": cost / litres if litres else 0, "lines": out})
+                      "per_l": cost / pack if pack else None, "lines": out})  # cijena po litri: samo prema pakiranoj količini
         tot_cost += cost
         tot_pack += pack
         tot_brew += brewed
@@ -221,10 +221,14 @@ def report_data(db, d_from, d_to):
         m["avg"] = m["value"] / m["qty"] if m["qty"] else 0
         m["invoices"] = ", ".join(sorted(m["invoices"]))
     litres = sum(b["litres"] for b in brews)
+    pack_cost = sum(b["cost"] for b in brews if b["packaged_l"])
+    unpacked = [b for b in brews if not b["packaged_l"]]
     extra = float(db.get_setting("extra_cost_l") or 0)
     return {"from": d_from, "to": d_to, "brews": brews, "materials": materials, "total_cost": tot_cost,
             "total_litres": litres, "packaged_l": tot_pack, "brewed_l": tot_brew,
-            "per_l": tot_cost / litres if litres else 0, "missing_price": missing_price, "extra_cost_l": extra,
+            "per_l": pack_cost / tot_pack if tot_pack else None, "pack_cost": pack_cost,
+            "unpacked": len(unpacked), "unpacked_cost": sum(b["cost"] for b in unpacked),
+            "missing_price": missing_price, "extra_cost_l": extra,
             "company": db.get_setting("dn_company") or db.get_setting("company"), "oib": db.get_setting("company_oib")}
 
 
@@ -235,6 +239,10 @@ def _period_name(d_from, d_to):
     if a.day == 1 and a.year == b.year and a.month == b.month and (b + dt.timedelta(days=1)).day == 1:
         return f"{months[a.month - 1]} {a.year}."
     return f"{d2ui(d_from)} – {d2ui(d_to)}"
+
+
+def _pl(v):
+    return f"{fq(v, 4)} €/L" if v is not None else "nije pakirano"
 
 
 def _n(x, d=3):
@@ -251,12 +259,14 @@ def report_doc(db, d_from, d_to, fmt="PDF", app=None):
     doc.add("kv", [("Tvrtka", f"{r['company'] or ''}" + (f", OIB {r['oib']}" if r["oib"] else "")), ("Razdoblje", per),
                    ("Broj kuhanja", str(len(r["brews"]))), ("Litara piva", f"{_n(r['total_litres'], 1)} L"),
                    ("Ukupni trošak sirovina (bez PDV-a)", money(r["total_cost"])),
-                   ("Prosječno po litri (bez PDV-a)", f"{fq(r['per_l'], 4)} €/L")])
+                   ("Prosječno po litri pakiranog piva (bez PDV-a)", _pl(r["per_l"]) + (
+                       f" (bez {r['unpacked']} još nepakiranih kuhanja)" if r["unpacked"] else ""))])
     doc.add("h", "1. Kuhanja u razdoblju")
     doc.add("table", ["Datum", "LOT piva", "Pivo", "Skuhano L", "Pakirano L", "Sirovine €", "€/L"],
             [[d2ui(b["date"]), b["lot"], b["beer"], _n(b["brewed_l"], 1), _n(b["packaged_l"], 1) if b["packaged_l"] else "—",
-              fq(b["cost"], 2), fq(b["per_l"], 4)] for b in r["brews"]] +
-            [["", "UKUPNO", "", _n(r["brewed_l"], 1), _n(r["packaged_l"], 1), fq(r["total_cost"], 2), fq(r["per_l"], 4)]],
+              fq(b["cost"], 2), fq(b["per_l"], 4) if b["per_l"] is not None else "nije pakirano"] for b in r["brews"]] +
+            [["", "UKUPNO", "", _n(r["brewed_l"], 1), _n(r["packaged_l"], 1), fq(r["total_cost"], 2),
+              fq(r["per_l"], 4) if r["per_l"] is not None else "—"]],
             [0.12, 0.16, 0.2, 0.12, 0.12, 0.14, 0.14], {"size": 9, "align": {3: "R", 4: "R", 5: "R", 6: "R"}})
     doc.add("h", "2. Utrošene sirovine (zbirno)")
     doc.add("table", ["Sirovina", "Vrsta", "Količina", "Jed.", "Prosj. cijena €", "Iznos € (bez PDV)", "Računi"],
@@ -269,7 +279,7 @@ def report_doc(db, d_from, d_to, fmt="PDF", app=None):
         doc.add("table", ["Sastojak", "LOT sirovine", "Utrošeno", "Jed.", "Cijena €/jed.", "Iznos €", "Račun"],
                 [[x["name"], x["lot"], _n(x["qty"]), x["unit"], fq(x["price"], 3) + (" *" if x["estimated"] else ""),
                   fq(x["value"], 2), x["invoice"]] for x in b["lines"]] +
-                [["UKUPNO", "", "", "", "", fq(b["cost"], 2), f"{fq(b['per_l'], 4)} €/L"]],
+                [["UKUPNO", "", "", "", "", fq(b["cost"], 2), _pl(b["per_l"])]],
                 [0.22, 0.2, 0.1, 0.06, 0.13, 0.12, 0.17], {"size": 8.5, "align": {2: "R", 4: "R", 5: "R"}})
     notes = ["Cijene su nabavne cijene bez PDV-a prema računima dobavljača (cijena LOT-a sirovine). "
              "* = procijenjena cijena (zadnja poznata cijena artikla, LOT bez računa)."]
@@ -313,8 +323,9 @@ def report_xlsx(db, d_from, d_to, app=None):
     ws = wb.active
     ws.title = "Kuhanja"
     rows = [[b["date"] and dt.date.fromisoformat(b["date"]), b["lot"], b["beer"], b["brewed_l"], b["packaged_l"] or None,
-             round(b["cost"], 2), round(b["per_l"], 4)] for b in r["brews"]]
-    rows.append([None, "UKUPNO", None, r["brewed_l"], r["packaged_l"], round(r["total_cost"], 2), round(r["per_l"], 4)])
+             round(b["cost"], 2), round(b["per_l"], 4) if b["per_l"] is not None else None] for b in r["brews"]]
+    rows.append([None, "UKUPNO", None, r["brewed_l"], r["packaged_l"], round(r["total_cost"], 2),
+                 round(r["per_l"], 4) if r["per_l"] is not None else None])
     sheet(ws, f"Kuhanja – {per} – {r['company'] or ''}", ["Datum", "LOT piva", "Pivo", "Skuhano (L)", "Pakirano (L)",
           "Trošak sirovina € (bez PDV)", "€/L (bez PDV)"], rows, [12, 16, 18, 12, 12, 22, 14], money_cols=(6,), num_cols=(7,))
     for row in ws.iter_rows(min_row=4, max_col=1):
@@ -340,7 +351,8 @@ def report_xlsx(db, d_from, d_to, app=None):
                          round(x["qty"], 4), x["unit"], round(x["price"], 4), round(x["value"], 4), x["invoice"],
                          "procjena" if x["estimated"] else None, None])
             first = False
-        rows.append([None, None, None, None, None, None, None, None, None, round(b["cost"], 4), None, None, round(b["per_l"], 4)])
+        rows.append([None, None, None, None, None, None, None, None, None, round(b["cost"], 4), None, None,
+                     round(b["per_l"], 4) if b["per_l"] is not None else None])
     sheet(ws3, f"Sirovine po kuhanju – {per}", ["Datum", "LOT piva", "Pivo", "Litara", "Sastojak", "LOT sirovine",
           "Utrošeno", "Jed.", "Cijena €/jed.", "Ukupna cijena €", "Račun", "Napomena", "Cijena po litri €"],
           rows, [12, 16, 14, 8, 24, 20, 10, 6, 12, 14, 14, 10, 15], money_cols=(10,), num_cols=(7, 9, 13))
@@ -392,5 +404,53 @@ def auto_invoices(db):
                 db.con.execute("UPDATE lots SET invoice_no=? WHERE id=?", (r["invoice"], lid))
             n += 1
     db.con.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('excel_invoices_done','1')")
+    db.con.commit()
+    return n
+
+
+# ------------------------------------------------------------------ LOT-ovi bez broja računa (izvještaj za knjigovođu)
+def missing_invoices(db, d_from, d_to):
+    """LOT-ovi utrošeni u kuhanjima razdoblja koji nemaju broj računa. Uz svaki prijedlog: zadnja nabava istog
+    artikla s brojem računa (primljena najkasnije na dan kuhanja). Tipično su to LOT-ovi nastali pri uvozu
+    starog utroška („LOT nije pronađen u nabavi”) ili potrošeni LOT-ovi koji se na popisu LOT-ova ne vide."""
+    ensure(db)
+    rows = db.q("""SELECT l.id, l.lot_no, l.item_id, i.name AS item, i.unit, l.received_date, l.qty_received, l.qty_left,
+                          l.unit_price, l.invoice_no, l.note, MIN(b.brew_date) AS first_brew,
+                          GROUP_CONCAT(DISTINCT b.batch_no) AS batches, SUM(c.qty) AS used
+                   FROM batch_consumption c JOIN batches b ON b.id=c.batch_id JOIN lots l ON l.id=c.lot_id
+                   JOIN items i ON i.id=l.item_id
+                   WHERE b.status<>'Planirano' AND b.brew_date BETWEEN ? AND ?
+                     AND (l.invoice_no IS NULL OR TRIM(l.invoice_no)='' OR l.invoice_no='procjena')
+                   GROUP BY l.id ORDER BY i.name, l.received_date""", (d_from, d_to))
+    for r in rows:
+        r["placeholder"] = "nije pronađen" in (r.get("note") or "").lower() or str(r["lot_no"]).startswith("NEPOZNAT")
+        s = db.one("""SELECT id, lot_no, invoice_no, unit_price, received_date FROM lots
+                      WHERE item_id=? AND id<>? AND invoice_no IS NOT NULL AND TRIM(invoice_no)<>'' AND invoice_no<>'procjena'
+                        AND received_date<=? ORDER BY received_date DESC, id DESC LIMIT 1""",
+                   (r["item_id"], r["id"], r["first_brew"] or r["received_date"]))
+        if not s:  # nema ranije nabave s računom: najbliža kasnija
+            s = db.one("""SELECT id, lot_no, invoice_no, unit_price, received_date FROM lots
+                          WHERE item_id=? AND id<>? AND invoice_no IS NOT NULL AND TRIM(invoice_no)<>'' AND invoice_no<>'procjena'
+                          ORDER BY received_date, id LIMIT 1""", (r["item_id"], r["id"]))
+        r["suggest"] = s
+    return rows
+
+
+def fix_lot_invoices(db, rows):
+    """rows: [{lot_id, invoice_no, unit_price (neobavezno: samo ako LOT nema cijenu)}]."""
+    ensure(db)
+    n = 0
+    for x in rows:
+        inv = (x.get("invoice_no") or "").strip()
+        if not inv:
+            continue
+        l = db.one("SELECT unit_price FROM lots WHERE id=?", (x["lot_id"],))
+        if not l:
+            continue
+        if x.get("unit_price") and not l["unit_price"]:
+            db.con.execute("UPDATE lots SET invoice_no=?, unit_price=? WHERE id=?", (inv, float(x["unit_price"]), x["lot_id"]))
+        else:
+            db.con.execute("UPDATE lots SET invoice_no=? WHERE id=?", (inv, x["lot_id"]))
+        n += 1
     db.con.commit()
     return n

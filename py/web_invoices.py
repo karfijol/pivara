@@ -677,6 +677,11 @@ def save_invoice(db, data, lines, opts=None):
                              sid, price, po_id if po else None, note=f"Račun {inv_no}",
                              ref=(po["po_no"] if po else f"R {inv_no}"), commit=False)
         db.con.execute("UPDATE lots SET invoice_no=?, invoice_id=? WHERE id=?", (inv_no, inv_id, lid))
+        if l.get("alpha"):
+            try:
+                db.con.execute("UPDATE lots SET alpha=? WHERE id=?", (float(l["alpha"]), lid))
+            except (ValueError, TypeError):
+                pass
         if price > 0:
             db.con.execute("UPDATE items SET price=?, supplier_id=COALESCE(supplier_id, ?) WHERE id=?", (price, sid, l["item_id"]))
         lot_ids.append(lid)

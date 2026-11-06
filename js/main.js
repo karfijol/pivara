@@ -5,16 +5,16 @@ import * as auth from "./auth.js";
 import { h, btn, toast, info, error, confirm, busy, openFile, dbProxy, Dialog } from "./ui.js";
 import { icon } from "./icons.js";
 
-export const VERSION = "web 2.19";
+export const VERSION = "web 2.25";
 
 // modul (datoteka u js/pages) za svaku stranicu (karticu); skupine i kartice su u auth.GROUPS
 const MOD_OF = {
   dash: "stock", items: "stock", lots: "stock", chem: "stock", reorder: "stock", po: "stock", suppliers: "stock",
   kegwork: "kegwork", kegs: "production", returns: "reports", batches: "production", recipes: "production", planner: "production",
   haccp: "haccp", offers: "offers", pricelist: "offers", sales: "production", costs: "costs", year: "reports",
-  excise: "production", recall: "production", settings: "settings", invoices: "invoices",
+  excise: "production", recall: "production", settings: "settings", invoices: "invoices", reminders: "reminders",
 };
-const MODULES = ["stock", "production", "haccp", "settings", "kegwork", "costs", "offers", "reports", "invoices"];
+const MODULES = ["stock", "production", "haccp", "settings", "kegwork", "costs", "offers", "reports", "invoices", "reminders"];
 // donja traka na mobitelu (prve dostupne skupine prema ulozi)
 const BOTTOM = ["dash", "kegovi", "proizvodnja", "skladiste", "prodaja", "haccp", "izvjesca", "settings"];
 const SHORT = { dash: "Početna", kegovi: "Kegovi", proizvodnja: "Proizv.", prodaja: "Prodaja", skladiste: "Skladište",

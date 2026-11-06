@@ -337,7 +337,8 @@ export async function hopEditor(app, opts) {
   const hopOpts = plan.hops.map((x) => [x.name, x.item_id]);
   const render = () => {
     list.innerHTML = "";
-    list.append(h("div", { class: "hop-r hop-h" }, h("span", {}, "Hmelj"), h("span", {}, "Kada"), h("span", {}, "Minuta"), h("span", {}, "Količina (g)"), h("span", {})));
+    list.append(h("div", { class: "hop-r hop-h" }, h("span", {}, "Hmelj"), h("span", {}, "Kada"), h("span", {}, "Minuta"), h("span", {}, "Količina (g)"),
+      h("span", { title: "Korigiraj količinu prema alfa kiselinama LOT-a (dodaci za gorčinu)" }, "α korekcija"), h("span", {})));
     rows.forEach((r, i) => {
       const hs = h("select", {}, hopOpts.map(([l, v]) => h("option", { value: String(v) }, l)));
       hs.value = String(r.item_id);
@@ -346,11 +347,15 @@ export async function hopEditor(app, opts) {
       const mn = h("input", { value: r.stage === "dry" ? "" : String(r.min), inputmode: "numeric", disabled: r.stage === "dry",
         placeholder: r.stage === "dry" ? "—" : "0", style: { textAlign: "right" } });
       const g = h("input", { value: fq(r.g, 1), inputmode: "decimal", style: { textAlign: "right" } });
+      const adj = h("input", { type: "checkbox", title: "Korigiraj prema alfa kiselinama (gorčina)" });
+      adj.checked = r.stage === "boil" && !!r.adj; adj.disabled = r.stage !== "boil";
       hs.onchange = () => { r.item_id = Number(hs.value); renderSum(); };
-      st.onchange = () => { r.stage = st.value; render(); };
-      mn.oninput = () => { r.min = Math.round(num(mn.value) || 0); };
+      st.onchange = () => { r.stage = st.value; if (r.stage !== "boil") r.adj = false; render(); };
+      mn.oninput = () => { r.min = Math.round(num(mn.value) || 0); if (!r._adjSet) { r.adj = r.stage === "boil" && (num(boil.value) || 60) - r.min >= 30; adj.checked = r.adj; } };
       g.oninput = () => { r.g = num(g.value) || 0; renderSum(); };
-      list.append(h("div", { class: "hop-r" }, hs, st, mn, g, btn("✕", () => { rows.splice(i, 1); render(); }, "ghost")));
+      adj.onchange = () => { r.adj = adj.checked; r._adjSet = true; };
+      list.append(h("div", { class: "hop-r" }, hs, st, mn, g, h("label", { class: "chk", style: { justifyContent: "center" } }, adj),
+        btn("✕", () => { rows.splice(i, 1); render(); }, "ghost")));
     });
     renderSum();
   };
@@ -362,6 +367,29 @@ export async function hopEditor(app, opts) {
       return `${x.name} ${fq(u, 1)} / ${fq(x.g, 1)} g${ok ? "" : " ⚠"}`;
     }).join(" · ");
   };
+  // alfa kiseline: vrijednost u recepturi i LOT koji će se trošiti (FIFO)
+  const alphaIn = {};
+  const alphaBox = h("div", { class: "alpha-box" });
+  const renderAlpha = () => {
+    alphaBox.innerHTML = "";
+    for (const x of plan.hops) {
+      const a = x.alpha || {};
+      const inp = alphaIn[x.item_id] || (alphaIn[x.item_id] = h("input", { value: a.recipe ? String(a.recipe).replace(".", ",") : "", inputmode: "decimal", placeholder: "npr. 3,9", style: { width: "80px", textAlign: "right" } }));
+      const lotTxt = (a.lots || []).length ? (a.lots || []).map((l) => `LOT ${l.lot}: ${l.alpha ? String(l.alpha).replace(".", ",") + " %" : "alfa nije upisana"}`).join(" · ") : "nema na zalihi";
+      const ra = num(inp.value) || 0;
+      const f = ra && a.lot ? ra / a.lot : null;
+      const res = f ? ` → gorčina ×${fq(f, 3)} (${f < 1 ? "manje" : "više"} hmelja za ${fq(Math.abs(1 - f) * 100, 1)} %)` : (ra && !a.lot ? " → upišite alfu LOT-a (Skladište → LOT-ovi)" : "");
+      inp.oninput = () => renderAlphaLine();
+      const line = h("span", { class: "muted", style: { fontSize: "12.5px" } }, lotTxt + res);
+      const renderAlphaLine = () => {
+        const r2 = num(inp.value) || 0; const f2 = r2 && a.lot ? r2 / a.lot : null;
+        line.textContent = lotTxt + (f2 ? ` → gorčina ×${fq(f2, 3)} (${f2 < 1 ? "manje" : "više"} hmelja za ${fq(Math.abs(1 - f2) * 100, 1)} %)` : (r2 && !a.lot ? " → upišite alfu LOT-a (Skladište → LOT-ovi)" : ""));
+      };
+      alphaBox.append(h("div", { class: "row gap", style: { flexWrap: "wrap", margin: "3px 0" } }, h("b", { style: { minWidth: "130px" } }, x.name),
+        h("span", {}, "α u receptu"), inp, h("span", {}, "%"), line));
+    }
+  };
+  renderAlpha();
   const dry = plan.dry;
   const dOn = h("input", { type: "checkbox" }); dOn.checked = !!dry.on;
   const dDays = h("input", { value: String(dry.days || 3), inputmode: "numeric", style: { width: "60px", textAlign: "right" } });
@@ -372,8 +400,12 @@ export async function hopEditor(app, opts) {
     h("div", { class: "row gap", style: { flexWrap: "wrap" } }, h("b", {}, "Trajanje kuhanja"), boil, h("span", { class: "muted" }, "min · minuta 0 = na početku, minuta = trajanje → na kraju kuhanja")),
     list, sum,
     h("div", { class: "row gap", style: { margin: "6px 0 12px" } }, btn("＋ Dodaj hmelj", () => {
-      rows.push({ item_id: plan.hops[0].item_id, stage: "boil", min: 0, g: 0 }); render();
+      rows.push({ item_id: plan.hops[0].item_id, stage: "boil", min: 0, g: 0, adj: true }); render();
     }, "ghost")),
+    h("div", { class: "sec" }, "Alfa kiseline (korekcija gorčine)"),
+    h("p", { class: "muted", style: { fontSize: "12.5px", margin: "4px 0" } }, "Upišite alfu kakva je u receptu. Alfu isporučenog hmelja upisujete kod primke ili u LOT-ovima. " +
+      "Na danu kuhanja dodaci s kvačicom „α korekcija” (zadano: kuhaju se 30 i više minuta) preračunaju se: količina × alfa recepta ÷ alfa LOT-a. Aroma i dry hop ostaju kako piše."),
+    alphaBox,
     h("div", { class: "sec" }, "Podsjetnik za dry hop"),
     h("label", { class: "chk big" }, dOn, " Ovo pivo se dry hopa – podsjeti me (uključite samo za piva s dry hopom)"),
     h("div", { class: "row gap", style: { flexWrap: "wrap", margin: "6px 0" } },
@@ -385,9 +417,10 @@ export async function hopEditor(app, opts) {
   d.buttons("Spremi", () => {
     try {
       const b = Math.max(1, Math.round(num(boil.value) || 60));
-      py.callKw("web_more.save_hop_plan", [rows.map((r) => ({ item_id: r.item_id, stage: r.stage, min: r.stage === "dry" ? 0 : r.min, g: r.g })), b,
+      const alpha = Object.fromEntries(Object.entries(alphaIn).map(([k, inp]) => [k, num(inp.value) || null]));
+      py.callKw("web_more.save_hop_plan", [rows.map((r) => ({ item_id: r.item_id, stage: r.stage, min: r.stage === "dry" ? 0 : r.min, g: r.g, adj: r.stage === "boil" ? !!r.adj : false })), b,
         { on: dOn.checked, days: Math.round(num(dDays.value) || 3), time: dTime.value || "09:00", date: opts.batchId ? (dDate.value || null) : null }],
-      { batch_id: opts.batchId || null, recipe_id: opts.recipeId || null, as_default: def.checked });
+      { batch_id: opts.batchId || null, recipe_id: opts.recipeId || null, as_default: def.checked, alpha });
       d.close(true);
     } catch (e) { d.err(e.message); }
   });
@@ -549,7 +582,10 @@ class BrewDayDialog extends Dialog {
       const st = h("span", { class: "hop-st" }, "");
       cb.addEventListener("change", () => { this.st.checks[id] = cb.checked; this.save(); this.hopTick(); });
       const when = r.min <= 0 ? "na početku" : (r.min >= this.boilLen() ? "na kraju" : `${r.min}. min`);
-      const row = h("label", { class: "bd-row hop-row" }, cb, h("span", { class: "bd-lab" }, `${r.name} · ${fq(r.g, 1)} ${r.unit}`),
+      const al = (this.plan.alpha || {})[String(r.item_id)] || {};
+      const gtxt = r.g_adj != null ? `${r.name} · ${fq(r.g_adj, 1)} ${r.unit}` : `${r.name} · ${fq(r.g, 1)} ${r.unit}`;
+      const sub = r.g_adj != null ? h("span", { class: "hop-alpha" }, `recept ${fq(r.g, 1)} ${r.unit} · α ${fq(al.recipe, 1)} → ${fq(al.lot, 1)} %`) : null;
+      const row = h("label", { class: "bd-row hop-row" }, cb, h("span", { class: "bd-lab" }, gtxt, sub),
         h("span", { class: "hop-when" }, when), st);
       this.hopBox.append(row);
       return { r, id, row, st };

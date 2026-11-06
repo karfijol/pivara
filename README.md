@@ -8,7 +8,7 @@ Radi u pregledniku (Chrome, Edge, Firefox, Safari) na računalu, tabletu i mobit
   kao datoteka `skladiste.db`. Svako spremanje je nova verzija
   (povijest = sigurnosne kopije).
 - Program radi u pregledniku pomoću Pythona (Pyodide):
-  FIFO, LOT-ovi, šarže, kegovi, HACCP zapisi i dokumenti (PDF/Word), trošarine MI-PI, otpremnice, naljepnice.
+  FIFO, LOT-ovi, šarže, kegovi, HACCP zapisi i dokumenti (PDF/Excel), trošarine MI-PI, otpremnice, naljepnice.
 
 ## Postavljanje
 1. U repozitoriju: **Settings → Pages → Build and deployment → Source: Deploy from a branch → `main` / `(root)` → Save**.

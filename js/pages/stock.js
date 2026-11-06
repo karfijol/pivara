@@ -640,7 +640,7 @@ export async function inventory(app) {
     app.refreshAll();
     await info(`Inventura je upisana.\n\n• artikala: ${r.items}\n• šarži s promijenjenim utroškom (sljedivost): ${r.batches}\n• LOT-ova s novim stanjem: ${r.lots}`
       + (r.todo.length ? "\n\nŠto još trebate napraviti:\n" + r.todo.map((x) => "• " + x).join("\n") : "\n\nNema otvorenih stavki.")
-      + "\n\nNa kraju fizički provjerite zalihu; ako se stanje razlikuje, upišite ga s „Korekcija količine” na LOT-u.", "Inventura");
+      + "\n\nNa kraju fizički provjerite zalihu; ako se stanje razlikuje, ispravite ga tipkom „Uredi LOT” (polje Preostalo).", "Inventura");
   };
   mode.addEventListener("change", load);
   corr.addEventListener("change", load);
@@ -665,13 +665,14 @@ class LotsPage extends Page {
   build() {
     this.tbtn("Sljedivost LOT-a", () => this.trace());
     this.tbtn("✎ Uredi LOT", () => this.editLot(), "ghost|rec");
-    this.tbtn("🧾 Račun / cijena / alfa", () => this.invoice(), "ghost|rec");
-    this.tbtn("Korekcija količine", () => this.adjust(), "ghost");
     this.tbtn("Otpis LOT-a", () => this.writeoff(), "ghost");
     this.tbtn("Izvoz CSV", () => this.table.exportCsv("lotovi"), "ghost");
     this.tbtn("🗑 Obriši LOT", () => this.del(), "ghost|more");
     this.tbtn("☑ Inventura", () => inventory(this.app), "ghost");
     this.all = tbSwitch(this, "Prikaži i potrošene", () => this.refresh());
+    this.kind = h("select", { style: { marginLeft: "8px" }, onchange: () => this.refresh(), title: "Prikaz" },
+      h("option", { value: "" }, "Sirovine i kemikalije"), h("option", { value: "0" }, "Samo sirovine"), h("option", { value: "1" }, "Samo kemikalije"));
+    this.tb.insertBefore(this.kind, this.tbRight);
     this.table = new Table([
       ["item", "Artikl", 230, "w"], ["lot", "LOT", 140, "w"], ["received", "Primljeno", 95, "center"],
       ["qty_r", "Primljeno kol.", 100, "e"], ["qty_l", "Preostalo", 90, "e"], ["unit", "Jed.", 50, "center"],
@@ -685,7 +686,8 @@ class LotsPage extends Page {
   refresh() {
     const rows = [], order = {};
     const warn = parseInt(this.db.get_setting("warn_days"), 10) || 30;
-    for (const l of this.db.lots(!this.all.checked)) {
+    const kind = this.kind ? this.kind.value : "";
+    for (const l of this.db.lots(!this.all.checked, null, kind === "" ? null : kind === "1")) {
       const dl = daysLeft(l.eff_expiry);
       const tag = l.qty_left <= EPS ? "muted" : (dl !== null && dl < 0 ? "bad" : (dl !== null && dl <= warn ? "warn" : ""));
       let fifo = "";
@@ -717,6 +719,7 @@ class LotsPage extends Page {
 
   // broj LOT-a, datum primitka i rok (i za LOT-ove već korištene u kuhanju – sljedivost ide preko LOT-a, ne preko broja)
   async editLot() {
+    if (this.table.selectedIds().length > 1) return this.invoice(); // više LOT-ova: zajednički broj računa
     const id = this.need(this.table, "LOT");
     if (!id) return;
     let dd;
@@ -1185,14 +1188,13 @@ class POPage extends Page {
     }
   }
 
-  // Desktop: HTML s gumbom "Ispis / Spremi PDF". Web: isti HTML ili PDF/Word dokument.
+  // Desktop: HTML s gumbom "Ispis / Spremi PDF". Web: isti HTML ili PDF dokument.
   async printPo() {
     const id = this.need(this.table, "narudžbenicu");
     if (!id) return;
     const d = new Dialog("Ispis narudžbenice", { width: 480 });
     d.body.append(h("div", { class: "msg" }, "Odaberite oblik ispisa:"));
-    d.bar.append(btn("Odustani", () => d.close(null), "ghost"), btn("Word", () => d.close("WORD"), "ghost"),
-      btn("PDF", () => d.close("PDF"), "ghost"), btn("🖨 Ispis (stranica)", () => d.close("HTML")));
+    d.bar.append(btn("Odustani", () => d.close(null), "ghost"), btn("PDF", () => d.close("PDF"), "ghost"), btn("🖨 Ispis (stranica)", () => d.close("HTML")));
     const fmtSel = await d.show();
     if (!fmtSel) return;
     if (fmtSel === "HTML") {
@@ -1211,7 +1213,6 @@ class ReorderPage extends Page {
     "Istekli LOT-ovi se ne računaju.";
 
   build() {
-    this.tbtn("↻ Osvježi", () => this.refresh(), "ghost");
     this.tbtn("🛒 Izradi narudžbenice (nacrt)", () => this.create());
     this.tbtn("Izvoz CSV", () => this.table.exportCsv("sto_naruciti"), "ghost");
     this.all = tbSwitch(this, "Prikaži sve artikle", () => this.refresh());

@@ -47,7 +47,7 @@ def _render(doc, folder, fmt):
     from docgen import render
     fmt = (fmt or "PDF").upper()
     if fmt in ("BOTH", "OBOJE"):
-        return [render(doc, os.path.join(OUT, folder), "PDF"), render(doc, os.path.join(OUT, folder), "WORD")]
+        return [render(doc, os.path.join(OUT, folder), "PDF")]
     return render(doc, os.path.join(OUT, folder), fmt)
 
 

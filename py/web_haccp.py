@@ -27,10 +27,10 @@ def _fmts(fmt):
         return [str(f).upper() for f in fmt]
     f = str(fmt or "PDF").upper()
     if f in ("BOTH", "OBOJE", "PDF I WORD", "PDF+WORD"):
-        return ["PDF", "WORD"]
+        return ["PDF"]
     if f in ("EXCEL", "XLSX", "XLS"):
         return ["EXCEL"]
-    return ["WORD" if f.startswith("W") or f == "DOCX" else "PDF"]
+    return ["PDF"]
 
 
 def print_doc(db, key, fmt="PDF", d_from=None, d_to=None, rec_id=None, equipment_id=None, app=None):

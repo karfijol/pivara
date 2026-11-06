@@ -414,7 +414,13 @@ table.grid tr.empty td { color: var(--muted); text-align: center; padding: 18px;
   font-size: 14px; border-bottom: 3px solid transparent; white-space: nowrap; }
 .page-tab:hover { color: var(--text); background: var(--card); }
 .page-tab.active { color: var(--text); border-bottom-color: var(--accent); background: var(--card); }
-.page-tabs + .page { padding-top: 14px; }
+.page-tabs + .page, .sub-tabs + .page { padding-top: 14px; }
+.sub-tabs { display: flex; gap: 4px; padding: 12px 24px 0; flex-wrap: wrap; }
+.sub-tab { padding: 7px 14px; border-radius: 999px; color: var(--muted); text-decoration: none; font-weight: 600; font-size: 13.5px;
+  border: 1px solid var(--line); background: var(--card); }
+.sub-tab:hover { color: var(--text); }
+.sub-tab.active { color: var(--bg); background: var(--primary); border-color: var(--primary); }
+@media (max-width: 700px) { .sub-tabs { padding: 10px 10px 0; } .sub-tab { padding: 8px 12px; min-height: 36px; display: flex; align-items: center; } }
 .who .ro { display: inline-block; margin-left: 6px; font-size: 11px; padding: 1px 6px; border-radius: 8px; background: var(--warn, #F5B041); color: #111; }
 /* kartice unutar stranice (Postavke) */
 .set-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 14px; }

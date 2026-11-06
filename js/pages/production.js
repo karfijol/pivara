@@ -236,7 +236,6 @@ class RecipesPage extends Page {
     this.tbtn("＋ Nova receptura", () => this.new());
     this.tbtn("Uredi", () => this.edit(), "ghost");
     this.tbtn("Obriši", () => this.delete(), "ghost");
-    this.tbtn("🏷 Naljepnice po vrsti piva", () => printBeerLabels(this.app), "ghost");
     this.table = T([["name", "Naziv", 200, "w"], ["code", "Oznaka", 65, "center"], ["style", "Stil", 120, "w"],
       ["size", "Šarža (L)", 90, "e"], ["n", "Sastojaka", 80, "center"], ["b", "Kuhano puta", 90, "center"]],
     { onDouble: () => this.edit(), onSelect: () => this.showLines() });
@@ -1401,7 +1400,6 @@ class SalesPage extends Page {
     this.tbtn("Uredi kupca", () => this.editC(), "ghost|main");
     this.tbtn("Obriši otpremnicu", () => this.delDn(), "ghost");
     this.tbtn("🖨 PDF", () => this.printDn("PDF"), "primary", true);
-    this.tbtn("🖨 Word", () => this.printDn("WORD"), "ghost", true);
     this.cust = T([["name", "Kupac", 170, "w"], ["addr", "Adresa", 160, "w"], ["kegs", "Kegova kod kupca", 110, "center"],
       ["dep", "Depozit", 90, "e"]], { onDouble: () => this.editC() });
     this.dn = T([["no", "Broj", 120, "w"], ["date", "Datum", 95, "center"], ["cust", "Kupac", 160, "w"],
@@ -1629,7 +1627,6 @@ class RecallPage extends Page {
     this.tb.insertBefore(this.q, this.tbRight);
     this.tbtn("🔍 Traži", () => this.refresh());
     this.tbtn("🖨 PDF", () => this.print("PDF"), "primary", true);
-    this.tbtn("🖨 Word", () => this.print("WORD"), "ghost", true);
     this.table = T([["lvl", "Razina", 150, "w"], ["what", "Što", 300, "w"], ["detail", "Detalj", 520, "w"]]);
     this.content.append(this.table.el);
     this.rows = []; this.lastQ = "";

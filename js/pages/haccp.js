@@ -54,10 +54,10 @@ export async function exportAll(app) {
         + "u istu mapu (npr. na Google Disku) i potvrdite zamjenu – isti dokumenti se prepišu, novi se dodaju." },
     { key: "d_from", label: "Od datuma (samo za razdoblje)", type: "date", default: dFrom },
     { key: "d_to", label: "Do datuma (samo za razdoblje)", type: "date", default: dTo },
-    { key: "fmt", label: "Format", type: "combo", options: ["PDF", "Word", "PDF i Word"], default: "PDF" }],
+  ],
   {}, { okText: "Izradi", width: 620 });
   if (!d) return null;
-  const fmt = { PDF: "PDF", Word: "WORD", "PDF i Word": "BOTH" }[d.fmt || "PDF"];
+  const fmt = "PDF";
   if (d.mode === "range" && !(d.d_from && d.d_to)) { await info("Za razdoblje upišite datum od i do.", "Izrada dokumenata"); return null; }
   const path = await app.doc("web_haccp.export_all", d.d_from, d.d_to, fmt, d.mode || "all");
   if (!path) return null;
@@ -290,7 +290,6 @@ class Panel {
   }
   printButtons() {
     this.tbtn("🖨 PDF", () => this.print("PDF"), "primary", true);
-    this.tbtn("🖨 Word", () => this.print("WORD"), "ghost", true);
   }
   async print(fmt) {
     const p = await askPeriod(`Ispis: ${K(this.app).DOC_NAMES[this.key]}`);
@@ -326,7 +325,6 @@ class TasksPanel extends Panel {
 
   build() {
     this.tbtn("📦 Izradi sve dokumente", () => exportAll(this.app), "primary");
-    this.tbtn("↻ Osvježi", () => this.refresh());
     this.disBtn = this.tbtn("🔕 Zanemarena", () => this.showDismissed());
     this.strip = h("div", { class: "cards" });
     this.table = new Table([["area", "Područje", 130, "w"], ["text", "Zadatak", 640, "w"]], { onDouble: () => this.goto() });
@@ -1092,7 +1090,7 @@ class HaccpSettingsPanel extends Panel {
     const ce = h("div", { class: "card" },
       h("h3", {}, "Izradi sve dokumente"),
       h("div", { class: "muted", style: { marginBottom: "8px" } },
-        "Sve HACCP evidencije za odabrano razdoblje (PDF i/ili Word) izrađuju se u jednu ZIP datoteku za preuzimanje. " +
+        "Sve HACCP evidencije za odabrano razdoblje (PDF) izrađuju se u jednu ZIP datoteku za preuzimanje. " +
         "ZIP možete spremiti npr. na Google Disk."),
       btn("📦 Izradi sve dokumente", async () => { try { await exportAll(this.app); } catch (e) { this.err(e); } }));
     this.emps = new Table([["name", "Ime i prezime", 180, "w"], ["role", "Funkcija", 170, "w"]], { height: 8, onDouble: () => this.editEmp() });
@@ -1168,7 +1166,7 @@ const SECTIONS = [["tasks", "Pregled i zadaci", TasksPanel, "listc"], [null, "PR
 
 class HaccpPage extends Page {
   static title = "HACCP evidencije";
-  static subtitle = "Zapisi o sigurnosti hrane · svaki se može ispisati kao PDF ili Word dokument";
+  static subtitle = "Zapisi o sigurnosti hrane · svaki se može ispisati kao PDF";
 
   build() {
     this.tb.style.display = "none";

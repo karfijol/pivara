@@ -6,7 +6,7 @@ import * as undo from "./undo.js";
 import { h, btn, toast, info, error, confirm, busy, openFile, dbProxy, Dialog } from "./ui.js";
 import { icon } from "./icons.js";
 
-export const VERSION = "web 2.35";
+export const VERSION = "web 2.36";
 
 // modul (datoteka u js/pages) za svaku stranicu (karticu); skupine i kartice su u auth.GROUPS
 const MOD_OF = {
@@ -105,7 +105,7 @@ class App {
     return this._mods[m];
   }
   loadAllModules() { return Promise.all(MODULES.map((m) => this.loadModule(m))); }
-  // u pozadini, kad je program otvoren: ostale stranice, zatim alati za PDF/Word/Excel (prvi dokument je odmah gotov)
+  // u pozadini, kad je program otvoren: ostale stranice, zatim alati za PDF/Excel (prvi dokument je odmah gotov)
   preload() {
     const idle = window.requestIdleCallback || ((f) => setTimeout(f, 300));
     idle(async () => {
@@ -365,9 +365,27 @@ class App {
   tabsBar(key) {
     const g = auth.GROUP_OF[key];
     const grp = this.visibleGroups().find((x) => x[0] === g);
-    if (!grp || grp[3].length < 2) return null;
-    return h("div", { class: "page-tabs" }, grp[3].map(([k, label]) =>
-      h("a", { href: "#" + k, class: "page-tab" + (k === key ? " active" : ""), onclick: (e) => { e.preventDefault(); this.show(k); } }, label)));
+    if (!grp) return null;
+    const tabs = grp[3];
+    const cur = tabs.find((t) => t[0] === key);
+    const parent = cur && cur[2] ? cur[2] : key;
+    const top = tabs.filter((t) => !t[2]);
+    const sub = tabs.filter((t) => t[0] === parent || t[2] === parent);
+    const subKey = (k) => { try { return localStorage.getItem("sub_" + k) || k; } catch { return k; } };
+    if (cur && sub.length > 1) { try { localStorage.setItem("sub_" + parent, key); } catch { /* */ } }
+    const wrap = h("div", { class: "tabs-wrap" });
+    if (top.length > 1) {
+      wrap.append(h("div", { class: "page-tabs" }, top.map(([k, label]) => {
+        const target = tabs.some((t) => t[2] === k) ? subKey(k) : k;
+        const go = tabs.some((t) => t[0] === target) ? target : k;
+        return h("a", { href: "#" + go, class: "page-tab" + (k === parent ? " active" : ""), onclick: (e) => { e.preventDefault(); this.show(go); } }, label);
+      })));
+    }
+    if (sub.length > 1) {
+      wrap.append(h("div", { class: "sub-tabs" }, sub.map(([k, label, , subLabel]) =>
+        h("a", { href: "#" + k, class: "sub-tab" + (k === key ? " active" : ""), onclick: (e) => { e.preventDefault(); this.show(k); } }, subLabel || label))));
+    }
+    return wrap.childNodes.length ? wrap : null;
   }
   closeMenu() { document.body.classList.remove("menu-open"); }
   applyTheme() {
@@ -458,7 +476,7 @@ class App {
     if (location.hash.slice(1).split("/")[0] !== key) history.replaceState(null, "", "#" + key);
     this.main.innerHTML = "";
     const tb = this.tabsBar(key);
-    if (tb) this.main.append(tb);
+    if (tb) this.main.append(...tb.childNodes);
     this.main.append(p.el);
     this.main.scrollTop = 0;
     try { p.refresh(); } catch (e) { console.error(e); error(e.message); }
@@ -530,7 +548,7 @@ class App {
   }
   toast(t) { toast(t); }
 
-  // Izrada dokumenta u Pythonu (PDF/Word) i ponuda za otvaranje/preuzimanje
+  // Izrada dokumenta u Pythonu (PDF/Excel) i ponuda za otvaranje/preuzimanje
   async doc(name, ...args) {
     try {
       const path = await busy("Izrađujem dokument…", async (set) => {

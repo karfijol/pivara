@@ -1,5 +1,5 @@
 """
-Generator dokumenata za ispis (PDF preko reportlab, Word preko python-docx).
+Generator dokumenata za ispis (PDF preko reportlab, Excel preko openpyxl).
 Dokument se opisuje jednom (klasa Doc s blokovima), a dva renderera ga crtaju u PDF i DOCX.
 
 Blokovi:
@@ -234,219 +234,6 @@ def render_pdf(doc, path):
 
 
 # ================================================================== DOCX
-def render_docx(doc, path):
-    from docx import Document
-    from docx.enum.section import WD_ORIENT
-    from docx.enum.table import WD_TABLE_ALIGNMENT
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.oxml import OxmlElement
-    from docx.oxml.ns import qn
-    from docx.shared import Mm, Pt, RGBColor
-
-    d = Document()
-    stl = d.styles["Normal"]
-    stl.font.name = "Arial"
-    stl.font.size = Pt(9.5)
-    stl.element.rPr.rFonts.set(qn("w:eastAsia"), "Arial")
-    stl.paragraph_format.space_after = Pt(2)
-    sec = d.sections[0]
-    if doc.landscape:
-        sec.orientation = WD_ORIENT.LANDSCAPE
-        sec.page_width, sec.page_height = Mm(297), Mm(210)
-    else:
-        sec.page_width, sec.page_height = Mm(210), Mm(297)
-    for side in ("left_margin", "right_margin", "bottom_margin"):
-        setattr(sec, side, Mm(14))
-    sec.top_margin, sec.header_distance = Mm(12), Mm(8)
-    usable = (297 if doc.landscape else 210) - 28
-    m = doc.meta
-
-    def shade(cell, hexcolor="EFE7D6"):
-        tcPr = cell._tc.get_or_add_tcPr()
-        sh = OxmlElement("w:shd")
-        sh.set(qn("w:val"), "clear")
-        sh.set(qn("w:color"), "auto")
-        sh.set(qn("w:fill"), hexcolor)
-        tcPr.append(sh)
-
-    def field(par, code):
-        r = par.add_run()
-        for tag, attr in (("w:fldChar", "begin"), ("w:instrText", code), ("w:fldChar", "end")):
-            el = OxmlElement(tag)
-            if tag == "w:fldChar":
-                el.set(qn("w:fldCharType"), attr)
-            else:
-                el.set(qn("xml:space"), "preserve")
-                el.text = attr
-            r._r.append(el)
-        return r
-
-    def set_widths(table, widths_mm):
-        table.autofit = False
-        for row in table.rows:
-            for i, c in enumerate(row.cells):
-                if i < len(widths_mm):
-                    c.width = Mm(widths_mm[i])
-
-    def para(container, text="", bold=False, size=None, align=None, after=None):
-        p = container.add_paragraph()
-        lines = str(text if text is not None else "").split("\n")
-        for i, ln in enumerate(lines):
-            run = p.add_run(ln)
-            run.bold = bold
-            if size:
-                run.font.size = Pt(size)
-            if i < len(lines) - 1:
-                run.add_break()
-        if align == "C":
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        elif align == "R":
-            p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        if after is not None:
-            p.paragraph_format.space_after = Pt(after)
-        return p
-
-    def cell_text(cell, text, bold=False, size=8.5, align=None):
-        cell.text = ""
-        p = cell.paragraphs[0]
-        lines = str(text if text is not None else "").split("\n")
-        for i, ln in enumerate(lines):
-            r = p.add_run(ln)
-            r.bold = bold
-            r.font.size = Pt(size)
-            if i < len(lines) - 1:
-                r.add_break()
-        p.paragraph_format.space_after = Pt(0)
-        if align == "R":
-            p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        elif align == "C":
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-    # zaglavlje
-    ht = sec.header.add_table(rows=1, cols=3, width=Mm(usable))
-    ht.style = "Table Grid"
-    ht.alignment = WD_TABLE_ALIGNMENT.CENTER
-    c0, c1, c2 = ht.rows[0].cells
-    c0.text = ""
-    if doc.logo:
-        try:
-            c0.paragraphs[0].add_run().add_picture(doc.logo, height=Mm(13))
-        except Exception:
-            pass
-        p = c0.add_paragraph()
-    else:
-        p = c0.paragraphs[0]
-    r = p.add_run(doc.company)
-    r.bold = True
-    r.font.size = Pt(9)
-    cell_text(c1, "Naziv dokumenta:", size=8.5)
-    p = c1.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = p.add_run(m["title"])
-    r.bold = True
-    r.font.size = Pt(11)
-    cell_text(c2, f"Šifra: {m['code']}\nVerzija: {m['version']}    Datum: {m['vdate']}", size=8.5)
-    p = c2.add_paragraph()
-    p.add_run("Stranica: ").font.size = Pt(8.5)
-    field(p, "PAGE").font.size = Pt(8.5)
-    p.add_run(" od ").font.size = Pt(8.5)
-    field(p, "NUMPAGES").font.size = Pt(8.5)
-    set_widths(ht, [usable * 0.24, usable * 0.48, usable * 0.28])
-    sec.header.paragraphs[0].text = ""
-    first = d.paragraphs[0] if d.paragraphs else d.add_paragraph()
-    first.paragraph_format.space_after = Pt(4)
-
-    for b in doc.blocks:
-        kind = b[0]
-        if kind == "title":
-            para(d, b[1], bold=True, size=13, align="C", after=6)
-        elif kind == "h":
-            p = para(d, b[1], bold=True, size=10.5)
-            p.paragraph_format.space_before = Pt(7)
-        elif kind == "p":
-            para(d, b[1])
-        elif kind == "pb":
-            para(d, b[1], bold=True)
-        elif kind == "note":
-            p = para(d, b[1], size=8)
-            for r in p.runs:
-                r.font.color.rgb = RGBColor(0x44, 0x44, 0x44)
-        elif kind == "space":
-            para(d, "", size=4)
-        elif kind == "meta":
-            p = d.add_paragraph()
-            for i, (k, v) in enumerate(b[1]):
-                p.add_run(("     " if i else "") + f"{k}: ")
-                p.add_run(str(v or "")).bold = True
-        elif kind == "kv":
-            t = d.add_table(rows=0, cols=2)
-            for k, v in b[1]:
-                row = t.add_row().cells
-                cell_text(row[0], f"{k}:", bold=True, size=9.5)
-                cell_text(row[1], v, size=9.5)
-            set_widths(t, [usable * 0.30, usable * 0.70])
-        elif kind == "checks":
-            items, inline = b[1], (b[2] if len(b) > 2 else False)
-            if inline == 2:
-                half = (len(items) + 1) // 2
-                t = d.add_table(rows=half, cols=2)
-                for i, (txt, on) in enumerate(items):
-                    cell = t.cell(i % half, i // half)
-                    cell.text = ""
-                    r = cell.paragraphs[0].add_run(CHECK_ON if on else CHECK_OFF)
-                    r.font.name = "Segoe UI Symbol"
-                    cell.paragraphs[0].add_run(" " + txt)
-                set_widths(t, [usable / 2] * 2)
-            elif inline:
-                p = d.add_paragraph()
-                for i, (t, on) in enumerate(items):
-                    r = p.add_run(("     " if i else "") + (CHECK_ON if on else CHECK_OFF))
-                    r.font.name = "Segoe UI Symbol"
-                    p.add_run(" " + t)
-            else:
-                for t, on in items:
-                    p = d.add_paragraph()
-                    r = p.add_run(CHECK_ON if on else CHECK_OFF)
-                    r.font.name = "Segoe UI Symbol"
-                    p.add_run(" " + t)
-                    p.paragraph_format.space_after = Pt(0)
-        elif kind == "table":
-            head, rows, widths = b[1], b[2], b[3]
-            opt = b[4] if len(b) > 4 else {}
-            size = opt.get("size", 8.5)
-            right = opt.get("align", {})
-            t = d.add_table(rows=1 + len(rows), cols=len(head))
-            t.style = "Table Grid"
-            for i, h in enumerate(head):
-                cell_text(t.rows[0].cells[i], h, bold=True, size=size)
-                shade(t.rows[0].cells[i])
-            trPr = t.rows[0]._tr.get_or_add_trPr()
-            th = OxmlElement("w:tblHeader")
-            th.set(qn("w:val"), "true")
-            trPr.append(th)
-            for ri, r in enumerate(rows, 1):
-                for ci, c in enumerate(r):
-                    cell_text(t.rows[ri].cells[ci], c, size=size, align=right.get(ci))
-            for r0, r1 in opt.get("merge", []):
-                if r1 > r0:
-                    for c in opt.get("merge_cols", []):
-                        a = t.cell(r0 + 1, c)
-                        keep = a.text
-                        merged = a.merge(t.cell(r1 + 1, c))
-                        cell_text(merged, keep, size=size, align=right.get(c))
-            set_widths(t, [usable * w for w in widths])
-        elif kind == "sign":
-            t = d.add_table(rows=1, cols=len(b[1]))
-            for i, (k, v) in enumerate(b[1]):
-                cell_text(t.rows[0].cells[i], f"{k}:\n\n{v or ''}\n_____________________", size=9.5)
-            para(d, "")
-    d.core_properties.title = m["title"]
-    d.core_properties.author = doc.company
-    d.save(path)
-    return path
-
-
-# ================================================================== Excel (tablični dokumenti, npr. evidencija kuhanja)
 def _xl_num(v):
     """'25,00' / '1.234,5' -> broj; ostalo ostaje tekst."""
     import re
@@ -548,7 +335,7 @@ def render(doc, folder, fmt="PDF"):
     safe = "".join(ch if ch.isalnum() or ch in "-_ .–(),#" else "_" for ch in doc.filename).strip(" .")
     safe = safe[:150].rstrip(" .")
     F = fmt.upper()
-    ext = ".xlsx" if F in ("EXCEL", "XLSX", "XLS") else ".docx" if F.startswith("W") or F == "DOCX" else ".pdf"
+    ext = ".xlsx" if F in ("EXCEL", "XLSX", "XLS") else ".pdf"   # Word je izbačen (2.36) – stari pozivi dobivaju PDF
     path = os.path.join(folder, safe + ext)
     n = 2
     while os.path.exists(path):
@@ -560,7 +347,7 @@ def render(doc, folder, fmt="PDF"):
             n += 1
     if ext == ".xlsx":
         return render_xlsx(doc, path)
-    return render_docx(doc, path) if ext == ".docx" else render_pdf(doc, path)
+    return render_pdf(doc, path)
 
 
 if __name__ == "__main__":  # brzi test

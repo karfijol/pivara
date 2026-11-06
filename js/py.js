@@ -4,8 +4,8 @@ import { loadPyodide } from "../pyodide/pyodide_esm.js";
 const PY_FILES = ["db.py", "haccp_db.py", "extras_db.py", "docgen.py", "haccp_docs.py", "mipi.py", "importer.py",
   "webutil.py", "labels.py", "webapi.py", "web_main.py", "web_extras.py", "web_haccp.py", "web_kegs.py", "web_costs.py", "web_offers.py", "web_more.py", "web_invoices.py", "web_reminders.py", "web_stockcheck.py"];
 const WHEELS = ["charset_normalizer-3.4.2-py3-none-any.whl", "reportlab-4.4.4-py3-none-any.whl",
-  "python_docx-1.2.0-py3-none-any.whl", "et_xmlfile-2.0.0-py3-none-any.whl", "openpyxl-3.1.5-py2.py3-none-any.whl", "pdf417gen-0.8.1-py3-none-any.whl", "pypdf-5.4.0-py3-none-any.whl"];
-const BUNDLE = "py/app.zip?v=1df1e4e8";
+"et_xmlfile-2.0.0-py3-none-any.whl", "openpyxl-3.1.5-py2.py3-none-any.whl", "pdf417gen-0.8.1-py3-none-any.whl", "pypdf-5.4.0-py3-none-any.whl"];
+const BUNDLE = "py/app.zip?v=eedc159b";
 export const DB_PATH = "/data/skladiste.db";
 export const DATA_DIR = "/home/pyodide/Documents/PivovaraSkladiste";
 
@@ -62,13 +62,13 @@ export async function init(progress = () => {}) {
   return pyo;
 }
 
-// Paketi za PDF, Word i Excel (reportlab, python-docx, openpyxl) učitavaju se tek kad zatrebaju.
+// Paketi za PDF i Excel (reportlab, openpyxl) učitavaju se tek kad zatrebaju.
 export function ensureDocs(progress = () => {}) {
   if (docsReady) return docsReady;
   docsReady = (async () => {
     const base = new URL("../", import.meta.url).href;
-    progress("Učitavam alate za PDF i Word (samo prvi put)…");
-    await pyo.loadPackage(["micropip", "lxml", "pillow", "typing-extensions"], { messageCallback: () => {} });
+    progress("Učitavam alate za PDF i Excel (samo prvi put)…");
+    await pyo.loadPackage(["micropip", "pillow", "typing-extensions"], { messageCallback: () => {} });
     const mp = pyo.pyimport("micropip");
     for (const w of WHEELS) await mp.install.callKwargs(base + "pyodide/" + w, { deps: false });
     const fdir = "/usr/share/fonts/truetype/dejavu/";
@@ -126,7 +126,7 @@ export function callKw(name, args = [], kwargs = {}) {
   return out.result;
 }
 
-// Za ispise: učita PDF/Word alate pa pozove funkciju koja vraća putanju datoteke
+// Za ispise: učita PDF/Excel alate pa pozove funkciju koja vraća putanju datoteke
 export async function callDoc(name, ...args) {
   await ensureDocs();
   return call(name, ...args);

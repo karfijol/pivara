@@ -13,8 +13,9 @@ export const GROUPS = [
   ["dash", "dash", "Nadzorna ploča", [["dash", "Nadzorna ploča"]]],
   ["kegovi", "kegs", "Kegovi", [["kegwork", "Rad s kegovima (QR)"], ["kegs", "Popis kegova"], ["returns", "Kegovi za povrat"]]],
   ["proizvodnja", "batches", "Proizvodnja", [["batches", "Šarže i dan kuhanja"], ["planner", "Plan"], ["recipes", "Recepture"]]],
-  ["skladiste", "items", "Skladište", [["items", "Sirovine"], ["invoices", "Računi"], ["lots", "LOT-ovi"], ["chem", "Kemikalije"], ["reorder", "Što naručiti"],
-    ["po", "Narudžbenice"], ["suppliers", "Dobavljači"]]],
+  // kartica s trećim elementom = podkartica (prikazuje se kao preklopnik unutar nadređene kartice; 4. element = naziv u preklopniku)
+  ["skladiste", "items", "Skladište", [["items", "Sirovine", null, "Sirovine"], ["chem", "Kemikalije", "items"], ["invoices", "Računi"],
+    ["lots", "LOT-ovi"], ["reorder", "Nabava", null, "Što naručiti"], ["po", "Narudžbenice", "reorder"], ["suppliers", "Dobavljači", "reorder"]]],
   ["prodaja", "offers", "Prodaja", [["offers", "Ponude"], ["sales", "Otpremnice i kupci"], ["pricelist", "Cjenik"]]],
   ["izvjesca", "year", "Izvješća", [["costs", "Troškovi · knjigovođa"], ["year", "Godišnji pregled"], ["excise", "Trošarine"],
     ["recall", "Sljedivost"]]],

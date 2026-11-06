@@ -641,7 +641,7 @@ class SettingsPage extends Page {
       report.map(([t, x], n) => ({ id: n, type: t, text: x })), {
         info: `Uvezeno: ${s.items} artikala, ${s.lots} primki (LOT-ova), ${s.batches} šarži, ${s.packaging} pakiranja, ` +
           `${s.ccp} CCP zapisa, ${s.mill} kontrola mlina, ${s.maint} zapisa održavanja.\n\n` +
-          "Napomene ispod provjerite; zalihe uskladite inventurom (LOT-ovi → Korekcija količine).", width: 960 });
+          "Napomene ispod provjerite; zalihe uskladite inventurom (LOT-ovi → Inventura ili Uredi LOT).", width: 960 });
   }
 
   async reconnect() {

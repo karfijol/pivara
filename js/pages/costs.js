@@ -1,4 +1,4 @@
-// Troškovi sirovina po kuhanju i mjesečni izvještaj za knjigovođu (PDF / Word / Excel).
+// Troškovi sirovina po kuhanju i mjesečni izvještaj za knjigovođu (PDF / Excel).
 // Cijene se uzimaju s LOT-ova sirovina (cijena s računa dobavljača); mogu se uvesti iz Excela "Matematika piva".
 import { h, btn, Page, Table, Dialog, info, error, toast, busy, fq, money, d2ui } from "../ui.js";
 
@@ -58,7 +58,6 @@ class CostsPage extends Page {
     this.to.addEventListener("change", () => this.refresh());
     for (const el of [this.month, this.from, this.to]) this.tb.insertBefore(el, this.tbRight);
     this.tbtn("🖨 PDF", () => this.print("PDF"), "primary");
-    this.tbtn("📝 Word", () => this.print("WORD"), "ghost");
     this.tbtn("📊 Excel", () => this.excel(), "ghost");
     this.tbtn("📥 Uvezi cijene iz Excela…", () => this.importPrices(), "ghost", true);
 

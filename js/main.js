@@ -6,7 +6,7 @@ import * as undo from "./undo.js";
 import { h, btn, toast, info, error, confirm, busy, openFile, dbProxy, Dialog } from "./ui.js";
 import { icon } from "./icons.js";
 
-export const VERSION = "web 2.33";
+export const VERSION = "web 2.35";
 
 // modul (datoteka u js/pages) za svaku stranicu (karticu); skupine i kartice su u auth.GROUPS
 const MOD_OF = {

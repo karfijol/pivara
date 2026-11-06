@@ -11,7 +11,7 @@ import datetime as dt
 EPS = 1e-6
 TOL = 0.0005
 MT_INV = "INVENTURA"                       # usklađenje stanja LOT-a nakon inventure
-IGNORE = {"PRIMKA", "KUHANJE", "POVRAT", "PROMJENA LOT", "INVENTURA", "INVENTURA FIFO"}
+IGNORE = {"PRIMKA", "KOREKCIJA PRIMKE", "KUHANJE", "POVRAT", "PROMJENA LOT", "INVENTURA", "INVENTURA FIFO"}
 
 
 def r4(x):

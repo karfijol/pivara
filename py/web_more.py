@@ -874,41 +874,130 @@ def delete_lots(db, lot_ids):
 
 
 # ------------------------------------------------------------------ uređivanje LOT-a (broj, datum primitka, rok)
+def lot_edit_data(db, lot_id):
+    """Podaci za dijalog „Uredi LOT”: svi podaci LOT-a, koliko je utrošeno i popisi za izbor."""
+    ensure(db)
+    l = db.one("SELECT * FROM v_lots WHERE id=?", (lot_id,))
+    if not l:
+        raise ValueError("LOT ne postoji.")
+    used_batches = [r["batch_no"] for r in db.q("SELECT DISTINCT b.batch_no FROM batch_consumption c JOIN batches b ON b.id=c.batch_id "
+                                                 "WHERE c.lot_id=? ORDER BY b.batch_no", (lot_id,))]
+    return {"lot": l, "used": round((l["qty_received"] or 0) - (l["qty_left"] or 0), 4), "batches": used_batches,
+            "items": [[f"{i['name']} ({i['unit']})", i["id"]] for i in db.q("SELECT id, name, unit FROM items ORDER BY name")],
+            "suppliers": [[x["name"], x["id"]] for x in db.suppliers()]}
+
+
+def _h(x):
+    return f"{round(float(x), 4):g}".replace(".", ",")
+
+
 def edit_lot(db, lot_id, data):
-    """Mijenja broj LOT-a, datum primitka i rok. Sljedivost i HACCP vežu se na LOT (id), pa novi broj vrijedi svuda;
-    promjena se bilježi na kartici artikla (kretanje „PROMJENA LOT” s količinom 0)."""
+    """Mijenja sve podatke LOT-a: artikl (samo ako LOT nije korišten u kuhanju), broj LOT-a, datume, količine,
+    dobavljača, račun, cijenu, alfa kiseline i napomenu. Sljedivost i HACCP vežu se na LOT (id), pa promjene vrijede svuda.
+    Promjene se bilježe na kartici artikla; promjena količina kao kretanje, ostalo kao „PROMJENA LOT” (količina 0)."""
+    ensure(db)
+    try:
+        import web_costs
+        web_costs.ensure(db)
+    except Exception:  # noqa: BLE001
+        pass
     l = db.one("SELECT * FROM lots WHERE id=?", (lot_id,))
     if not l:
         raise ValueError("LOT ne postoji.")
-    new_no = (data.get("lot_no") or "").strip()
+    g = lambda k, d=None: data[k] if k in data else d  # noqa: E731
+
+    def num(v, name, allow_none=False):
+        if v in (None, ""):
+            if allow_none:
+                return None
+            raise ValueError(f"Upišite {name}.")
+        try:
+            return round(float(str(v).replace(",", ".")), 4)
+        except ValueError:
+            raise ValueError(f"{name[:1].upper() + name[1:]} mora biti broj.") from None
+
+    new_no = (g("lot_no", l["lot_no"]) or "").strip()
     if not new_no:
         raise ValueError("Upišite broj LOT-a.")
-    rec = (data.get("received_date") or l["received_date"] or "")[:10]
+    item_id = int(g("item_id", l["item_id"]) or l["item_id"])
+    used_in_batches = db.val("SELECT COUNT(*) FROM batch_consumption WHERE lot_id=?", (lot_id,)) or 0
+    if item_id != l["item_id"] and used_in_batches:
+        raise ValueError("Artikl se ne može promijeniti jer je LOT već korišten u kuhanju. Obrišite LOT i zaprimite ga ispravno, "
+                         "pa pokrenite Inventuru.")
+    rec = (g("received_date", l["received_date"]) or "")[:10]
     if not rec:
         raise ValueError("Odaberite datum primitka.")
-    exp = (data.get("expiry_date") or "")[:10] or None
+    exp = (g("expiry_date", l["expiry_date"]) or "")[:10] or None
     if exp and exp < rec:
         raise ValueError("Rok trajanja ne može biti prije datuma primitka.")
-    if db.val("SELECT COUNT(*) FROM lots WHERE item_id=? AND lot_no=? AND id<>?", (l["item_id"], new_no, lot_id)):
+    opened = (g("opened_date", l.get("opened_date")) or "")[:10] or None
+    q_rec = num(g("qty_received", l["qty_received"]), "primljenu količinu")
+    q_left = num(g("qty_left", l["qty_left"]), "preostalu količinu")
+    if q_rec <= 0:
+        raise ValueError("Primljena količina mora biti veća od 0.")
+    if q_left < 0:
+        raise ValueError("Preostala količina ne može biti negativna.")
+    if q_left > q_rec + 1e-9:
+        raise ValueError("Preostala količina ne može biti veća od primljene.")
+    price = num(g("unit_price", l["unit_price"]), "cijenu", True) or 0
+    alpha = num(g("alpha", l.get("alpha")), "alfa kiseline", True) or None
+    sup = g("supplier_id", l["supplier_id"])
+    sup = int(sup) if sup not in (None, "") else None
+    inv = (g("invoice_no", l.get("invoice_no")) or "").strip() or None
+    note = (g("note", l.get("note")) or "").strip() or None
+    if db.val("SELECT COUNT(*) FROM lots WHERE item_id=? AND lot_no=? AND id<>?", (item_id, new_no, lot_id)):
         raise ValueError(f"Ovaj artikl već ima LOT „{new_no}”.")
+
+    def name_of(table, id_):
+        return (db.val(f"SELECT name FROM {table} WHERE id=?", (id_,)) or "-") if id_ else "-"
     ch = []
+    if item_id != l["item_id"]:
+        ch.append(f"artikl {name_of('items', l['item_id'])} → {name_of('items', item_id)}")
     if new_no != l["lot_no"]:
         ch.append(f"LOT {l['lot_no']} → {new_no}")
     if rec != (l["received_date"] or "")[:10]:
         ch.append(f"primljeno {l['received_date'] or '-'} → {rec}")
-    if (exp or None) != ((l["expiry_date"] or "")[:10] or None):
+    if exp != ((l["expiry_date"] or "")[:10] or None):
         ch.append(f"rok {l['expiry_date'] or '-'} → {exp or '-'}")
+    if opened != ((l.get("opened_date") or "")[:10] or None):
+        ch.append(f"otvoreno {l.get('opened_date') or '-'} → {opened or '-'}")
+    if abs(q_rec - l["qty_received"]) > 1e-9:
+        ch.append(f"primljena količina {_h(l['qty_received'])} → {_h(q_rec)}")
+    if abs(q_left - l["qty_left"]) > 1e-9:
+        ch.append(f"preostalo {_h(l['qty_left'])} → {_h(q_left)}")
+    if sup != l["supplier_id"]:
+        ch.append(f"dobavljač {name_of('suppliers', l['supplier_id'])} → {name_of('suppliers', sup)}")
+    if inv != (l.get("invoice_no") or None):
+        ch.append(f"račun {l.get('invoice_no') or '-'} → {inv or '-'}")
+    if abs((price or 0) - (l["unit_price"] or 0)) > 1e-9:
+        ch.append(f"cijena {_h(l['unit_price'] or 0)} → {_h(price)}")
+    if (alpha or None) != (l.get("alpha") or None):
+        ch.append(f"alfa {_h(l.get('alpha')) if l.get('alpha') else '-'} → {_h(alpha) if alpha else '-'}")
+    if note != (l.get("note") or None):
+        ch.append("napomena")
     if not ch:
-        return {"changed": 0}
+        return {"changed": 0, "what": []}
     ts = __import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M")
+    d_rec = round(q_rec - l["qty_received"], 4)
+    d_left = round(q_left - (l["qty_left"] + d_rec), 4)   # promjena preostalog povrh promjene primljenog
     with db.con:
-        db.con.execute("UPDATE lots SET lot_no=?, received_date=?, expiry_date=? WHERE id=?", (new_no, rec, exp, lot_id))
+        db.con.execute("""UPDATE lots SET item_id=?, lot_no=?, received_date=?, expiry_date=?, opened_date=?, qty_received=?,
+                          qty_left=?, supplier_id=?, invoice_no=?, unit_price=?, alpha=?, note=? WHERE id=?""",
+                       (item_id, new_no, rec, exp, opened, q_rec, q_left, sup, inv, price, alpha, note, lot_id))
+        if item_id != l["item_id"]:
+            db.con.execute("UPDATE movements SET item_id=? WHERE lot_id=?", (item_id, lot_id))
         if new_no != l["lot_no"]:
             db.con.execute("UPDATE movements SET ref=? WHERE lot_id=? AND ref=?", (new_no, lot_id, l["lot_no"]))
             try:
                 db.con.execute("UPDATE receipts SET lot_no=? WHERE lot_id=?", (new_no, lot_id))
             except Exception:  # noqa: BLE001
                 pass
+        if abs(d_rec) > 1e-9:
+            db.con.execute("INSERT INTO movements(ts,item_id,lot_id,qty,type,ref,note) VALUES(?,?,?,?,?,?,?)",
+                           (ts, item_id, lot_id, d_rec, "KOREKCIJA PRIMKE", new_no, f"primljeno {_h(l['qty_received'])} → {_h(q_rec)}"))
+        if abs(d_left) > 1e-9:
+            db.con.execute("INSERT INTO movements(ts,item_id,lot_id,qty,type,ref,note) VALUES(?,?,?,?,?,?,?)",
+                           (ts, item_id, lot_id, d_left, "KOREKCIJA", new_no, "Uredi LOT – preostala količina"))
         db.con.execute("INSERT INTO movements(ts,item_id,lot_id,qty,type,ref,note) VALUES(?,?,?,?,?,?,?)",
-                       (ts, l["item_id"], lot_id, 0, "PROMJENA LOT", new_no, "; ".join(ch)))
+                       (ts, item_id, lot_id, 0, "PROMJENA LOT", new_no, "; ".join(ch)))
     return {"changed": len(ch), "what": ch}

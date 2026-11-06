@@ -502,7 +502,7 @@ class ConsumptionDialog extends Dialog {
 
 class BrewPanel extends Panel {
   static title = "Evidencija kuhanja i utroška sirovina";
-  static info = "Utrošak se puni automatski pri kuhanju (FIFO, s LOT-ovima). Ovdje upisujete volumen sladovine, OG, pH i tko je kuhao.";
+  static info = "Utrošak se puni automatski pri kuhanju (FIFO, s LOT-ovima). Ovdje upisujete volumen sladovine, OG, pH i tko je kuhao. „Proizvedeno (L)” preuzima se iz pakiranja šarže piva.";
   static key = "brew";
 
   build() {
@@ -513,7 +513,7 @@ class BrewPanel extends Panel {
     this.tbtn("📊 Excel", () => this.print("EXCEL"), "ghost", true);
     this.table = new Table([
       ["lot", "LOT piva", 120, "w"], ["date", "Datum kuhanja", 100, "center"], ["recipe", "Recept / stil", 160, "w"],
-      ["vol", "Volumen sladovine (L)", 130, "e"], ["og", "OG (g/cm³)", 85, "e"], ["ph", "pH", 55, "e"],
+      ["vol", "Volumen sladovine (L)", 130, "e"], ["prod", "Proizvedeno (L)", 110, "e"], ["og", "OG (g/cm³)", 85, "e"], ["ph", "pH", 55, "e"],
       ["brewer", "Kuhao", 130, "w"], ["items", "Sirovina", 70, "center"], ["ccp", "CCP zapisa", 85, "center"]],
     { onDouble: () => this.consumption() });
     this.body.append(this.table.el);
@@ -526,7 +526,7 @@ class BrewPanel extends Panel {
       return {
         id: b.id, lot: b.batch_no, date: d2ui(b.brew_date),
         recipe: `${b.recipe || ""}` + (b.style ? ` / ${b.style}` : ""),
-        vol: fq(b.wort_l || b.volume_l, 1), og: sg(b.og_sg), ph: b.ph ? fq(b.ph, 2) : "", brewer: b.brewer || "",
+        vol: fq(b.wort_l || b.volume_l, 1), prod: ((p) => p ? fq(p, 1) : "")(this.db.packaged_litres(b.id)), og: sg(b.og_sg), ph: b.ph ? fq(b.ph, 2) : "", brewer: b.brewer || "",
         items: nItems, ccp: nCcp || "", _tag: !nCcp || !b.brewer || !b.og_sg ? "warn" : "",
       };
     }));

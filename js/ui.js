@@ -98,7 +98,7 @@ const ICON_RULES = [
   [/prijavljeno|plaćeno|dodano/, "checkc"], [/servis/, "wrench"], [/primka/, "pkgin"], [/izdavanje/, "pkgout"],
   [/^otpis|otpiši/, "minusc"], [/korekcija/, "sliders"], [/kartica artikla/, "card2"], [/sljedivost/, "route"],
   [/^storno/, "undo"], [/^spremi|^✔ spremi/, "save"], [/hmelj/, "leaf"], [/sigurnosni list/, "doc"],
-  [/označi otvoreno/, "drops"], [/^(skeniraj|scan)/, "scan"], [/^zapisnik/, "clipcheck"]];
+  [/označi otvoreno/, "drops"], [/^(skeniraj|scan)/, "scan"], [/^zapisnik/, "clipcheck"], [/provjera zaliha|inventur/, "listc"]];
 const LEAD = /^[^\p{L}\p{N}"„(]+/u;
 export function splitLabel(text) {
   if (typeof text !== "string") return { label: text, ic: null, had: false };

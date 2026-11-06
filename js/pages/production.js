@@ -77,64 +77,89 @@ const dayDiff = (a, b) => Math.round((new Date(a + "T12:00:00") - new Date(b + "
 const nowHM = () => { const d = new Date(); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
 
 // ---------------------------------------------------------------- LinesDialog (ui.py) – zaglavlje + stavke
+const dec = (x) => String(+(+x).toFixed(6)).replace(".", ",");
 export class LinesDialog extends Dialog {
+  // stavke se uređuju izravno u retku: artikl, količina (i cijena), ✕ za uklanjanje
   constructor(title, headerFields, headerInitial, opts, lines, { withPrice = false, qtyLabel = "Količina", width = 860 } = {}) {
     super(title, { width });
     this.itemOpts = opts; // [[label, item_id, unit, price]]
     this.withPrice = withPrice;
+    this.qtyLabel = qtyLabel;
     this.form = new Form(headerFields, headerInitial || {}, headerFields.length > 6 ? 3 : 2);
-    this.body.append(this.form.el, h("div", { class: "sec", style: { marginTop: "10px" } }, "Stavke"));
-    this.cb = h("select", { style: { flex: "1 1 260px", minWidth: "200px" } }, h("option", { value: "" }, ""),
-      opts.map((o, i) => h("option", { value: String(i) }, o[0])));
-    this.qty = h("input", { placeholder: qtyLabel, inputmode: "decimal", style: { width: "110px" } });
-    this.price = withPrice ? h("input", { placeholder: "Cijena €/jed.", inputmode: "decimal", style: { width: "110px" } }) : null;
-    this.cb.addEventListener("change", () => {
-      const o = this.itemOpts[+this.cb.value];
-      if (this.price && o) this.price.value = fin(o[3] || 0);
-      this.qty.focus();
-    });
-    this.qty.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); this.add(); } });
-    const add = h("div", { class: "card row gap", style: { padding: "8px", gap: "8px", margin: "4px 0 6px" } },
-      this.cb, this.qty, this.price, btn("+ Dodaj", () => this.add()),
-      h("span", { style: { flex: "1" } }), btn("Ukloni odabrano", () => this.remove(), "ghost"));
-    this.body.append(add);
-    let cols = [["name", "Artikl", 320, "w"], ["qty", qtyLabel, 110, "e"], ["unit", "Jed.", 60, "center"]];
-    if (withPrice) cols = cols.concat([["price", "Cijena", 100, "e"], ["total", "Iznos", 110, "e"]]);
-    this.table = T(cols, { height: 8 });
-    this.body.append(this.table.el);
-    this.lines = (lines || []).map((ln) => ({ ...ln }));
-    this.refreshLines();
+    this.body.append(this.form.el, h("div", { class: "sec", style: { marginTop: "10px" } }, "Stavke"),
+      h("div", { class: "muted", style: { fontSize: "12.5px", margin: "-2px 0 6px" } },
+        "Svaku stavku možete promijeniti izravno u retku (artikl i količinu); ✕ uklanja stavku."));
+    this.list = h("div", { class: "ln-ed" });
+    this.sum = h("div", { class: "muted", style: { fontSize: "12.5px", margin: "4px 0" } });
+    this.body.append(this.list, h("div", { class: "row gap", style: { marginTop: "6px", alignItems: "center" } },
+      btn("＋ Dodaj stavku", () => this.addRow()), this.sum));
+    this.lines = (lines || []).map((ln) => ({ item_id: ln.item_id, qty: ln.qty, unit_price: ln.unit_price || 0, name: ln.name, unit: ln.unit,
+      _q: ln.qty != null ? dec(ln.qty) : "", _p: ln.unit_price != null ? dec(ln.unit_price) : "" }));
+    this.render();
     this.buttons("Spremi", () => this.ok());
   }
-  refreshLines() {
-    const units = new Map(this.itemOpts.map((o) => [o[1], [o[0], o[2]]]));
-    this.table.setRows(this.lines.map((ln, n) => {
-      const [name, unit] = units.get(ln.item_id) || [ln.name || "?", ln.unit || ""];
-      const r = { id: n, name: name.includes(" (") ? name.slice(0, name.lastIndexOf(" (")) : name, qty: fq(ln.qty), unit };
-      if (this.withPrice) { r.price = fq(ln.unit_price || 0, 4); r.total = money(ln.qty * (ln.unit_price || 0)); }
-      return r;
-    }));
+  optOf(itemId) { return this.itemOpts.find((o) => o[1] === itemId); }
+  render() {
+    this.list.innerHTML = "";
+    const head = [h("span", {}, "Artikl"), h("span", {}, this.qtyLabel), h("span", {}, "Jed.")];
+    if (this.withPrice) head.push(h("span", {}, "Cijena €/jed."));
+    head.push(h("span", {}));
+    this.list.append(h("div", { class: "ln-r ln-h" + (this.withPrice ? " wp" : "") }, ...head));
+    this.lines.forEach((ln, i) => {
+      const known = this.optOf(ln.item_id);
+      const sel = h("select", {}, h("option", { value: "" }, "– odaberite artikl –"),
+        !known && ln.item_id != null ? h("option", { value: "x" }, ln.name || "?") : null,
+        this.itemOpts.map((o, k) => h("option", { value: String(k) }, o[0])));
+      sel.value = known ? String(this.itemOpts.indexOf(known)) : (ln.item_id != null ? "x" : "");
+      const unit = h("span", { class: "muted" }, known ? known[2] || "" : ln.unit || "");
+      sel.addEventListener("change", () => {
+        if (sel.value === "x") return;
+        const o = sel.value === "" ? null : this.itemOpts[+sel.value];
+        ln.item_id = o ? o[1] : null; ln.unit = o ? o[2] : ""; unit.textContent = ln.unit || "";
+        if (o && this.withPrice && !ln._p) { ln._p = dec(o[3] || 0); if (pr) pr.value = ln._p; }
+        this.upd();
+        q.focus();
+      });
+      const q = h("input", { value: ln._q, inputmode: "decimal", style: { textAlign: "right" } });
+      q.addEventListener("input", () => { ln._q = q.value; this.upd(); });
+      q.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); if (i === this.lines.length - 1) this.addRow(); } });
+      const pr = this.withPrice ? h("input", { value: ln._p, inputmode: "decimal", style: { textAlign: "right" } }) : null;
+      if (pr) pr.addEventListener("input", () => { ln._p = pr.value; this.upd(); });
+      const del = btn("✕", () => { this.lines.splice(i, 1); this.render(); }, "ghost");
+      del.title = "Ukloni stavku";
+      this.list.append(h("div", { class: "ln-r" + (this.withPrice ? " wp" : "") }, sel, q, unit, pr, del));
+    });
+    if (!this.lines.length) this.list.append(h("div", { class: "muted", style: { padding: "6px 2px" } }, "Još nema stavki – kliknite „Dodaj stavku”."));
+    this.upd();
   }
-  add() {
-    const opt = this.cb.value === "" ? null : this.itemOpts[+this.cb.value];
-    let q, p;
-    try { q = num(this.qty.value); p = this.price ? num(this.price.value) : 0; } catch { return this.err("Količina i cijena moraju biti brojevi."); }
-    if (!opt || q <= 0) return this.err("Odaberite artikl i upišite količinu > 0.");
-    this.err("");
-    const ex = this.lines.find((ln) => ln.item_id === opt[1]);
-    if (ex) { ex.qty = q; ex.unit_price = p; } else this.lines.push({ item_id: opt[1], qty: q, unit_price: p });
-    this.qty.value = ""; this.cb.value = "";
-    this.refreshLines();
+  addRow() {
+    this.lines.push({ item_id: null, qty: 0, unit_price: 0, _q: "", _p: "" });
+    this.render();
+    const sels = this.list.querySelectorAll(".ln-r:not(.ln-h) select");
+    sels[sels.length - 1]?.focus();
   }
-  remove() {
-    const s = this.table.selectedId();
-    if (s !== null) { this.lines.splice(+s, 1); this.refreshLines(); }
+  upd() {
+    const n = this.lines.filter((l) => l.item_id != null).length;
+    let tot = 0;
+    if (this.withPrice) for (const l of this.lines) { try { tot += num(l._q || 0) * num(l._p || 0); } catch { /* */ } }
+    this.sum.textContent = `${n} stavki` + (this.withPrice ? ` · ukupno ${money(tot)}` : "");
   }
   ok() {
     let head;
     try { head = this.form.get(); } catch (e) { return this.err(e.message); }
-    if (!this.lines.length) return this.err("Dodajte barem jednu stavku.");
-    this.close([head, this.lines]);
+    const out = [], seen = new Set();
+    for (const [i, l] of this.lines.entries()) {
+      if (l.item_id == null && !String(l._q || "").trim()) continue; // prazan redak
+      if (l.item_id == null) return this.err(`Redak ${i + 1}: odaberite artikl.`);
+      let q, p = 0;
+      try { q = num(l._q); if (this.withPrice) p = num(l._p || 0); } catch { return this.err(`Redak ${i + 1}: količina i cijena moraju biti brojevi.`); }
+      if (!(q > 0)) return this.err(`Redak ${i + 1}: upišite količinu veću od 0.`);
+      if (seen.has(l.item_id)) return this.err(`Artikl „${this.optOf(l.item_id)?.[0] || l.name}” upisan je dvaput – spojite ga u jedan redak.`);
+      seen.add(l.item_id);
+      out.push({ item_id: l.item_id, qty: q, unit_price: p });
+    }
+    if (!out.length) return this.err("Dodajte barem jednu stavku.");
+    this.close([head, out]);
   }
 }
 

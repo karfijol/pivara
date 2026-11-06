@@ -554,6 +554,71 @@ function tbSwitch(page, text, onChange) {
   return cb;
 }
 
+// ======================================================================== Provjera zaliha (FIFO inventura)
+// iz primki, kuhanja (evidencija ili receptura) i ostalih izlaza izračuna stanje svakog LOT-a; nakon potvrde upisuje „Preostalo”
+async function stockCheck(app) {
+  const py = app.py;
+  const d = new Dialog("Provjera zaliha (FIFO)", { width: 1040 });
+  const mode = h("select", {}, h("option", { value: "evidence" }, "po evidenciji kuhanja (stvarno skinuto; šarže bez evidencije po recepturi)"),
+    h("option", { value: "recipe" }, "po recepturama (količina iz recepta × volumen šarže)"));
+  const all = h("input", { type: "checkbox" });
+  const head = h("div", { class: "msg", style: { fontSize: "13px" } });
+  const t = new Table([["name", "Artikl", 190, "w"], ["unit", "Jed.", 45, "center"], ["received", "Primljeno", 85, "e"],
+    ["brew", "Kuhanje", 85, "e"], ["recipe", "Po recepturi", 90, "e"], ["other", "Otpis / korekcije", 110, "e"],
+    ["current", "Trenutno", 85, "e"], ["calc", "Izračunato", 90, "e"], ["diff", "Razlika", 80, "e"], ["note", "Napomena", 200, "w"]],
+  { multi: true, height: 13, onDouble: (id) => lotDetail(id) });
+  let res = null;
+  const load = () => {
+    res = py.call("web_stockcheck.calc", mode.value);
+    const diffItems = res.items.filter((x) => Math.abs(x.diff) > 0.0005);
+    const shortItems = res.items.filter((x) => x.short > 0.0005);
+    head.textContent = `Pregledano ${res.items.length} artikala i ${res.batches} skuhanih šarži. Izlazi se skidaju s LOT-ova po FIFO pravilu `
+      + `(najstariji primljeni prvi, samo LOT-ovi zaprimljeni do datuma kuhanja). Razlika kod ${diffItems.length} artikala`
+      + (shortItems.length ? `; kod ${shortItems.length} je utrošeno više nego što je zaprimljeno (nedostaje primka).` : ".")
+      + (res.no_record.length ? ` Šarže bez evidencije utroška (računate po recepturi): ${res.no_record.join(", ")}.` : "");
+    const rows = res.items.filter((x) => all.checked || Math.abs(x.diff) > 0.0005 || x.short > 0.0005);
+    t.setRows(rows.map((x) => ({ id: x.item_id, name: x.name, unit: x.unit, received: fq(x.received), brew: fq(x.brew),
+      recipe: fq(x.brew_recipe), other: x.other ? fq(x.other) : "", current: fq(x.current), calc: fq(x.calc),
+      diff: Math.abs(x.diff) > 0.0005 ? (x.diff > 0 ? "+" : "") + fq(x.diff) : "",
+      note: [x.short > 0.0005 ? `nedostaje primka za ${fq(x.short)} ${x.unit}` : "", x.lots_changed ? `mijenja se ${x.lots_changed} LOT(-a)` : ""].filter(Boolean).join(" · "),
+      _tag: x.short > 0.0005 ? "bad" : Math.abs(x.diff) > 0.0005 ? "warn" : "" })));
+    if (!rows.length) t.tbody.querySelector("tr.empty td").textContent = "Stanje svih LOT-ova odgovara izračunu – nema razlika.";
+  };
+  const lotDetail = (iid) => {
+    const it = res.items.find((x) => x.item_id === iid);
+    tableDialog(`LOT-ovi – ${it.name}`, [["lot", "LOT", 150, "w"], ["date", "Primljeno", 95, "center"], ["rec", "Primljeno kol.", 100, "e"],
+      ["cur", "Trenutno", 90, "e"], ["calc", "Izračunato", 90, "e"], ["diff", "Razlika", 80, "e"]],
+    res.lots.filter((l) => l.item_id === iid).map((l, i) => ({ id: i, lot: l.lot_no, date: d2ui(l.received_date), rec: fq(l.received),
+      cur: fq(l.current), calc: fq(l.calc), diff: Math.abs(l.diff) > 0.0005 ? fq(l.diff) : "", _tag: Math.abs(l.diff) > 0.0005 ? "warn" : "" })),
+    { info: `Primljeno ${fq(it.received)} · kuhanje ${fq(it.brew)} · otpis/korekcije ${fq(it.other)} ${it.unit} → izračunato ${fq(it.calc)} ${it.unit}`, width: 720 });
+  };
+  mode.addEventListener("change", load);
+  all.addEventListener("change", load);
+  const write = async (ids) => {
+    ids = ids.filter((i) => { const x = res.items.find((y) => y.item_id === i); return x && x.lots_changed; });
+    if (!ids.length) return d.err("Za označene artikle nema razlika za upis.");
+    const names = ids.map((i) => res.items.find((y) => y.item_id === i).name);
+    if (!(await confirm(`Upisati izračunato stanje u stupac „Preostalo” za ${ids.length} artikl(a)?\n\n${names.slice(0, 15).join(", ")}${names.length > 15 ? " …" : ""}\n\n`
+      + "Svaka promjena upisuje se kao kretanje „INVENTURA FIFO” (vidi se u kartici artikla). Evidencija utroška po šaržama (sljedivost) se ne mijenja.",
+    "Upis stanja", { ok: "Upiši stanje" }))) return;
+    const r = py.call("web_stockcheck.apply", ids, mode.value);
+    toast(`Stanje upisano: ${r.items} artikl(a), ${r.lots} LOT(-ova).`);
+    app.refreshAll();
+    load();
+  };
+  d.body.append(head, h("div", { class: "row gap", style: { alignItems: "center", flexWrap: "wrap", margin: "6px 0" } },
+    h("b", {}, "Utrošak kuhanja:"), mode, h("label", { class: "row gap", style: { alignItems: "center" } }, all, "prikaži i artikle bez razlike")),
+  t.el, h("div", { class: "muted", style: { fontSize: "12px", marginTop: "4px" } },
+    "Dvoklik na artikl prikazuje stanje po LOT-ovima. Ništa se ne mijenja dok ne kliknete „Upiši…”."));
+  d.buttons(null, null, "Zatvori");
+  if (auth.isReadonly(app.user)) d.bar.prepend(btn("Izvoz CSV", () => t.exportCsv("provjera_zaliha"), "ghost"));
+  else d.bar.prepend(btn("Izvoz CSV", () => t.exportCsv("provjera_zaliha"), "ghost"),
+    btn("Upiši za označene", () => write(t.selectedIds()), "ghost"),
+    btn("Upiši za sve s razlikom", () => write(res.items.filter((x) => x.lots_changed).map((x) => x.item_id)), "primary"));
+  load();
+  await d.show();
+}
+
 class LotsPage extends Page {
   static title = "LOT-ovi i zalihe";
   static subtitle = "Svi primljeni LOT-ovi redom FIFO (najstariji prvi) · dvoklik = sljedivost";
@@ -564,6 +629,8 @@ class LotsPage extends Page {
     this.tbtn("Korekcija količine", () => this.adjust(), "ghost");
     this.tbtn("Otpis LOT-a", () => this.writeoff(), "ghost");
     this.tbtn("Izvoz CSV", () => this.table.exportCsv("lotovi"), "ghost");
+    this.tbtn("🗑 Obriši LOT", () => this.del(), "ghost|more");
+    this.tbtn("☑ Provjera zaliha (FIFO)", () => stockCheck(this.app), "ghost");
     this.all = tbSwitch(this, "Prikaži i potrošene", () => this.refresh());
     this.table = new Table([
       ["item", "Artikl", 230, "w"], ["lot", "LOT", 140, "w"], ["received", "Primljeno", 95, "center"],
@@ -606,6 +673,23 @@ class LotsPage extends Page {
     { info: `${l.item_name}  ·  LOT ${l.lot_no}  ·  primljeno ${d2ui(l.received_date)}  ·  ` +
         `rok ${d2ui(l.eff_expiry) || "—"}\nPrimljeno ${fq(l.qty_received)} ${l.unit}, preostalo ${fq(l.qty_left)} ${l.unit}`,
     width: 760 });
+  }
+
+  // brisanje označenih LOT-ova (pogrešan unos); LOT utrošen u šarži se ne briše – za njega korekcija ili otpis
+  async del() {
+    const ids = this.table.selectedIds();
+    if (!ids.length) return info("Označite jedan ili više LOT-ova (Ctrl/Shift za više; na mobitelu dodirom).", "Brisanje LOT-a");
+    const chk = this.app.py.call("web_more.lots_delete_check", ids);
+    const bl = chk.blocked.length ? "\n\nNe mogu se obrisati jer su utrošeni u šaržama piva (sljedivost) – za njih koristite Korekciju količine ili Otpis:\n"
+      + chk.blocked.map((l) => `• ${l.item} · LOT ${l.lot_no} → ${l.batches.join(", ")}`).join("\n") : "";
+    if (!chk.ok.length) return info("Označeni LOT-ovi ne mogu se obrisati." + bl, "Brisanje LOT-a");
+    const list = chk.ok.map((l) => `• ${l.item} · LOT ${l.lot_no} · preostalo ${fq(l.qty_left)} ${l.unit}`).join("\n");
+    if (!(await confirm(`Obrisati ${chk.ok.length === 1 ? "LOT" : chk.ok.length + " LOT-ova"}?\n\n${list}\n\n`
+      + "Briše se LOT i njegova kretanja na skladištu, pa se zaliha artikla smanji za preostalu količinu. Brisanje se ne može poništiti." + bl,
+    "Brisanje LOT-a", { danger: true, ok: "Obriši" }))) return;
+    const r = this.app.py.call("web_more.delete_lots", ids);
+    toast(`Obrisano LOT-ova: ${r.deleted}.`);
+    this.app.refreshAll();
   }
 
   // broj računa dobavljača i nabavna cijena (bez PDV-a) za jedan ili više označenih LOT-ova

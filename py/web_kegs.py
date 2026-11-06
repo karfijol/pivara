@@ -226,6 +226,13 @@ def recent(db, limit=30):
                    LEFT JOIN batches b ON b.id=g.batch_id ORDER BY g.ts DESC, g.id DESC LIMIT ?""", (limit,))
 
 
+def clear_log(db):
+    """Briše svu povijest radnji s kegovima (popis „Zadnje radnje” i povijest svakog kega). Kegovi i njihov status ostaju."""
+    n = db.val("SELECT COUNT(*) FROM keg_log") or 0
+    db.x("DELETE FROM keg_log")
+    return n
+
+
 _ = dt
 
 

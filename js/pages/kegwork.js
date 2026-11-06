@@ -261,6 +261,7 @@ class KegWorkPage extends Page {
     this.tbtn("🛠 Servis kega", () => this.findKeg("service"), "ghost|more");
     this.tbtn("🛡 Oprema (QR) – CIP / kontrola", () => this.scanEquipment(), "ghost");
     if (!this.app.user || this.app.user.role !== "kegovi") this.tbtn("🔳 QR oznake", () => qrManager(this.app), "ghost");
+    if (!this.app.user || this.app.user.role === "admin") this.tbtn("🗑 Obriši povijest radnji", () => this.clearLog(), "ghost|more");
     this.home = h("div", { class: "content" });
     this.work = h("div", { class: "content hidden" });
     this.content.append(this.home, this.work);
@@ -354,6 +355,14 @@ class KegWorkPage extends Page {
     const code = await dlg.show();
     sc.stop();
     if (code) { await equipmentAction(this.app, code); this.refresh(); }
+  }
+
+  async clearLog() {
+    if (!(await confirm("Obrisati SVU povijest radnji s kegovima (popis „Zadnje radnje” i povijest svakog kega)?\n\n"
+      + "Kegovi i njihov trenutni status (pun, čist, kod kupca…) ostaju. Brisanje se ne može poništiti.", "Povijest radnji", { danger: true, ok: "Obriši povijest" }))) return;
+    const n = this.app.py.call("web_kegs.clear_log");
+    toast(`Povijest radnji obrisana (${n} zapisa).`);
+    this.app.refreshAll();
   }
 
   async findKeg(mode = "detail") {

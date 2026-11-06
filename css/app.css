@@ -387,6 +387,13 @@ table.grid tr.empty td { color: var(--muted); text-align: center; padding: 18px;
 .hop-row.due .hop-st { color: var(--bad); }
 @keyframes hopblink { from { opacity: 1; } to { opacity: .65; } }
 .hop-ed { display: flex; flex-direction: column; gap: 4px; margin: 8px 0 2px; }
+.ln-ed { display: flex; flex-direction: column; gap: 6px; }
+.ln-r { display: grid; grid-template-columns: minmax(0, 1fr) 120px 60px 44px; gap: 6px; align-items: center; }
+.ln-r.wp { grid-template-columns: minmax(0, 1fr) 110px 50px 110px 44px; }
+.ln-r.ln-h { font-size: 12px; color: var(--muted); font-weight: 600; }
+.ln-r select, .ln-r input { width: 100%; min-width: 0; }
+.ln-r .btn { padding: 4px 8px; min-height: 0; }
+@media (max-width: 700px) { .ln-r { grid-template-columns: minmax(0, 1fr) 90px 44px; } .ln-r > span.muted { display: none; } .ln-r.ln-h { display: none; } }
 .hop-r { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1.3fr) 80px 100px 80px 40px; gap: 6px; align-items: center; }
 .hop-h { font-size: 12px; font-weight: 700; color: var(--muted); }
 .hop-r .btn { padding: 4px 8px; min-height: 0; }

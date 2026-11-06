@@ -838,3 +838,34 @@ def offer_to_delivery(db, offer_id, keg_ids, other_line_ids, date=None, operator
     db.x("UPDATE offers SET delivery_id=?, status='Isporučena', customer_id=COALESCE(customer_id, ?) WHERE id=?",
          (nid, cid, offer_id))
     return {"delivery_id": nid, "no": db.val("SELECT no FROM delivery_notes WHERE id=?", (nid,))}
+
+
+# ------------------------------------------------------------------ brisanje LOT-ova (LOT-ovi i zalihe)
+def lots_delete_check(db, lot_ids):
+    """Koji se od označenih LOT-ova mogu obrisati. LOT utrošen u šarži piva ne briše se (sljedivost, HACCP)."""
+    ok, blocked = [], []
+    for lid in lot_ids or []:
+        l = db.one("SELECT l.id, l.lot_no, l.qty_received, l.qty_left, i.name AS item, i.unit FROM lots l "
+                   "JOIN items i ON i.id=l.item_id WHERE l.id=?", (lid,))
+        if not l:
+            continue
+        used = [r["batch_no"] for r in db.q("SELECT DISTINCT b.batch_no FROM batch_consumption c JOIN batches b ON b.id=c.batch_id "
+                                             "WHERE c.lot_id=? ORDER BY b.batch_no", (lid,))]
+        (blocked if used else ok).append({**l, "batches": used})
+    return {"ok": ok, "blocked": blocked}
+
+
+def delete_lots(db, lot_ids):
+    """Briše LOT-ove koji nisu utrošeni u šaržama, zajedno s njihovim skladišnim kretanjima (zaliha se smanji).
+    HACCP zapis o prijemu robe ostaje, samo se odvoji od LOT-a."""
+    chk = lots_delete_check(db, lot_ids)
+    ids = [l["id"] for l in chk["ok"]]
+    with db.con:
+        for lid in ids:
+            db.con.execute("DELETE FROM movements WHERE lot_id=?", (lid,))
+            try:
+                db.con.execute("UPDATE receipts SET lot_id=NULL WHERE lot_id=?", (lid,))
+            except Exception:  # noqa: BLE001
+                pass
+            db.con.execute("DELETE FROM lots WHERE id=?", (lid,))
+    return {"deleted": len(ids), "blocked": chk["blocked"]}

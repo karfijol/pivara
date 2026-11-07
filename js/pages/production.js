@@ -691,8 +691,8 @@ class BrewDayDialog extends Dialog {
       for (const [g, its] of Object.entries(groups)) {
         out.push(h("div", { class: "bd-grp" }, g));
         its.forEach((it, i) => out.push(chk(`${pre}_${g}_${i}`, `${it.name}`,
-          h("span", { class: "bd-qty" + (it.missing > EPS ? " bad" : "") }, `${fq(it.need)} ${it.unit}` + (it.lots ? ` · LOT ${it.lots}` : "")
-            + (it.missing > EPS ? ` · nedostaje ${fq(it.missing)}` : "")))));
+          h("span", { class: "bd-qty" + (it.missing > EPS ? " bad" : "") }, h("b", { class: "bd-n" }, `${fq(it.need)} ${it.unit}`),
+            (it.lots ? ` · LOT ${it.lots}` : "") + (it.missing > EPS ? ` · nedostaje ${fq(it.missing)}` : "")))));
       }
       return out;
     };
@@ -817,9 +817,9 @@ class BrewDayDialog extends Dialog {
       const len = this.boilLen();
       const when = r.min >= len ? `${r.min} min · na početku` : (r.min <= 0 ? "0 min · na kraju" : `${r.min} min · u ${len - r.min}. min kuhanja`);
       const al = (this.plan.alpha || {})[String(r.item_id)] || {};
-      const qtxt = r.add ? `${r.name} · ${fq(r.g)} ${r.unit}` : (r.g_adj != null ? `${r.name} · ${fq(r.g_adj, 1)} ${r.unit}` : `${r.name} · ${fq(r.g, 1)} ${r.unit}`);
+      const qn = r.add ? `${fq(r.g)} ${r.unit}` : (r.g_adj != null ? `${fq(r.g_adj, 1)} ${r.unit}` : `${fq(r.g, 1)} ${r.unit}`);
       const sub = !r.add && r.g_adj != null ? h("span", { class: "hop-alpha" }, `recept ${fq(r.g, 1)} ${r.unit} · α ${fq(al.recipe, 1)} → ${fq(al.lot, 1)} %`) : null;
-      const row = h("label", { class: "bd-row hop-row" }, cb, h("span", { class: "bd-lab" }, qtxt, sub),
+      const row = h("label", { class: "bd-row hop-row" }, cb, h("span", { class: "bd-lab" }, `${r.name} · `, h("b", { class: "bd-n" }, qn), sub),
         h("span", { class: "hop-when" }, when), st);
       this.hopBox.append(row);
       return { r, id, row, st };

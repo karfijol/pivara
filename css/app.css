@@ -373,6 +373,9 @@ table.grid tr.empty td { color: var(--muted); text-align: center; padding: 18px;
 .bd-row:has(input[type=checkbox]:checked) .bd-lab { text-decoration: line-through; color: var(--muted); }
 .bd-lab { flex: 1 1 200px; font-weight: 600; }
 .bd-qty { color: var(--muted); font-size: 13px; } .bd-qty.bad { color: var(--bad); font-weight: 700; }
+.bd-qty .bd-n { color: var(--text); font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.bd-qty.bad .bd-n { color: var(--bad); }
+.bd-lab .bd-n { font-variant-numeric: tabular-nums; }
 .bd-grp { font-size: 11.5px; font-weight: 700; color: var(--muted); text-transform: uppercase; margin: 10px 0 0; }
 .bd-timer { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
 .bd-timer .btn { padding: 6px 10px; min-height: 0; }
@@ -664,3 +667,16 @@ table.grid tbody tr:hover { outline-color: var(--input-line); }
 .mash-r .btn { padding: 4px 8px; min-height: 0; }
 @media (max-width: 700px) { .mash-r { grid-template-columns: minmax(0, 1fr) 56px 18px 56px 26px 40px; gap: 4px; } }
 body:has(.modal-back) .undo-fab { display: none; }
+
+/* dan kuhanja na mobitelu: veće količine sastojaka i veće tipke Start/Stop */
+@media (max-width: 700px) {
+  .brewday .bd-qty { flex: 1 1 100%; padding-left: 32px; font-size: 13px; }
+  .brewday .bd-qty .bd-n { display: block; font-size: 22px; line-height: 1.25; }
+  .brewday .bd-lab { font-size: 16px; }
+  .brewday .hop-row .bd-lab .bd-n { font-size: 20px; }
+  .brewday .bd-timer { gap: 8px; }
+  .brewday .bd-timer .btn { min-height: 52px; min-width: 112px; padding: 10px 18px; font-size: 17px; border-radius: 12px; }
+  .brewday .bd-timer input { height: 52px; width: 64px !important; font-size: 18px; }
+  .brewday .bd-time { font-size: 22px; }
+  .brewday .bd-row input[type=checkbox] { width: 26px; height: 26px; }
+}

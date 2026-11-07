@@ -331,12 +331,15 @@ class DB(HaccpMixin, ExtrasMixin):
             rem = r4(rem - take)
         return alloc, max(rem, 0)
 
-    def _consume(self, alloc, item_id, mtype, ref, note=None, batch_id=None):
+    def _consume(self, alloc, item_id, mtype, ref, note=None, batch_id=None, brew_no=None):
         for lot_id, _lot_no, take in alloc:
             self.con.execute("UPDATE lots SET qty_left=ROUND(qty_left-?,4) WHERE id=?", (take, lot_id))
             self.con.execute("INSERT INTO movements(ts,item_id,lot_id,qty,type,ref,note) VALUES(?,?,?,?,?,?,?)",
                              (now(), item_id, lot_id, -take, mtype, ref, note))
-            if batch_id:
+            if batch_id and brew_no is not None:
+                self.con.execute("INSERT INTO batch_consumption(batch_id,item_id,lot_id,qty,brew_no) VALUES(?,?,?,?,?)",
+                                 (batch_id, item_id, lot_id, take, brew_no))
+            elif batch_id:
                 self.con.execute("INSERT INTO batch_consumption(batch_id,item_id,lot_id,qty) VALUES(?,?,?,?)",
                                  (batch_id, item_id, lot_id, take))
 
@@ -376,10 +379,14 @@ class DB(HaccpMixin, ExtrasMixin):
 
     def recipe_lines(self, recipe_id):
         return self.q("""SELECT ri.*, i.name, i.unit, i.category FROM recipe_items ri
-                         JOIN items i ON i.id=ri.item_id WHERE ri.recipe_id=? ORDER BY i.category, i.name""",
-                      (recipe_id,))
+                         JOIN items i ON i.id=ri.item_id WHERE ri.recipe_id=?
+                         ORDER BY COALESCE(ri.stage,'brew')='ferm', i.category, i.name""", (recipe_id,))
 
     def save_recipe(self, data, lines, id=None):
+        data = dict(data)
+        if data.get("brew_size_l"):  # fermentor = volumen kuhanja × broj kuhanja
+            data["brews"] = max(1, int(data.get("brews") or 1))
+            data["batch_size_l"] = round(float(data["brew_size_l"]) * data["brews"], 2)
         with self.con:
             if id:
                 keys = list(data)
@@ -390,9 +397,16 @@ class DB(HaccpMixin, ExtrasMixin):
                 keys = list(data)
                 id = self.con.execute(f"INSERT INTO recipes({','.join(keys)}) VALUES({','.join('?' * len(keys))})",
                                       [data[k] for k in keys]).lastrowid
+            cols = {r["name"] for r in self.q("PRAGMA table_info(recipe_items)")}
             for ln in lines:
-                self.con.execute("INSERT INTO recipe_items(recipe_id,item_id,qty) VALUES(?,?,?)",
-                                 (id, ln["item_id"], ln["qty"]))
+                if "stage" in cols:
+                    am = ln.get("add_min")
+                    self.con.execute("INSERT INTO recipe_items(recipe_id,item_id,qty,stage,add_min) VALUES(?,?,?,?,?)",
+                                     (id, ln["item_id"], ln["qty"], "ferm" if ln.get("stage") == "ferm" else "brew",
+                                      int(am) if am not in (None, "") else None))
+                else:
+                    self.con.execute("INSERT INTO recipe_items(recipe_id,item_id,qty) VALUES(?,?,?)",
+                                     (id, ln["item_id"], ln["qty"]))
         return id
 
     def delete_recipe(self, id):
@@ -402,15 +416,29 @@ class DB(HaccpMixin, ExtrasMixin):
             self.x("DELETE FROM recipes WHERE id=?", (id,))
 
     def scaled_needs(self, recipe_id, volume):
+        """Ukupno potrebno za fermentor volumena `volume`: sastojci po kuhanju × (volumen / volumen kuhanja)
+        + sastojci za fermentor × (volumen / volumen fermentora); zbroj po artiklu."""
         r = self.recipe(recipe_id)
-        f = (volume or r["batch_size_l"]) / (r["batch_size_l"] or 1)
-        return [dict(ln, need=r4(ln["qty"] * f)) for ln in self.recipe_lines(recipe_id)]
+        fs = r["batch_size_l"] or 1
+        bs = r.get("brew_size_l") or fs
+        vol = volume or fs
+        out = {}
+        for ln in self.recipe_lines(recipe_id):
+            f = vol / (fs if ln.get("stage") == "ferm" else bs)
+            need = r4(ln["qty"] * f)
+            if ln["item_id"] in out:
+                out[ln["item_id"]]["need"] = r4(out[ln["item_id"]]["need"] + need)
+            else:
+                out[ln["item_id"]] = dict(ln, need=need)
+        return list(out.values())
 
     # ---------- šarže ----------
     def batches(self):
         return self.q("""SELECT b.*, r.name AS recipe, r.style,
                          (SELECT COUNT(*) FROM kegs k WHERE k.batch_id=b.id AND k.status IN ('Pun','Kod kupca')) AS kegs_out,
-                         (SELECT SUM(p.total_l) FROM packaging p WHERE p.batch_id=b.id) AS packed_sum
+                         (SELECT SUM(p.total_l) FROM packaging p WHERE p.batch_id=b.id) AS packed_sum,
+                         (SELECT COUNT(*) FROM batch_brews bb WHERE bb.batch_id=b.id AND bb.done=1) AS brews_done_n,
+                         (SELECT COUNT(*) FROM batch_brews bb WHERE bb.batch_id=b.id) AS brews_rows
                          FROM batches b LEFT JOIN recipes r ON r.id=b.recipe_id
                          ORDER BY COALESCE(b.brew_date,'9999') DESC, b.id DESC""")
 
@@ -461,7 +489,7 @@ class DB(HaccpMixin, ExtrasMixin):
                         "available": self.stock(ln["item_id"]), "alloc": alloc, "missing": missing})
         return out
 
-    def create_batch(self, recipe_id, volume, date=None, planned=False, batch_no=None, tank=None, note=None):
+    def create_batch(self, recipe_id, volume, date=None, planned=False, batch_no=None, tank=None, note=None, brews=None):
         date = date or today()
         if not planned:
             prev = self.preview_brew(recipe_id, volume)
@@ -471,35 +499,74 @@ class DB(HaccpMixin, ExtrasMixin):
         batch_no = batch_no or self.next_batch_no(date, recipe_id)
         bid = self.x("""INSERT INTO batches(batch_no,recipe_id,brew_date,volume_l,status,tank,note)
                         VALUES(?,?,?,?,?,?,?)""", (batch_no, recipe_id, date, volume, "Planirano", tank, note))
+        try:
+            r = self.recipe(recipe_id) or {}
+            self.x("UPDATE batches SET brews=? WHERE id=?", (brews or int(r.get("brews") or 1), bid))
+        except sqlite3.OperationalError:
+            pass
         if not planned:
-            self.brew_batch(bid, date)
+            for _ in range(max(1, brews or int((self.recipe(recipe_id) or {}).get("brews") or 1))):
+                self.brew_batch(bid, date)
         return bid
 
-    def brew_batch(self, batch_id, date=None):
-        """Kuhanje: automatsko skidanje sirovina po FIFO principu."""
+    def brew_batch(self, batch_id, date=None, brew_vol=None, last=None):
+        """Jedno kuhanje (FIFO skidanje sirovina). Šarža = fermentor s n kuhanja: svako kuhanje skida sastojke
+        „po kuhanju”; zadnje kuhanje (ili last=True) skida i sastojke za fermentor (kvasac, dry hop). Vraća broj kuhanja."""
+        import web_brew
         b = self.batch(batch_id)
-        if b["status"] != "Planirano":
-            raise ValueError("Šarža je već skuhana.")
-        prev = self.preview_brew(b["recipe_id"], b["volume_l"])
-        try:  # hmelj za gorčinu prema alfa kiselinama LOT-a (web verzija)
+        bi = web_brew.batch_info(self, b)
+        if b["status"] != "Planirano" and bi["done"] >= bi["n"]:
+            raise ValueError("Šarža je već skuhana (sva kuhanja).")
+        k = bi["done"] + 1
+        vol_k = float(brew_vol or bi["brew_vol"] or b["volume_l"] or 0)
+        is_last = (k >= bi["n"]) if last is None else bool(last)
+        prev = [dict(p, stage="brew") for p in web_brew.stage_needs(self, b["recipe_id"], "brew", vol_k)]
+        try:  # hmelj za gorčinu prema alfa kiselinama LOT-a
             import web_more
+            for p in prev:
+                p["alloc"], p["missing"] = self.allocate_fifo(p["item_id"], p["need"])
             prev = web_more.alpha_adjust_needs(self, batch_id, prev)
         except ImportError:
             pass
-        short = [p for p in prev if p["missing"] > EPS]
+        if is_last:
+            done_vol = sum((x.get("volume_l") or bi["brew_vol"]) for x in bi["brews"] if x.get("done")) + vol_k
+            ferm_vol = b["volume_l"] if k >= bi["n"] else done_vol
+            prev += [dict(p, stage="ferm") for p in web_brew.stage_needs(self, b["recipe_id"], "ferm", ferm_vol)]
+        # nestašica: zbroj po artiklu (isti hmelj može biti i u kuhanju i za dry hop)
+        tot = {}
+        for p in prev:
+            tot[p["item_id"]] = (p["name"], p["unit"], r4(tot.get(p["item_id"], (0, 0, 0))[2] + p["need"]))
+        short = []
+        for iid, (nm, un, q) in tot.items():
+            _al, miss = self.allocate_fifo(iid, q)
+            if miss > EPS:
+                short.append({"item_id": iid, "name": nm, "unit": un, "need": q, "missing": miss})
         if short:
             raise ShortageError(short)
         date = date or b["brew_date"] or today()
         no = b["batch_no"]
-        if self.get_setting("batch_scheme") == "haccp" and b["brew_date"] and date != b["brew_date"]:
+        first = b["status"] == "Planirano"
+        if first and self.get_setting("batch_scheme") == "haccp" and b["brew_date"] and date != b["brew_date"]:
             planned_prefix = "".join(reversed(b["brew_date"].split("-")))
             if no.startswith(planned_prefix):  # automatski LOT s planiranim datumom -> stvarni datum kuhanja
                 no = self.next_batch_no(date, b["recipe_id"])
         with self.con:
             for p in prev:
-                self._consume(p["alloc"], p["item_id"], "KUHANJE", no, batch_id=batch_id)
-            self.con.execute("UPDATE batches SET status='Fermentacija', brew_date=?, batch_no=? WHERE id=?",
-                             (date, no, batch_id))
+                if p["need"] <= EPS:
+                    continue
+                alloc, _m = self.allocate_fifo(p["item_id"], p["need"])
+                self._consume(alloc, p["item_id"], "KUHANJE", no, batch_id=batch_id,
+                              brew_no=0 if p["stage"] == "ferm" else k)
+            if first:
+                self.con.execute("UPDATE batches SET status='Fermentacija', brew_date=?, batch_no=?, ferm_done=0 WHERE id=?",
+                                 (date, no, batch_id))
+            self.con.execute("""INSERT INTO batch_brews(batch_id,n,brew_date,volume_l,done) VALUES(?,?,?,?,1)
+                                ON CONFLICT(batch_id,n) DO UPDATE SET brew_date=excluded.brew_date, volume_l=excluded.volume_l, done=1""",
+                             (batch_id, k, date, vol_k))
+            if is_last:
+                upd = "UPDATE batches SET ferm_done=1, brews=?" + (", volume_l=?" if k < bi["n"] else "") + " WHERE id=?"
+                self.con.execute(upd, (k, ferm_vol, batch_id) if k < bi["n"] else (k, batch_id))
+        return k
 
     def undo_brew(self, batch_id):
         b = self.batch(batch_id)
@@ -514,6 +581,11 @@ class DB(HaccpMixin, ExtrasMixin):
                                   "Storno kuhanja"))
             self.con.execute("DELETE FROM batch_consumption WHERE batch_id=?", (batch_id,))
             self.con.execute("UPDATE batches SET status='Planirano' WHERE id=?", (batch_id,))
+            try:
+                self.con.execute("DELETE FROM batch_brews WHERE batch_id=?", (batch_id,))
+                self.con.execute("UPDATE batches SET ferm_done=0 WHERE id=?", (batch_id,))
+            except sqlite3.OperationalError:
+                pass
 
     def delete_batch(self, batch_id):
         b = self.batch(batch_id)
@@ -625,9 +697,12 @@ class DB(HaccpMixin, ExtrasMixin):
                 JOIN purchase_orders p ON p.id=pl.po_id WHERE p.status IN ({','.join('?' * len(PO_OPEN))})
                 GROUP BY pl.item_id""", PO_OPEN)}
         planned = {}
-        for b in self.q("SELECT * FROM batches WHERE status='Planirano'"):
-            for ln in self.scaled_needs(b["recipe_id"], b["volume_l"]):
-                planned[ln["item_id"]] = planned.get(ln["item_id"], 0) + ln["need"]
+        import web_brew
+        for b in self.q("SELECT * FROM batches WHERE status='Planirano' OR (status='Fermentacija' AND COALESCE(ferm_done,1)=0)"):
+            if not b.get("recipe_id"):
+                continue
+            for iid, q in web_brew.remaining_needs(self, b).items():  # planirane + preostala kuhanja u tijeku
+                planned[iid] = planned.get(iid, 0) + q
         out = []
         for it in self.items():
             stock = it["stock"]

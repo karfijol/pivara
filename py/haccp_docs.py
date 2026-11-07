@@ -116,22 +116,45 @@ def doc_brew(db, d_from, d_to, logo):
             "LOT", "Ostali dodaci", "kol.", "LOT", "Sladovi-\nna (L)", "Proizve-\ndeno (L)", "OG", "pH", "Kuhao"]
     rows, merge = [], []
     for b in db.brewed_batches(d_from, d_to, desc=False):
-        g = db.batch_consumption_by_cat(b["id"])
-        k = max(1, *(len(v) for v in g.values()))
-        start = len(rows)
-        for i in range(k):
-            r = [""] * len(head)
-            if i == 0:
-                r[0:3] = [b["batch_no"], d2(b["brew_date"]), b["recipe"] or ""]
-                prod = db.packaged_litres(b["id"])  # stvarno proizvedeno (Šarže piva) ili zbroj pakiranja
-                r[15:20] = [n(b.get("wort_l") or b["volume_l"], 1), n(prod, 1) if prod else "", n(b.get("og_sg"), 3, False),
-                            n(b.get("ph"), 2), op(db, b.get("brewer"), "brew")]
-            for col, cat in ((3, "Slad"), (6, "Hmelj"), (9, "Kvasac"), (12, "Ostalo")):
-                if i < len(g[cat]):
-                    c = g[cat][i]
-                    r[col:col + 3] = [c["name"], _amount(c, cat), c["lot_no"]]
-            rows.append(r)
-        merge.append((start, len(rows) - 1))
+        # fermentor s više kuhanja: svako kuhanje u svom bloku (kvasac / dry hop uz zadnje kuhanje)
+        try:
+            brews = db.q("SELECT * FROM batch_brews WHERE batch_id=? AND done=1 ORDER BY n", (b["id"],))
+            nulls = db.val("SELECT COUNT(*) FROM batch_consumption WHERE batch_id=? AND brew_no IS NULL", (b["id"],))
+        except Exception:  # noqa: BLE001
+            brews, nulls = [], 1
+        groups = db.batch_consumption_by_cat(b["id"])
+        if len(brews) > 1 and not nulls:
+            rows_all = []
+            for gname, lst in groups.items():
+                rows_all += [dict(c, _cat=gname) for c in lst]
+            bn = {c["id"]: c["brew_no"] for c in db.q("SELECT id, brew_no FROM batch_consumption WHERE batch_id=?", (b["id"],))}
+            blocks = []
+            for i, bw in enumerate(brews):
+                last = i == len(brews) - 1
+                g = {"Slad": [], "Hmelj": [], "Kvasac": [], "Ostalo": []}
+                for c in rows_all:
+                    k = bn.get(c.get("cid"))
+                    if k == bw["n"] or (last and k == 0):
+                        g[c["_cat"]].append(c)
+                blocks.append((f"{b['batch_no']}\nkuhanje {bw['n']}/{len(brews)}", bw.get("brew_date") or b["brew_date"], g,
+                               bw.get("wort_l") or bw.get("volume_l"), bw.get("og_sg"), bw.get("ph"), bw.get("brewer") or b.get("brewer"), last))
+        else:
+            blocks = [(b["batch_no"], b["brew_date"], groups, b.get("wort_l") or b["volume_l"], b.get("og_sg"), b.get("ph"), b.get("brewer"), True)]
+        prod = db.packaged_litres(b["id"])  # stvarno proizvedeno (Šarže piva) ili zbroj pakiranja
+        for lot, date, g, wort, og, ph, brewer, last in blocks:
+            k = max(1, *(len(v) for v in g.values()))
+            start = len(rows)
+            for i in range(k):
+                r = [""] * len(head)
+                if i == 0:
+                    r[0:3] = [lot, d2(date), b["recipe"] or ""]
+                    r[15:20] = [n(wort, 1), n(prod, 1) if (prod and last) else "", n(og, 3, False), n(ph, 2), op(db, brewer, "brew")]
+                for col, cat in ((3, "Slad"), (6, "Hmelj"), (9, "Kvasac"), (12, "Ostalo")):
+                    if i < len(g[cat]):
+                        c = g[cat][i]
+                        r[col:col + 3] = [c["name"], _amount(c, cat), c["lot_no"]]
+                rows.append(r)
+            merge.append((start, len(rows) - 1))
     w = [0.07, 0.056, 0.05, 0.064, 0.028, 0.064, 0.055, 0.032, 0.064, 0.06, 0.028, 0.056, 0.055, 0.032, 0.056,
          0.048, 0.054, 0.034, 0.03, 0.05]
     doc.add("table", head, rows + blanks(len(head)), w,

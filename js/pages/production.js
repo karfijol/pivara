@@ -80,21 +80,25 @@ const nowHM = () => { const d = new Date(); return `${String(d.getHours()).padSt
 const dec = (x) => String(+(+x).toFixed(6)).replace(".", ",");
 export class LinesDialog extends Dialog {
   // stavke se uređuju izravno u retku: artikl, količina (i cijena), ✕ za uklanjanje
-  constructor(title, headerFields, headerInitial, opts, lines, { withPrice = false, qtyLabel = "Količina", width = 860 } = {}) {
+  constructor(title, headerFields, headerInitial, opts, lines, { withPrice = false, qtyLabel = "Količina", width = 860, stages = false, headerCols = null } = {}) {
     super(title, { width });
     this.itemOpts = opts; // [[label, item_id, unit, price]]
     this.withPrice = withPrice;
     this.qtyLabel = qtyLabel;
-    this.form = new Form(headerFields, headerInitial || {}, headerFields.length > 6 ? 3 : 2);
-    this.body.append(this.form.el, h("div", { class: "sec", style: { marginTop: "10px" } }, "Stavke"),
-      h("div", { class: "muted", style: { fontSize: "12.5px", margin: "-2px 0 6px" } },
-        "Svaku stavku možete promijeniti izravno u retku (artikl i količinu); ✕ uklanja stavku."));
+    this.stages = stages; // receptura: faza (po kuhanju / za fermentor) i minuta dodavanja u kuhanju
+    this.form = new Form(headerFields, headerInitial || {}, headerCols || (headerFields.length > 6 ? 3 : 2));
+    this.body.append(this.form.el, h("div", { class: "sec", style: { marginTop: "10px" } }, stages ? "Sastojci" : "Stavke"),
+      h("div", { class: "muted", style: { fontSize: "12.5px", margin: "-2px 0 6px" } }, stages
+        ? "„Po kuhanju” = količina za JEDNO kuhanje (slad, hmelj za kuhanje, Whirlfloc…). „Za fermentor” = količina za cijeli fermentor "
+          + "(kvasac, dry hop, voće…), dodaje se jednom. Minuta = kada se dodaje u kuhanju (0 = početak; npr. Whirlfloc 50 od 60 min) – za alarm."
+        : "Svaku stavku možete promijeniti izravno u retku (artikl i količinu); ✕ uklanja stavku."));
     this.list = h("div", { class: "ln-ed" });
     this.sum = h("div", { class: "muted", style: { fontSize: "12.5px", margin: "4px 0" } });
     this.body.append(this.list, h("div", { class: "row gap", style: { marginTop: "6px", alignItems: "center" } },
       btn("＋ Dodaj stavku", () => this.addRow()), this.sum));
     this.lines = (lines || []).map((ln) => ({ item_id: ln.item_id, qty: ln.qty, unit_price: ln.unit_price || 0, name: ln.name, unit: ln.unit,
-      _q: ln.qty != null ? dec(ln.qty) : "", _p: ln.unit_price != null ? dec(ln.unit_price) : "" }));
+      stage: ln.stage === "ferm" ? "ferm" : "brew", add_min: ln.add_min ?? null,
+      _q: ln.qty != null ? dec(ln.qty) : "", _p: ln.unit_price != null ? dec(ln.unit_price) : "", _m: ln.add_min != null ? String(ln.add_min) : "" }));
     this.render();
     this.buttons("Spremi", () => this.ok());
   }
@@ -103,8 +107,10 @@ export class LinesDialog extends Dialog {
     this.list.innerHTML = "";
     const head = [h("span", {}, "Artikl"), h("span", {}, this.qtyLabel), h("span", {}, "Jed.")];
     if (this.withPrice) head.push(h("span", {}, "Cijena €/jed."));
+    if (this.stages) head.push(h("span", {}, "Faza"), h("span", { title: "Minuta kuhanja kad se dodaje (0 = početak) – alarm na danu kuhanja" }, "Min."));
     head.push(h("span", {}));
-    this.list.append(h("div", { class: "ln-r ln-h" + (this.withPrice ? " wp" : "") }, ...head));
+    const cls = "ln-r" + (this.withPrice ? " wp" : "") + (this.stages ? " st" : "");
+    this.list.append(h("div", { class: cls + " ln-h" }, ...head));
     this.lines.forEach((ln, i) => {
       const known = this.optOf(ln.item_id);
       const sel = h("select", {}, h("option", { value: "" }, "– odaberite artikl –"),
@@ -127,13 +133,23 @@ export class LinesDialog extends Dialog {
       if (pr) pr.addEventListener("input", () => { ln._p = pr.value; this.upd(); });
       const del = btn("✕", () => { this.lines.splice(i, 1); this.render(); }, "ghost");
       del.title = "Ukloni stavku";
-      this.list.append(h("div", { class: "ln-r" + (this.withPrice ? " wp" : "") }, sel, q, unit, pr, del));
+      let stSel = null, mi = null;
+      if (this.stages) {
+        stSel = h("select", {}, h("option", { value: "brew" }, "Po kuhanju"), h("option", { value: "ferm" }, "Za fermentor"));
+        stSel.value = ln.stage || "brew";
+        mi = h("input", { value: ln._m || "", inputmode: "numeric", placeholder: "—", style: { textAlign: "right" },
+          title: "Minuta kuhanja kad se dodaje (0 = početak) – za alarm. Hmelj: minute u „Raspored hmelja”." });
+        mi.disabled = ln.stage === "ferm";
+        stSel.addEventListener("change", () => { ln.stage = stSel.value; mi.disabled = ln.stage === "ferm"; if (mi.disabled) { mi.value = ""; ln._m = ""; } this.upd(); });
+        mi.addEventListener("input", () => { ln._m = mi.value; });
+      }
+      this.list.append(h("div", { class: cls }, sel, q, unit, pr, stSel, mi, del));
     });
     if (!this.lines.length) this.list.append(h("div", { class: "muted", style: { padding: "6px 2px" } }, "Još nema stavki – kliknite „Dodaj stavku”."));
     this.upd();
   }
   addRow() {
-    this.lines.push({ item_id: null, qty: 0, unit_price: 0, _q: "", _p: "" });
+    this.lines.push({ item_id: null, qty: 0, unit_price: 0, _q: "", _p: "", stage: "brew", _m: "" });
     this.render();
     const sels = this.list.querySelectorAll(".ln-r:not(.ln-h) select");
     sels[sels.length - 1]?.focus();
@@ -142,7 +158,9 @@ export class LinesDialog extends Dialog {
     const n = this.lines.filter((l) => l.item_id != null).length;
     let tot = 0;
     if (this.withPrice) for (const l of this.lines) { try { tot += num(l._q || 0) * num(l._p || 0); } catch { /* */ } }
-    this.sum.textContent = `${n} stavki` + (this.withPrice ? ` · ukupno ${money(tot)}` : "");
+    this.sum.textContent = this.stages
+      ? `${this.lines.filter((l) => l.item_id != null && l.stage !== "ferm").length} po kuhanju · ${this.lines.filter((l) => l.item_id != null && l.stage === "ferm").length} za fermentor`
+      : `${n} stavki` + (this.withPrice ? ` · ukupno ${money(tot)}` : "");
   }
   ok() {
     let head;
@@ -154,9 +172,20 @@ export class LinesDialog extends Dialog {
       let q, p = 0;
       try { q = num(l._q); if (this.withPrice) p = num(l._p || 0); } catch { return this.err(`Redak ${i + 1}: količina i cijena moraju biti brojevi.`); }
       if (!(q > 0)) return this.err(`Redak ${i + 1}: upišite količinu veću od 0.`);
-      if (seen.has(l.item_id)) return this.err(`Artikl „${this.optOf(l.item_id)?.[0] || l.name}” upisan je dvaput – spojite ga u jedan redak.`);
-      seen.add(l.item_id);
-      out.push({ item_id: l.item_id, qty: q, unit_price: p });
+      const key = this.stages ? `${l.item_id}|${l.stage || "brew"}` : l.item_id;
+      if (seen.has(key)) return this.err(`Artikl „${this.optOf(l.item_id)?.[0] || l.name}” upisan je dvaput${this.stages ? " u istoj fazi" : ""} – spojite ga u jedan redak.`);
+      seen.add(key);
+      const row = { item_id: l.item_id, qty: q, unit_price: p };
+      if (this.stages) {
+        row.stage = l.stage === "ferm" ? "ferm" : "brew";
+        const m = String(l._m ?? "").trim();
+        if (row.stage === "brew" && m !== "") {
+          const mv = Math.round(num(m));
+          if (!(mv >= 0)) return this.err(`Redak ${i + 1}: minuta mora biti broj (0 = početak kuhanja).`);
+          row.add_min = mv;
+        } else row.add_min = null;
+      }
+      out.push(row);
     }
     if (!out.length) return this.err("Dodajte barem jednu stavku.");
     this.close([head, out]);
@@ -237,17 +266,17 @@ class RecipesPage extends Page {
     this.tbtn("Uredi", () => this.edit(), "ghost");
     this.tbtn("Obriši", () => this.delete(), "ghost");
     this.table = T([["name", "Naziv", 200, "w"], ["code", "Oznaka", 65, "center"], ["style", "Stil", 120, "w"],
-      ["size", "Šarža (L)", 90, "e"], ["n", "Sastojaka", 80, "center"], ["b", "Kuhano puta", 90, "center"]],
+      ["brew", "Kuhanje", 100, "e"], ["size", "Fermentor (L)", 95, "e"], ["boil", "Kuhanje min", 85, "e"], ["n", "Sastojaka", 80, "center"], ["b", "Šarži", 70, "center"]],
     { onDouble: () => this.edit(), onSelect: () => this.showLines() });
-    this.lines = T([["name", "Sastojak", 250, "w"], ["qty", "Količina", 100, "e"], ["unit", "Jed.", 60, "center"],
-      ["stock", "Na zalihi", 100, "e"], ["brews", "Dovoljno za", 100, "e"]]);
+    this.lines = T([["name", "Sastojak", 220, "w"], ["stage", "Faza", 110, "w"], ["qty", "Količina", 90, "e"], ["unit", "Jed.", 50, "center"],
+      ["stock", "Na zalihi", 90, "e"], ["brews", "Dovoljno za", 120, "e"]]);
     this.search(this.table);
     this.content.append(split(this.table.el, this.lines.el));
   }
 
   refresh() {
     this.table.setRows(this.db.recipes().map((r) => ({ id: r.id, name: r.name, code: this.db.recipe_code(r.id), style: r.style || "",
-      size: fq(r.batch_size_l), n: r.n_items, b: r.n_batches })));
+      brew: `${fq(r.brew_size_l || r.batch_size_l)} L × ${r.brews || 1}`, size: fq(r.batch_size_l), boil: r.boil_min || 60, n: r.n_items, b: r.n_batches })));
     this.showLines();
   }
 
@@ -255,10 +284,13 @@ class RecipesPage extends Page {
     const id = this.table.selectedId();
     const rows = [];
     if (id) {
+      const r = this.db.recipe(id);
+      const tot = Object.fromEntries(this.db.scaled_needs(id, r.batch_size_l).map((x) => [x.item_id, x.need]));
       for (const ln of this.db.recipe_lines(id)) {
         const st = this.db.stock(ln.item_id);
-        const n = ln.qty ? Math.trunc(st / ln.qty) : 0;
-        rows.push({ id: ln.id, name: ln.name, qty: fq(ln.qty), unit: ln.unit, stock: fq(st), brews: `${n} šarži`,
+        const n = tot[ln.item_id] ? Math.trunc(st / tot[ln.item_id] + 1e-9) : 0;
+        rows.push({ id: ln.id, name: ln.name, stage: ln.stage === "ferm" ? "za fermentor" : "po kuhanju" + (ln.add_min != null ? ` · ${ln.add_min}. min` : ""),
+          qty: fq(ln.qty), unit: ln.unit, stock: fq(st), brews: `${n} fermentor${n === 1 ? "" : "a"}`,
           _tag: n < 1 ? "bad" : (n < 2 ? "warn" : "") });
       }
     }
@@ -266,17 +298,58 @@ class RecipesPage extends Page {
   }
 
   dialog(title, r = null, lines = [], recipeId = null) {
+    const r0 = r || {};
     const d = new LinesDialog(title, [
+      { label: "Osnovno", type: "section" },
       { key: "name", label: "Naziv piva", required: true }, { key: "style", label: "Stil" },
       { key: "code", label: "Oznaka za LOT (2 slova, npr. PA, IP, ST)" },
-      { key: "batch_size_l", label: "Veličina šarže (L)", type: "num", required: true, positive: true, default: 290 },
+      { key: "brew_size_l", label: "Volumen jednog kuhanja (L)", type: "num", required: true, positive: true, default: 125 },
+      { key: "brews", label: "Broj kuhanja po fermentoru", type: "num", required: true, positive: true, default: 2 },
+      { key: "ferm_info", label: "Fermentor (šarža = jedan LOT piva)", type: "info", default: "" },
+      { label: "Postupak kuhanja (alarmi na danu kuhanja)", type: "section" },
+      { key: "boil_min", label: "Trajanje kuhanja (min)", type: "num", min: 1, default: 60 },
+      { key: "lauter_min", label: "Cijeđenje i ispiranje (min)", type: "num", min: 0, default: 45 },
+      { key: "whirl_min", label: "Whirlpool / odmor (min)", type: "num", min: 0, default: 15 },
+      { key: "cool_temp", label: "Hlađenje na (°C)", type: "num", min: 0 },
+      { label: "Ciljne vrijednosti", type: "section" },
+      { key: "target_og", label: "Ciljni OG (npr. 1,050)", type: "num", min: 0 },
+      { key: "target_fg", label: "Ciljni FG (npr. 1,010)", type: "num", min: 0 },
+      { key: "target_ferm_temp", label: "Temperatura fermentacije (°C)", type: "num", min: 0 },
       { key: "ferm_days", label: "Dana u fermentoru (za planer)", type: "num", min: 1, default: 14 },
+      { label: "Etiketa", type: "section" },
       { key: "official_abv", label: "Alkohol – službena analiza (% vol)", type: "num", min: 0 },
       { key: "allergens", label: "Alergeni (prazno = automatski)" },
       { key: "label_ingredients", label: "Sastojci (prazno = automatski)" },
       { key: "label_color", label: "Boja zastavice (prazno = prema vrsti piva)", type: "combo", editable: true,
         options: [""].concat(K(this.app).LABEL_COLORS) },
-      { key: "note", label: "Napomena" }], r || {}, itemOpts(this.db), lines, { qtyLabel: "Kol./šarža" });
+      { key: "note", label: "Napomena (vidi se na danu kuhanja)", type: "multi", full: true }],
+    { ...r0, brew_size_l: r0.brew_size_l || r0.batch_size_l || 125, brews: r0.brews || (recipeId ? 1 : 2), boil_min: r0.boil_min || 60,
+      lauter_min: r0.lauter_min ?? 45, whirl_min: r0.whirl_min ?? 15 },
+    itemOpts(this.db), lines, { qtyLabel: "Količina", stages: true, width: 980, headerCols: 3 });
+    const fw = d.form.w;
+    const fermInfo = () => { try { fw.ferm_info.set(`${fq((num(fw.brew_size_l.get()) || 0) * (Math.round(num(fw.brews.get())) || 1), 1)} L = ${fw.brews.get() || 1} × ${fw.brew_size_l.get() || 0} L`); } catch { /* */ } };
+    for (const k of ["brew_size_l", "brews"]) fw[k].el.addEventListener("input", fermInfo);
+    fermInfo();
+    // koraci ukomljavanja (svaki s alarmom na danu kuhanja)
+    let mash = recipeId ? (this.app.py.call("web_brew.recipe_extra", recipeId).mash_steps || []) : [{ name: "Ukomljavanje", temp: 67, min: 60 }];
+    if (!mash.length) mash = [{ name: "Ukomljavanje", temp: null, min: 60 }];
+    mash = mash.map((x) => ({ ...x }));
+    const mashBox = h("div", { class: "mash-ed" });
+    const renderMash = () => {
+      mashBox.innerHTML = "";
+      mash.forEach((m, i) => {
+        const nm = h("input", { value: m.name || "", placeholder: "npr. Ukomljavanje" });
+        const tp = h("input", { value: m.temp != null ? String(m.temp).replace(".", ",") : "", inputmode: "decimal", placeholder: "°C", style: { textAlign: "right" } });
+        const mn = h("input", { value: m.min != null ? String(m.min) : "", inputmode: "numeric", placeholder: "min", style: { textAlign: "right" } });
+        nm.oninput = () => { m.name = nm.value; }; tp.oninput = () => { m.temp = tp.value; }; mn.oninput = () => { m.min = mn.value; };
+        mashBox.append(h("div", { class: "mash-r" }, nm, tp, h("span", { class: "muted" }, "°C"), mn, h("span", { class: "muted" }, "min"),
+          btn("✕", () => { mash.splice(i, 1); renderMash(); }, "ghost")));
+      });
+    };
+    renderMash();
+    d.body.append(h("div", { class: "sec", style: { marginTop: "10px" } }, "Koraci ukomljavanja"), mashBox,
+      h("div", { class: "row gap", style: { margin: "6px 0" } }, btn("＋ Dodaj korak", () => { mash.push({ name: "", temp: null, min: 10 }); renderMash(); }, "ghost")));
+    d._mash = mash;
     // raspored hmelja (minute kuhanja, dry hop) dio je recepture
     const hopInfo = h("span", { class: "muted", style: { fontSize: "12.5px" } });
     const hopSum = () => {
@@ -296,13 +369,40 @@ class RecipesPage extends Page {
       h("div", { class: "row gap", style: { flexWrap: "wrap", alignItems: "center" } }, hopBtn, hopInfo),
       recipeId ? h("div", { class: "muted", style: { fontSize: "12px" } }, "Raspored koristi spremljene sastojke – novi hmelj dodan gore pojavit će se nakon spremanja recepture.") : null);
     hopSum();
-    return d.show();
+    return d.show().then((res) => (res ? [res[0], res[1], d._mash] : null));
+  }
+
+  // spremanje recepture: volumen kuhanja / broj kuhanja promijenjen -> ponudi preračun količina
+  async saveRecipe(res, id = null) {
+    const [head, lines, mash] = res;
+    delete head.ferm_info;
+    head.brews = Math.max(1, Math.round(head.brews || 1));
+    for (const k of ["cool_temp", "target_og", "target_fg", "target_ferm_temp", "official_abv"]) if (!head[k]) head[k] = null;
+    if (id) {
+      const old = this.db.recipe(id);
+      const obs = old.brew_size_l || old.batch_size_l, ofs = old.batch_size_l;
+      const nbs = head.brew_size_l, nfs = head.brew_size_l * head.brews;
+      if (lines.length && (Math.abs(obs - nbs) > 1e-6 || Math.abs(ofs - nfs) > 1e-6)
+        && await confirm(`Promijenjen je volumen kuhanja ili broj kuhanja (kuhanje ${fq(obs)} → ${fq(nbs)} L, fermentor ${fq(ofs)} → ${fq(nfs)} L).\n\n`
+          + "Preračunati količine sastojaka na nove volumene (po kuhanju × " + fq(nbs / obs, 3) + ", za fermentor × " + fq(nfs / ofs, 3) + ")?\n\n"
+          + "„Ne” = količine ostaju kako ste ih upisali.", "Preračun recepture", { ok: "Preračunaj", cancel: "Ne" })) {
+        // preračunavaju se samo sastojci koji su već bili u recepturi s istom količinom (novo upisani ostaju kako su upisani)
+        const orig = new Set(this.db.recipe_lines(id).map((l) => `${l.item_id}|${l.stage === "ferm" ? "ferm" : "brew"}|${Math.round(l.qty * 10000)}`));
+        for (const l of lines) {
+          if (!orig.has(`${l.item_id}|${l.stage === "ferm" ? "ferm" : "brew"}|${Math.round(l.qty * 10000)}`)) continue;
+          l.qty = Math.round(l.qty * (l.stage === "ferm" ? nfs / ofs : nbs / obs) * 10000) / 10000;
+        }
+      }
+    }
+    const rid = this.db.save_recipe(head, lines, id);
+    this.app.py.call("web_brew.save_recipe_extra", rid || id, (mash || []).map((m) => ({ name: m.name, temp: m.temp, min: m.min })));
+    return rid || id;
   }
 
   async new() {
     const res = await this.dialog("Nova receptura");
     if (res) {
-      const id = this.db.save_recipe(res[0], res[1]); this.app.refreshAll();
+      const id = await this.saveRecipe(res); this.app.refreshAll();
       if (id && await confirm("Receptura je spremljena. Upisati raspored hmelja (minute kuhanja, dry hop)?", "Hmeljenje", { ok: "Upiši raspored", cancel: "Kasnije" })
         && await hopEditor(this.app, { recipeId: id })) toast("Raspored hmelja spremljen.");
     }
@@ -312,7 +412,7 @@ class RecipesPage extends Page {
     const id = this.need(this.table, "recepturu");
     if (!id) return;
     const res = await this.dialog("Uredi recepturu", this.db.recipe(id), this.db.recipe_lines(id), id);
-    if (res) { this.db.save_recipe(res[0], res[1], id); this.app.refreshAll(); }
+    if (res) { await this.saveRecipe(res, id); this.app.refreshAll(); }
   }
 
   async delete() {
@@ -361,7 +461,7 @@ export async function hopEditor(app, opts) {
   const hopOpts = plan.hops.map((x) => [x.name, x.item_id]);
   const render = () => {
     list.innerHTML = "";
-    list.append(h("div", { class: "hop-r hop-h" }, h("span", {}, "Hmelj"), h("span", {}, "Kada"), h("span", {}, "Minuta"), h("span", {}, "Količina (g)"),
+    list.append(h("div", { class: "hop-r hop-h" }, h("span", {}, "Hmelj"), h("span", {}, "Kada"), h("span", {}, "Minuta"), h("span", { title: "Kuhanje: g po jednom kuhanju · dry hop: g za cijeli fermentor" }, "Količina (g)"),
       h("span", { title: "Korigiraj količinu prema alfa kiselinama LOT-a (dodaci za gorčinu)" }, "α korekcija"), h("span", {})));
     rows.forEach((r, i) => {
       const hs = h("select", {}, hopOpts.map(([l, v]) => h("option", { value: String(v) }, l)));
@@ -385,11 +485,17 @@ export async function hopEditor(app, opts) {
   };
   const renderSum = () => {
     const by = {};
-    for (const r of rows) by[r.item_id] = (by[r.item_id] || 0) + Number(r.g || 0);
-    sum.textContent = "Ukupno po recepturi: " + plan.hops.map((x) => {
-      const u = by[x.item_id] || 0; const ok = Math.abs(u - x.g) < 0.6;
-      return `${x.name} ${fq(u, 1)} / ${fq(x.g, 1)} g${ok ? "" : " ⚠"}`;
-    }).join(" · ");
+    for (const r of rows) { const k = `${r.item_id}|${r.stage}`; by[k] = (by[k] || 0) + Number(r.g || 0); }
+    const parts = [];
+    for (const x of plan.hops) {
+      for (const [st, tot, lab] of [["boil", x.g_boil, "kuhanje"], ["dry", x.g_dry, "dry hop"]]) {
+        const u = by[`${x.item_id}|${st}`] || 0;
+        if (!tot && !u) continue;
+        const ok = Math.abs(u - tot) < 0.6;
+        parts.push(`${x.name} (${lab}) ${fq(u, 1)} / ${fq(tot, 1)} g${ok ? "" : " ⚠"}`);
+      }
+    }
+    sum.textContent = "Prema recepturi – kuhanje: po jednom kuhanju; dry hop: za cijeli fermentor. " + parts.join(" · ");
   };
   // alfa kiseline: vrijednost u recepturi i LOT koji će se trošiti (FIFO)
   const alphaIn = {};
@@ -424,7 +530,8 @@ export async function hopEditor(app, opts) {
     h("div", { class: "row gap", style: { flexWrap: "wrap" } }, h("b", {}, "Trajanje kuhanja"), boil, h("span", { class: "muted" }, "min · minuta 0 = na početku, minuta = trajanje → na kraju kuhanja")),
     list, sum,
     h("div", { class: "row gap", style: { margin: "6px 0 12px" } }, btn("＋ Dodaj hmelj", () => {
-      rows.push({ item_id: plan.hops[0].item_id, stage: "boil", min: 0, g: 0, adj: true }); render();
+      const hb = plan.hops.find((x) => x.g_boil > 0) || plan.hops[0];
+      rows.push({ item_id: hb.item_id, stage: hb.g_boil > 0 ? "boil" : "dry", min: 0, g: 0, adj: hb.g_boil > 0 }); render();
     }, "ghost")),
     h("div", { class: "sec" }, "Alfa kiseline (korekcija gorčine)"),
     h("p", { class: "muted", style: { fontSize: "12.5px", margin: "4px 0" } }, "Upišite alfu kakva je u receptu. Alfu isporučenog hmelja upisujete kod primke ili u LOT-ovima. " +
@@ -494,10 +601,10 @@ class BrewDayDialog extends Dialog {
   constructor(app, batchId) {
     const d = app.py.call("web_more.brew_day", batchId);
     const b = d.batch;
-    super(`Dan kuhanja · ${b.batch_no} · ${b.recipe || ""}`, { width: 900, cls: "brewday" });
+    super(`Dan kuhanja · ${b.batch_no} · ${b.recipe || ""}` + (d.n > 1 ? ` · kuhanje ${d.k}/${d.n}` : ""), { width: 900, cls: "brewday" });
     this.app = app; this.batchId = batchId; this.d = d;
-    this.key = "brewday_" + batchId;
-    let st = {}; try { st = JSON.parse(localStorage.getItem(this.key) || "{}"); } catch { /* */ }
+    this.key = `brewday_${batchId}_${d.k}`;
+    let st = {}; try { st = JSON.parse(localStorage.getItem(this.key) || (d.k === 1 ? localStorage.getItem("brewday_" + batchId) : null) || "{}"); } catch { /* */ }
     this.st = Object.assign({ checks: {}, vals: {} }, st);
     const save = () => { try { localStorage.setItem(this.key, JSON.stringify(this.st)); } catch { /* */ } };
     this.save = save;
@@ -506,50 +613,86 @@ class BrewDayDialog extends Dialog {
       cb.addEventListener("change", () => { this.st.checks[id] = cb.checked; save(); });
       return h("label", { class: "bd-row" }, cb, h("span", { class: "bd-lab" }, label), extra);
     };
-    this.body.append(h("div", { class: "muted" }, `${fq(b.volume_l, 0)} L · ${d.planned ? "planirana šarža – sirovine se skidaju sa skladišta kad kliknete „Završi kuhanje”" : "šarža je već skuhana – upisujete mjerenja"}`));
+    const t = d.targets || {};
+    const tg = [t.og ? `OG ${sg(t.og)}` : "", t.fg ? `FG ${sg(t.fg)}` : "", t.ferm_temp ? `fermentacija ${fq(t.ferm_temp, 1)} °C` : ""].filter(Boolean).join(" · ");
+    this.body.append(h("div", { class: "muted" }, (d.n > 1 ? `Kuhanje ${d.k} od ${d.n} · ${fq(d.brew_vol, 0)} L po kuhanju · fermentor ${fq(b.volume_l, 0)} L · `
+      : `${fq(b.volume_l, 0)} L · `) + (d.planned ? "sirovine za ovo kuhanje skidaju se sa skladišta kad kliknete „Završi kuhanje”" : "sva kuhanja su gotova – upisujete mjerenja")
+      + (tg ? ` · cilj: ${tg}` : "")));
+    if (d.n > 1 && d.k > 1 && d.first_date) this.body.append(h("div", { class: "banner ok" }, `Kuhanje 1 obavljeno ${d2ui(d.first_date)} – ovo kuhanje ide u isti fermentor (LOT ${b.batch_no}).`));
     if (d.recipe_note) this.body.append(h("div", { class: "banner ok", style: { whiteSpace: "pre-line" } }, d.recipe_note));
-    // 1. sirovine
-    this.body.append(h("h3", { class: "sec" }, "1. Sirovine – odvagati"));
-    const groups = {};
-    for (const it of d.items) (groups[it.cat || "Ostalo"] = groups[it.cat || "Ostalo"] || []).push(it);
-    for (const [g, its] of Object.entries(groups)) {
-      this.body.append(h("div", { class: "bd-grp" }, g));
-      its.forEach((it, i) => this.body.append(chk(`it_${g}_${i}`, `${it.name}`,
-        h("span", { class: "bd-qty" + (it.missing > EPS ? " bad" : "") }, `${fq(it.need)} ${it.unit}` + (it.lots ? ` · LOT ${it.lots}` : "")
-          + (it.missing > EPS ? ` · nedostaje ${fq(it.missing)}` : "")))));
+    // 1. sirovine za ovo kuhanje
+    this.body.append(h("h3", { class: "sec" }, d.n > 1 ? `1. Sirovine – kuhanje ${d.k} (odvagati)` : "1. Sirovine – odvagati"));
+    const listItems = (arr, pre) => {
+      const groups = {};
+      for (const it of arr) (groups[it.cat || "Ostalo"] = groups[it.cat || "Ostalo"] || []).push(it);
+      const out = [];
+      for (const [g, its] of Object.entries(groups)) {
+        out.push(h("div", { class: "bd-grp" }, g));
+        its.forEach((it, i) => out.push(chk(`${pre}_${g}_${i}`, `${it.name}`,
+          h("span", { class: "bd-qty" + (it.missing > EPS ? " bad" : "") }, `${fq(it.need)} ${it.unit}` + (it.lots ? ` · LOT ${it.lots}` : "")
+            + (it.missing > EPS ? ` · nedostaje ${fq(it.missing)}` : "")))));
+      }
+      return out;
+    };
+    this.body.append(...listItems(d.items, "it"));
+    // sastojci za fermentor (kvasac, dry hop…): jednom, nakon zadnjeg kuhanja
+    this.fermBox = h("div", {});
+    if (d.ferm_items.length) {
+      this.fermBox.append(h("div", { class: "bd-sub" }, h("b", {}, d.n > 1 ? "U fermentor – nakon zadnjeg kuhanja (za cijeli fermentor)" : "U fermentor (za cijeli fermentor)")),
+        ...listItems(d.ferm_items, "fe"));
     }
-    // 2. koraci s mjeračem vremena
+    if (d.planned && !d.last) {
+      this.lastCb = h("input", { type: "checkbox" });
+      this.lastCb.checked = !!this.st.vals._last;
+      this.lastCb.addEventListener("change", () => { this.st.vals._last = this.lastCb.checked; save(); this.fermBox.classList.toggle("hidden", !this.lastCb.checked); });
+      this.fermBox.classList.toggle("hidden", !this.lastCb.checked);
+      this.body.append(h("label", { class: "chk", style: { margin: "8px 0" } }, this.lastCb,
+        ` Ovo je zadnje kuhanje za ovaj fermentor (inače slijedi kuhanje ${d.k + 1}) – kvasac i sastojci za fermentor skidaju se sada`));
+    }
+    this.body.append(this.fermBox);
+    // 2. koraci s mjeračem vremena (iz recepture)
     this.body.append(h("h3", { class: "sec" }, "2. Koraci"));
-    if (d.mill) this.body.append(chk("mill", "Mlin pregledan prije mljevenja – uređaj je u redu (upisuje se kontrola mlina)"));
+    if (d.mill && d.k === 1) this.body.append(chk("mill", "Mlin pregledan prije mljevenja – uređaj je u redu (upisuje se kontrola mlina)"));
     this.body.append(chk("mill_done", "Mljevenje slada"));
-    for (let [id, label, mins] of [["mash", "Ukomljavanje", 60], ["lauter", "Cijeđenje i ispiranje", 45], ["boil", "Kuhanje sladovine", 60],
-      ["whirl", "Whirlpool / odmor", 15]]) {
-      if (id === "boil") mins = (app.py.call("web_more.hop_plan", batchId).boil_min) || mins;
-      this.body.append(chk(id, label, this.timer(id, mins)));
-    }
-    // hmeljenje tijekom kuhanja: odbrojavanje do svakog dodatka (pokreće se tipkom Start kod kuhanja sladovine)
+    this._doneTxt = {};
+    const mash = d.mash.length ? d.mash : [{ name: "Ukomljavanje", temp: null, min: 60 }];
+    mash.forEach((m, i) => {
+      const lab = `${m.name || "Ukomljavanje"}${m.temp ? ` · ${fq(m.temp, 1)} °C` : ""}`;
+      this._doneTxt["mash" + i] = `${lab} – gotovo`;
+      this.body.append(chk("mash" + i, lab, this.timer("mash" + i, m.min || 10)));
+    });
+    this._doneTxt.lauter = "Cijeđenje i ispiranje – vrijeme isteklo";
+    this.body.append(chk("lauter", "Cijeđenje i ispiranje", this.timer("lauter", d.lauter_min || 45)));
+    this._doneTxt.boil = "Kuhanje sladovine je gotovo";
+    this.plan = app.py.call("web_more.hop_plan", batchId);
+    this.body.append(chk("boil", "Kuhanje sladovine", this.timer("boil", this.plan.boil_min || d.boil_min || 60)));
+    // hmelj i dodaci tijekom kuhanja (Whirlfloc…): odbrojavanje do svakog dodatka (pokreće se tipkom Start kod kuhanja)
     this.hopBox = h("div", { class: "hop-live" });
-    this.body.append(h("div", { class: "bd-sub" }, h("b", {}, "Hmeljenje tijekom kuhanja"),
+    this.body.append(h("div", { class: "bd-sub" }, h("b", {}, "Dodaci tijekom kuhanja (hmelj, Whirlfloc…)"),
       btn("✎ Raspored hmelja", async () => { const p = await hopEditor(app, { batchId }); if (p) { this.plan = p; this.renderHops(); this.renderDry(); } }, "ghost")),
     this.hopBox);
-    this.body.append(chk("cool", "Hlađenje i prebacivanje u fermentor"), chk("yeast", "Dodan kvasac"));
-    this.plan = app.py.call("web_more.hop_plan", batchId);
+    this._doneTxt.whirl = "Whirlpool / odmor je gotov";
+    this.body.append(chk("whirl", "Whirlpool / odmor", this.timer("whirl", d.whirl_min || 15)));
+    this.body.append(chk("cool", `Hlađenje${t.cool_temp ? ` na ${fq(t.cool_temp, 1)} °C` : ""} i prebacivanje u fermentor`));
+    if (d.last || this.lastCb) this.body.append(this.yeastRow = chk("yeast", "Dodan kvasac (sastojci za fermentor)"));
+    if (this.lastCb && this.yeastRow) { this.yeastRow.classList.toggle("hidden", !this.lastCb.checked); this.lastCb.addEventListener("change", () => this.yeastRow.classList.toggle("hidden", !this.lastCb.checked)); }
     this.renderHops();
     this._timers.push(setInterval(() => this.hopTick(), 1000));
     // dry hop podsjetnik
     this.dryBox = h("div", { class: "card", style: { marginTop: "8px" } });
     this.body.append(h("h3", { class: "sec" }, "Dry hop"), this.dryBox);
     this.renderDry();
-    // 3. mjerenja
-    this.body.append(h("h3", { class: "sec" }, "3. Mjerenja i CCP kuhanja"));
+    // 3. mjerenja (za ovo kuhanje)
+    this.body.append(h("h3", { class: "sec" }, d.n > 1 ? `3. Mjerenja i CCP – kuhanje ${d.k}` : "3. Mjerenja i CCP kuhanja"));
     const v = this.st.vals;
+    const bw = d.brew || {};
     this.form = new Form([
-      { key: "date", label: "Datum kuhanja = početak fermentacije", type: "date" },
+      { key: "date", label: d.k === 1 ? "Datum kuhanja = početak fermentacije" : `Datum kuhanja ${d.k}`, type: "date" },
       { key: "tank", label: "Fermentor (u koji se prebacuje)", type: "combo", options: app.db.fermentors().map((f) => f.name),
         command: () => this.checkTank() },
       { key: "ferm_temp", label: "Temperatura fermentacije (°C)", type: "num" },
       { key: "operator", label: "Kuhao", type: "combo", editable: true, options: app.db.employee_names() },
-      { key: "wort_l", label: "Volumen sladovine (L)", type: "num", min: 0 },
+      { key: "wort_l", label: d.n > 1 ? `Volumen sladovine – kuhanje ${d.k} (L)` : "Volumen sladovine (L)", type: "num", min: 0 },
       { key: "og_sg", label: "OG (npr. 1,052)", type: "num", min: 0 },
       { key: "ph", label: "pH", type: "num", min: 0 },
       { key: "boil_temp", label: "Temperatura kuhanja (°C) – CCP ≥ 100 °C", type: "num", min: 0 },
@@ -557,13 +700,15 @@ class BrewDayDialog extends Dialog {
       { key: "boil_end", label: "Kraj kuhanja", type: "time" },
       { key: "boil_min", label: "Trajanje kuhanja (min)", type: "num", min: 0 },
       { key: "corrective", label: "Korektivna radnja (ako < 100 °C)", full: true }],
-    { date: b.brew_date || today(), tank: b.tank, ferm_temp: b.ferm_temp, operator: b.brewer || opBrew(app.db),
-      wort_l: b.wort_l || b.volume_l, og_sg: b.og_sg, ph: b.ph, ...v }, 3);
+    { date: bw.brew_date || today(), tank: b.tank, ferm_temp: b.ferm_temp || t.ferm_temp, operator: bw.brewer || b.brewer || opBrew(app.db),
+      wort_l: bw.wort_l || d.brew_vol, og_sg: bw.og_sg, ph: bw.ph, boil_temp: bw.boil_temp, boil_start: bw.boil_start, boil_end: bw.boil_end,
+      boil_min: bw.boil_min, ...v }, 3);
     this.form.el.addEventListener("change", () => { try { Object.assign(this.st.vals, this.form.get()); } catch { /* */ } save(); });
     this.tankInfo = h("div", { class: "tank-info" });
     this.body.append(this.form.el, this.tankInfo);
     this.checkTank();
-    this.bar.append(btn("Zatvori (zapamti)", () => this.close(null), "ghost"), btn("✔ Završi kuhanje i spremi", () => this.finish()));
+    const finTxt = !d.planned ? "✔ Spremi mjerenja" : (d.n > 1 && !d.last ? `✔ Završi kuhanje ${d.k} i spremi` : "✔ Završi kuhanje i spremi");
+    this.bar.append(btn("Zatvori (zapamti)", () => this.close(null), "ghost"), btn(finTxt, () => this.finish()));
   }
 
   // fermentor: zauzetost prema planeru i CIP prije nove šarže (HACCP)
@@ -598,18 +743,21 @@ class BrewDayDialog extends Dialog {
 
   renderHops() {
     this.hopBox.innerHTML = "";
-    const rows = this.plan.rows.filter((r) => r.stage === "boil");
-    if (!rows.length) { this.hopBox.append(h("div", { class: "muted" }, "Nema hmelja za kuhanje u rasporedu.")); return; }
+    const rows = this.plan.rows.filter((r) => r.stage === "boil").map((r) => ({ ...r }))
+      .concat((this.plan.adds || []).map((a) => ({ item_id: a.item_id, name: a.name, min: a.min, g: a.qty, unit: a.unit, add: true })));
+    rows.sort((x, y) => x.min - y.min);
+    if (!rows.length) { this.hopBox.append(h("div", { class: "muted" }, "Nema dodataka za kuhanje u rasporedu.")); return; }
     this.hopEls = rows.map((r, i) => {
-      const id = `hop_${r.item_id}_${r.min}_${i}`;
+      const id = `${r.add ? "add" : "hop"}_${r.item_id}_${r.min}_${i}`;
       const cb = h("input", { type: "checkbox" }); cb.checked = !!this.st.checks[id];
       const st = h("span", { class: "hop-st" }, "");
       cb.addEventListener("change", () => { this.st.checks[id] = cb.checked; this.save(); this.hopTick(); });
-      const when = r.min <= 0 ? "na početku" : (r.min >= this.boilLen() ? "na kraju" : `${r.min}. min`);
+      const len = this.boilLen();
+      const when = r.min <= 0 ? "na početku" : (r.min >= len ? "na kraju" : `${r.min}. min (${len - r.min} min prije kraja)`);
       const al = (this.plan.alpha || {})[String(r.item_id)] || {};
-      const gtxt = r.g_adj != null ? `${r.name} · ${fq(r.g_adj, 1)} ${r.unit}` : `${r.name} · ${fq(r.g, 1)} ${r.unit}`;
-      const sub = r.g_adj != null ? h("span", { class: "hop-alpha" }, `recept ${fq(r.g, 1)} ${r.unit} · α ${fq(al.recipe, 1)} → ${fq(al.lot, 1)} %`) : null;
-      const row = h("label", { class: "bd-row hop-row" }, cb, h("span", { class: "bd-lab" }, gtxt, sub),
+      const qtxt = r.add ? `${r.name} · ${fq(r.g)} ${r.unit}` : (r.g_adj != null ? `${r.name} · ${fq(r.g_adj, 1)} ${r.unit}` : `${r.name} · ${fq(r.g, 1)} ${r.unit}`);
+      const sub = !r.add && r.g_adj != null ? h("span", { class: "hop-alpha" }, `recept ${fq(r.g, 1)} ${r.unit} · α ${fq(al.recipe, 1)} → ${fq(al.lot, 1)} %`) : null;
+      const row = h("label", { class: "bd-row hop-row" }, cb, h("span", { class: "bd-lab" }, qtxt, sub),
         h("span", { class: "hop-when" }, when), st);
       this.hopBox.append(row);
       return { r, id, row, st };
@@ -631,7 +779,7 @@ class BrewDayDialog extends Dialog {
       else if (elapsed === null) e.st.textContent = "";
       else if (elapsed >= at) {
         e.st.textContent = "DODAJ SADA!";
-        if (!rang[e.id]) { rang[e.id] = true; this.save(); beepLong(`Dodaj hmelj: ${e.r.name} ${fq(e.r.g, 1)} ${e.r.unit}`); }
+        if (!rang[e.id]) { rang[e.id] = true; this.save(); beepLong(`Dodaj ${e.r.add ? "" : "hmelj: "}${e.r.name} ${e.r.add ? fq(e.r.g) : fq(e.r.g_adj ?? e.r.g, 1)} ${e.r.unit}`); }
       } else {
         const left = at - elapsed;
         e.st.textContent = `za ${String(Math.floor(left / 60)).padStart(2, "0")}:${String(left % 60).padStart(2, "0")}`;
@@ -674,8 +822,7 @@ class BrewDayDialog extends Dialog {
       if (left <= 0) {
         lbl.textContent = "gotovo!"; lbl.classList.add("done"); b.textContent = "↺";
         if (!this.st.vals["t_" + id].rang) { this.st.vals["t_" + id].rang = true; this.save();
-          beepLong({ mash: "Ukomljavanje je gotovo", lauter: "Cijeđenje i ispiranje – vrijeme isteklo", boil: "Kuhanje sladovine je gotovo",
-            whirl: "Whirlpool / odmor je gotov" }[id] || "Vrijeme je isteklo");
+          beepLong((this._doneTxt && this._doneTxt[id]) || "Vrijeme je isteklo");
           if (id === "boil") { this.form.w.boil_end.set(nowHM()); this.form.w.boil_min.set(Number(min.value) || defMin); } }
         return;
       }
@@ -712,11 +859,21 @@ class BrewDayDialog extends Dialog {
     try { v = this.form.get(); } catch (e) { return this.err(e.message); }
     if (v.boil_temp && v.boil_temp < 100 && !v.corrective) return this.err("Temperatura kuhanja je ispod 100 °C – upišite korektivnu radnju.");
     if (!v.tank) return this.err("Odaberite fermentor u koji se prebacuje pivo.");
-    if (this.d.planned && !(await confirm(`Sirovine će se skinuti sa skladišta (FIFO), a šarža počinje fermentaciju u ${v.tank} (${d2ui(v.date || today())}). Nastaviti?`, "Završi kuhanje"))) return;
+    const d = this.d;
+    const last = d.last || (this.lastCb && this.lastCb.checked);
+    if (d.planned) {
+      const fermTxt = last && d.ferm_items.length ? `\n\nSkidaju se i sastojci za fermentor: ${d.ferm_items.map((x) => `${x.name} ${fq(x.need)} ${x.unit}`).join(", ")}.` : "";
+      const msg = d.n > 1
+        ? `Kuhanje ${d.k} od ${d.n}: sirovine za ovo kuhanje skidaju se sa skladišta (FIFO), sladovina ide u ${v.tank} (LOT ${d.batch.batch_no}).${fermTxt}`
+          + (last ? "" : `\n\nFermentor ostaje otvoren za kuhanje ${d.k + 1}.`)
+        : `Sirovine će se skinuti sa skladišta (FIFO), a šarža počinje fermentaciju u ${v.tank} (${d2ui(v.date || today())}).${fermTxt}`;
+      if (!(await confirm(msg + "\n\nNastaviti?", "Završi kuhanje"))) return;
+    }
     try {
       for (const k of ["wort_l", "og_sg", "ph", "boil_temp", "boil_min", "ferm_temp"]) if (!v[k]) delete v[k];
-      const r = this.app.py.call("web_more.brew_day_finish", this.batchId, { ...v, mill_ok: this.d.mill && this.st.checks.mill ? 1 : 0, dry: this.dry });
-      try { localStorage.removeItem(this.key); } catch { /* */ }
+      const r = this.app.py.call("web_more.brew_day_finish", this.batchId, { ...v, last: last && !d.last ? 1 : 0,
+        mill_ok: d.mill && this.st.checks.mill ? 1 : 0, dry: this.dry });
+      try { localStorage.removeItem(this.key); localStorage.removeItem("brewday_" + this.batchId); } catch { /* */ }
       this.close(r);
     } catch (e) { this.err(e.message); }
   }
@@ -751,7 +908,8 @@ class BatchesPage extends Page {
   refresh() {
     this.table.setRows(this.db.batches().map((b) => ({
       id: b.id, no: b.batch_no, recipe: b.recipe || "", style: b.style || "", date: d2ui(b.brew_date), vol: fq(b.wort_l || b.volume_l), pack: (b.packaged_l || b.packed_sum) ? fq(b.packaged_l || b.packed_sum, 1) + (b.packaged_l ? "" : " ⓟ") : "",
-      tank: b.tank || "", og: sg(b.og_sg), fg: sg(b.fg_sg), abv: b.abv ? fq(b.abv, 1) : "", status: b.status,
+      tank: b.tank || "", og: sg(b.og_sg), fg: sg(b.fg_sg), abv: b.abv ? fq(b.abv, 1) : "",
+      status: b.status + ((b.brews || 1) > 1 && b.brews_rows && b.brews_done_n < b.brews ? ` · kuhanje ${b.brews_done_n}/${b.brews}` : ""),
       kegs: b.kegs_out || "", note: b.note || "",
       cost: b.status !== "Planirano" ? fq(this.db.batch_cost(b.id)[2], 2) : "",
       _tag: b.status === "Planirano" ? "muted" : (b.status === "Fermentacija" ? "ok" : "") })));
@@ -792,10 +950,19 @@ class BatchesPage extends Page {
   async brewDay(batchId = null) {
     const recipes = this.db.recipes();
     if (!recipes.length) return info("Najprije unesite recepturu.", "Dan kuhanja");
-    const planned = this.db.batches().filter((b) => b.status === "Planirano");
+    const all = this.db.batches();
+    const inProg = all.filter((b) => b.status !== "Planirano" && (b.brews || 1) > 1 && b.brews_rows && b.brews_done_n < b.brews);
+    const planned = all.filter((b) => b.status === "Planirano");
     const sel = this.table.selectedId();
-    const pre = batchId || (planned.find((b) => b.id === sel) ? sel : null);
-    let id = pre;
+    // fermentor u kojem čeka sljedeće kuhanje: odmah nastavi
+    let id = batchId || (inProg.find((b) => b.id === sel) ? sel : null);
+    if (!id && inProg.length && !planned.find((b) => b.id === sel)) {
+      const b0 = inProg[0];
+      if (await confirm(`Fermentor ${b0.tank || ""} (LOT ${b0.batch_no} · ${b0.recipe}) čeka kuhanje ${b0.brews_done_n + 1} od ${b0.brews}.\n\nNastaviti s tim kuhanjem?`,
+        "Dan kuhanja", { ok: `Kuhanje ${b0.brews_done_n + 1}/${b0.brews}`, cancel: "Nova šarža" })) id = b0.id;
+    }
+    const pre = id || (planned.find((b) => b.id === sel) ? sel : null);
+    if (!id) id = pre;
     // šarža koja je već skuhana: samo otvori dan kuhanja (mjerenja, hmelj, dry hop)
     if (!id && sel && this.db.batch(sel) && this.db.batch(sel).status === "Fermentacija" && this.db.batch(sel).brew_date === today()) id = sel;
     if (!id) {
@@ -803,29 +970,39 @@ class BatchesPage extends Page {
       const d = await askForm("Dan kuhanja", [
         ...(planned.length ? [{ key: "planned_id", label: "Planirana šarža (ili nova)", type: "combo", full: true,
           options: [["— nova šarža —", null], ...planned.map((b) => [`${b.batch_no} · ${b.recipe} · ${d2ui(b.brew_date)}`, b.id])],
-          command: (v, f) => { const b = planned.find((x) => x.id === v); if (b) { f.w.recipe_id.set(b.recipe_id); f.w.volume.set(b.volume_l); if (b.tank) f.w.tank.set(b.tank); } } }] : []),
-        { key: "recipe_id", label: "Pivo (receptura)", type: "combo", options: recipes.map((r) => [r.name, r.id]), required: true },
-        { key: "volume", label: "Volumen šarže (L)", type: "num", required: true, positive: true },
+          command: (v, f) => { const b = planned.find((x) => x.id === v); if (b) { f.w.recipe_id.set(b.recipe_id); f.w.volume.set(b.volume_l); f.w.brews.set(b.brews || 1); if (b.tank) f.w.tank.set(b.tank); } } }] : []),
+        { key: "recipe_id", label: "Pivo (receptura)", type: "combo", options: recipes.map((r) => [r.name, r.id]), required: true,
+          command: (v, f) => { const r = recipes.find((x) => x.id === v); if (r) { f.w.volume.set(r.batch_size_l); f.w.brews.set(r.brews || 1); } } },
+        { key: "volume", label: "Volumen u fermentoru (L)", type: "num", required: true, positive: true },
+        { key: "brews", label: "Broj kuhanja za ovaj fermentor", type: "num", required: true, positive: true },
         { key: "date", label: "Datum kuhanja", type: "date", required: true },
         { key: "tank", label: "Fermentor", type: "combo", options: this.db.fermentors().map((f) => f.name) },
         { key: "brewer", label: "Kuhao", type: "combo", editable: true, options: this.db.employee_names() }],
       { planned_id: pb ? pb.id : null, recipe_id: pb ? pb.recipe_id : recipes[0].id, volume: pb ? pb.volume_l : recipes[0].batch_size_l,
+        brews: pb ? (pb.brews || 1) : (recipes[0].brews || 1),
         date: today(), tank: pb ? pb.tank : null, brewer: opBrew(this.db) }, { okText: "Započni dan kuhanja" });
       if (!d) return;
       try {
         if (d.planned_id) {
           id = d.planned_id;
-          this.db.update_batch(id, { recipe_id: d.recipe_id, volume_l: d.volume, brew_date: d.date, tank: d.tank || null, brewer: d.brewer });
+          this.db.update_batch(id, { recipe_id: d.recipe_id, volume_l: d.volume, brew_date: d.date, tank: d.tank || null, brewer: d.brewer,
+            brews: Math.max(1, Math.round(d.brews || 1)) });
         } else {
-          id = this.app.py.callKw("db.create_batch", [d.recipe_id, d.volume, d.date], { planned: true, tank: d.tank || null });
+          id = this.app.py.callKw("db.create_batch", [d.recipe_id, d.volume, d.date], { planned: true, tank: d.tank || null, brews: Math.max(1, Math.round(d.brews || 1)) });
           this.db.update_batch(id, { brewer: d.brewer, wort_l: d.volume });
         }
       } catch (e) { return this.err(e); }
       this.refresh();
     }
-    const r = await new BrewDayDialog(this.app, id).show();
-    if (!r && this.db.batch(id) && this.db.batch(id).status === "Planirano") toast("Šarža je spremljena kao planirana – nastavite kad god: 🔥 Dan kuhanja.");
-    if (r) { this.app.refreshAll(); toast(`Dan kuhanja spremljen – ${r.batch_no}.` + (r.dry_hop_date ? ` Dry hop podsjetnik: ${d2ui(r.dry_hop_date)}.` : "")); }
+    for (;;) {
+      const r = await new BrewDayDialog(this.app, id).show();
+      if (!r && this.db.batch(id) && this.db.batch(id).status === "Planirano") toast("Šarža je spremljena kao planirana – nastavite kad god: 🔥 Dan kuhanja.");
+      if (!r) break;
+      this.app.refreshAll();
+      if (r.done_all) { toast(`Dan kuhanja spremljen – ${r.batch_no}` + (r.n > 1 ? ` (${r.n} kuhanja, fermentor pun).` : ".") + (r.dry_hop_date ? ` Dry hop podsjetnik: ${d2ui(r.dry_hop_date)}.` : "")); break; }
+      if (!(await confirm(`Kuhanje ${r.k} od ${r.n} spremljeno (LOT ${r.batch_no}).\n\nZapočeti kuhanje ${r.k + 1} sada?`, "Sljedeće kuhanje",
+        { ok: `Započni kuhanje ${r.k + 1}`, cancel: "Kasnije" }))) { toast(`Kuhanje ${r.k + 1} nastavite kad god: 🔥 Dan kuhanja.`); break; }
+    }
   }
 
   // Nakon kuhanja: kontrola mlina, CIP fermentora prije šarže i CCP kontrola kuhanja.
@@ -946,12 +1123,12 @@ class BatchesPage extends Page {
     const id = this.need(this.table, "šaržu");
     if (!id) return;
     const b = this.db.batch(id);
-    const rows = this.db.batch_consumption(id).map((c) => ({ id: c.id, name: c.name, lot: c.lot_no, qty: fq(c.qty), unit: c.unit,
-      sup: c.supplier_name || "", exp: d2ui(c.expiry_date) }));
+    const rows = this.db.batch_consumption(id).map((c) => ({ id: c.id, brew: c.brew_no === 0 ? "fermentor" : (c.brew_no ? `kuhanje ${c.brew_no}` : ""),
+      name: c.name, lot: c.lot_no, qty: fq(c.qty), unit: c.unit, sup: c.supplier_name || "", exp: d2ui(c.expiry_date) }));
     const kegs = this.db.kegs().filter((k) => k.batch_id === id).map((k) => k.code);
     const [raw, total, perL] = this.db.batch_cost(id);
     tableDialog(`Sljedivost šarže ${b.batch_no}`, [
-      ["name", "Sirovina", 230, "w"], ["lot", "LOT", 140, "w"], ["qty", "Količina", 90, "e"],
+      ["brew", "Kuhanje", 90, "w"], ["name", "Sirovina", 210, "w"], ["lot", "LOT", 140, "w"], ["qty", "Količina", 90, "e"],
       ["unit", "Jed.", 50, "center"], ["sup", "Dobavljač", 170, "w"], ["exp", "Rok LOT-a", 100, "center"]], rows,
     { info: `${b.recipe} · ${fq(b.volume_l)} L · kuhano ${d2ui(b.brew_date) || "—"} · status ${b.status}\n`
       + `Kegovi s ovom šaržom: ${kegs.join(", ") || "—"}\n`

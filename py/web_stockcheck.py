@@ -27,23 +27,21 @@ def _now():
 
 
 def _brewed(db):
-    return db.q("""SELECT b.id, b.batch_no, b.recipe_id, b.volume_l, b.brew_date, b.status, r.name AS recipe
+    return db.q("""SELECT b.*, r.name AS recipe
                    FROM batches b LEFT JOIN recipes r ON r.id=b.recipe_id
                    WHERE COALESCE(b.status,'Planirano')<>'Planirano' AND b.brew_date IS NOT NULL
                    ORDER BY b.brew_date, b.id""")
 
 
 def _recipe_needs(db, b, cache):
-    key = (b["recipe_id"], b["volume_l"])
-    if key not in cache:
-        out = {}
-        if b["recipe_id"] and db.val("SELECT COUNT(*) FROM recipes WHERE id=?", (b["recipe_id"],)):
-            try:
-                out = {ln["item_id"]: r4(ln["need"]) for ln in db.scaled_needs(b["recipe_id"], b["volume_l"])}
-            except Exception:  # noqa: BLE001
-                out = {}
-        cache[key] = out
-    return cache[key]
+    """Potrebno po recepturi za šaržu: skuhana kuhanja (sastojci po kuhanju) + fermentor (kvasac, dry hop) ako je napunjen."""
+    if not b["recipe_id"] or not db.val("SELECT COUNT(*) FROM recipes WHERE id=?", (b["recipe_id"],)):
+        return {}
+    try:
+        import web_brew
+        return web_brew.batch_needs(db, b)
+    except Exception:  # noqa: BLE001
+        return {ln["item_id"]: r4(ln["need"]) for ln in db.scaled_needs(b["recipe_id"], b["volume_l"])}
 
 
 def _take(ls, rem, d, only_before=True):

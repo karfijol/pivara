@@ -244,7 +244,7 @@ class HaccpMixin:
         self.update_batch(batch_id, upd)
 
     def batch_consumption_by_cat(self, batch_id):
-        rows = self.q("""SELECT c.item_id, c.lot_id, c.qty, c.display, i.name, i.unit, i.category, l.lot_no
+        rows = self.q("""SELECT c.id AS cid, c.item_id, c.lot_id, c.qty, c.display, i.name, i.unit, i.category, l.lot_no
                          FROM batch_consumption c JOIN items i ON i.id=c.item_id JOIN lots l ON l.id=c.lot_id
                          WHERE c.batch_id=? ORDER BY i.category, i.name, c.id""", (batch_id,))
         groups = {"Slad": [], "Hmelj": [], "Kvasac": [], "Ostalo": []}

@@ -390,11 +390,14 @@ table.grid tr.empty td { color: var(--muted); text-align: center; padding: 18px;
 .hop-ed { display: flex; flex-direction: column; gap: 4px; margin: 8px 0 2px; }
 .ln-ed { display: flex; flex-direction: column; gap: 6px; }
 .ln-r { display: grid; grid-template-columns: minmax(0, 1fr) 120px 60px 44px; gap: 6px; align-items: center; }
+.ln-r.st { grid-template-columns: minmax(0, 1fr) 100px 46px 130px 64px 44px; }
 .ln-r.wp { grid-template-columns: minmax(0, 1fr) 110px 50px 110px 44px; }
 .ln-r.ln-h { font-size: 12px; color: var(--muted); font-weight: 600; }
 .ln-r select, .ln-r input { width: 100%; min-width: 0; }
 .ln-r .btn { padding: 4px 8px; min-height: 0; }
-@media (max-width: 700px) { .ln-r { grid-template-columns: minmax(0, 1fr) 90px 44px; } .ln-r > span.muted { display: none; } .ln-r.ln-h { display: none; } }
+@media (max-width: 700px) { .ln-r { grid-template-columns: minmax(0, 1fr) 90px 44px; } .ln-r > span.muted { display: none; } .ln-r.ln-h { display: none; }
+  .ln-r.st { grid-template-columns: minmax(0, 1fr) 84px 44px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+  .ln-r.st > select:nth-of-type(2) { grid-column: 1 / 2; } .ln-r.st > input:nth-of-type(2) { grid-column: 2 / 3; } }
 .hop-r { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1.3fr) 80px 100px 80px 40px; gap: 6px; align-items: center; }
 .hop-h { font-size: 12px; font-weight: 700; color: var(--muted); }
 .hop-r .btn { padding: 4px 8px; min-height: 0; }
@@ -648,3 +651,11 @@ table.grid tbody tr:hover { outline-color: var(--input-line); }
   box-shadow: 0 6px 20px rgba(0,0,0,.18); cursor: pointer; min-height: 44px; }
 .undo-fab.hidden, .undo-link.hidden { display: none; }
 @media (max-width: 700px) { .undo-fab { bottom: calc(76px + env(safe-area-inset-bottom, 0px)); } }
+
+/* receptura: koraci ukomljavanja */
+.mash-ed { display: flex; flex-direction: column; gap: 6px; }
+.mash-r { display: grid; grid-template-columns: minmax(0, 1fr) 70px 22px 70px 30px 44px; gap: 6px; align-items: center; }
+.mash-r input { width: 100%; min-width: 0; }
+.mash-r .btn { padding: 4px 8px; min-height: 0; }
+@media (max-width: 700px) { .mash-r { grid-template-columns: minmax(0, 1fr) 56px 18px 56px 26px 40px; gap: 4px; } }
+body:has(.modal-back) .undo-fab { display: none; }

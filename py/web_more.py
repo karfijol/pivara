@@ -10,6 +10,10 @@ import datetime as dt
 OUT = "/out"
 
 
+def r4(x):
+    return round(float(x or 0) + 0.0, 4)
+
+
 def _today():
     return dt.date.today().isoformat()
 
@@ -501,42 +505,103 @@ def year_overview(db, year=None):
             "total_l": sum(litres.values()), "total_cost": sum(cost.values()), "brews": len(rep["brews"])}
 
 
-# ------------------------------------------------------------------ dan kuhanja
+# ------------------------------------------------------------------ dan kuhanja (jedno kuhanje; fermentor = n kuhanja)
 def brew_day(db, batch_id):
+    import web_brew
     b = db.batch(batch_id)
     if not b:
         raise ValueError("Šarža ne postoji.")
     r = db.recipe(b["recipe_id"]) if b.get("recipe_id") else {}
-    needs = alpha_adjust_needs(db, batch_id, db.preview_brew(b["recipe_id"], b["volume_l"])) if b["status"] == "Planirano" else [
-        {"name": c["name"], "need": c["qty"], "unit": c["unit"], "missing": 0,
-         "alloc": [[c["lot_id"], c["lot_no"], c["qty"]]]} for c in db.batch_consumption(batch_id)]
-    items = []
-    for n in needs:
-        cat = db.val("SELECT category FROM items WHERE name=?", (n["name"],)) or ""
-        items.append({"name": n["name"], "need": n["need"], "unit": n["unit"], "cat": cat, "missing": n.get("missing", 0),
-                      "alpha_adjusted": n.get("alpha_adjusted", False),
-                      "lots": ", ".join(f"{a[1]}" for a in n.get("alloc", []))})
+    bi = web_brew.batch_info(db, b)
+    all_done = b["status"] != "Planirano" and bi["done"] >= bi["n"]
+    k = bi["n"] if all_done else bi["done"] + 1
+    brew_row = next((x for x in bi["brews"] if x["n"] == k), None) or {}
+    vol_k = brew_row.get("volume_l") or bi["brew_vol"]
+
+    def describe(needs, stage, consumed=None):
+        items = []
+        for nd in needs:
+            items.append({"name": nd["name"], "need": nd["need"], "unit": nd["unit"], "cat": nd.get("category") or "",
+                          "missing": nd.get("missing", 0), "alpha_adjusted": nd.get("alpha_adjusted", False),
+                          "lots": ", ".join(f"{a[1]}" for a in nd.get("alloc", [])), "stage": stage})
+        return items
+    if not all_done:
+        brew = [dict(p, stage="brew") for p in web_brew.stage_needs(db, b["recipe_id"], "brew", vol_k)]
+        for p in brew:
+            p["alloc"], p["missing"] = db.allocate_fifo(p["item_id"], p["need"])
+        brew = alpha_adjust_needs(db, batch_id, brew)
+        ferm = [dict(p, stage="ferm") for p in web_brew.stage_needs(db, b["recipe_id"], "ferm", b["volume_l"])]
+        for p in ferm:
+            p["alloc"], p["missing"] = db.allocate_fifo(p["item_id"], p["need"])
+        items, ferm_items = describe(brew, "brew"), describe(ferm, "ferm")
+    else:  # sva kuhanja gotova: prikaz utroška (zadnje kuhanje + fermentor)
+        cons = db.q("""SELECT c.qty, c.brew_no, c.lot_id, i.name, i.unit, i.category, l.lot_no FROM batch_consumption c
+                       JOIN items i ON i.id=c.item_id JOIN lots l ON l.id=c.lot_id WHERE c.batch_id=?""", (batch_id,))
+        def grp(rows, stage):
+            g = {}
+            for c in rows:
+                e = g.setdefault(c["name"], {"name": c["name"], "need": 0, "unit": c["unit"], "cat": c["category"] or "",
+                                              "missing": 0, "lots": [], "stage": stage})
+                e["need"] = r4(e["need"] + c["qty"])
+                e["lots"].append(c["lot_no"])
+            for e in g.values():
+                e["lots"] = ", ".join(dict.fromkeys(e["lots"]))
+            return list(g.values())
+        items = grp([c for c in cons if c["brew_no"] not in (0,) and (c["brew_no"] in (None, k))], "brew")
+        ferm_items = grp([c for c in cons if c["brew_no"] == 0], "ferm")
     order = {"Slad": 0, "Hmelj": 1, "Kvasac": 2}
     items.sort(key=lambda x: (order.get(x["cat"], 3), x["name"]))
-    return {"batch": b, "recipe_note": (r or {}).get("note") or "", "items": items, "mill": bool(db.mill()),
-            "planned": b["status"] == "Planirano"}
+    ferm_items.sort(key=lambda x: (order.get(x["cat"], 3), x["name"]))
+    first = next((x for x in bi["brews"] if x["n"] == 1), None) or {}
+    return {"batch": b, "recipe_note": (r or {}).get("note") or "", "items": items, "ferm_items": ferm_items,
+            "mill": bool(db.mill()), "planned": not all_done, "k": k, "n": bi["n"], "last": k >= bi["n"],
+            "brew_vol": vol_k, "brew": brew_row, "first_date": first.get("brew_date") or b.get("brew_date"),
+            "mash": web_brew.mash_steps(r), "lauter_min": (r or {}).get("lauter_min") or 45,
+            "whirl_min": (r or {}).get("whirl_min") or 15, "boil_min": int((b or {}).get("boil_min") or (r or {}).get("boil_min") or 60),
+            "targets": {"og": (r or {}).get("target_og"), "fg": (r or {}).get("target_fg"),
+                        "ferm_temp": (r or {}).get("target_ferm_temp"), "cool_temp": (r or {}).get("cool_temp")}}
 
 
 def brew_day_finish(db, batch_id, data):
-    """Zapis s kraja dana kuhanja: kuhanje (skidanje sirovina), OG/pH/volumen, CCP kuhanja, kontrola mlina."""
+    """Kraj jednog kuhanja: skidanje sirovina (kuhanje k; zadnje kuhanje i fermentor), mjerenja kuhanja, CCP, mlin."""
+    import web_brew
     b = db.batch(batch_id)
     date = data.get("date") or _today()
     op = data.get("operator") or db.get_setting("default_operator")
-    if b["status"] == "Planirano":
-        db.brew_batch(batch_id, date)
-    upd = {k: data[k] for k in ("og_sg", "ph") if data.get(k)}
-    if data.get("wort_l"):
-        upd["wort_l"] = data["wort_l"]
-    upd["brewer"] = op
-    # dan kuhanja = početak fermentacije u odabranom fermentoru
+    bi = web_brew.batch_info(db, b)
+    all_done = b["status"] != "Planirano" and bi["done"] >= bi["n"]
+    if not all_done:
+        k = db.brew_batch(batch_id, date, data.get("brew_vol") or None, True if data.get("last") else None)
+    else:
+        k = bi["n"]
+    brew = {"wort_l": data.get("wort_l"), "og_sg": data.get("og_sg"), "ph": data.get("ph"), "brewer": op,
+            "boil_start": data.get("boil_start") or None, "boil_end": data.get("boil_end") or None,
+            "boil_min": data.get("boil_min") or None, "boil_temp": data.get("boil_temp") or None}
+    if db.val("SELECT COUNT(*) FROM batch_brews WHERE batch_id=? AND n=?", (batch_id, k)):
+        keys = [x for x in brew if brew[x] not in (None, "")]
+        if keys:
+            db.x(f"UPDATE batch_brews SET {','.join(x + '=?' for x in keys)} WHERE batch_id=? AND n=?",
+                 [brew[x] for x in keys] + [batch_id, k])
+    else:  # šarža skuhana prije 2.37 (bez zapisa kuhanja)
+        db.x("INSERT INTO batch_brews(batch_id,n,brew_date,volume_l,wort_l,og_sg,ph,brewer,boil_start,boil_end,boil_min,boil_temp,done) "
+             "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1)", (batch_id, k, date, b["volume_l"], brew["wort_l"], brew["og_sg"], brew["ph"], op,
+                                                    brew["boil_start"], brew["boil_end"], brew["boil_min"], brew["boil_temp"]))
+    # šarža (fermentor): zbroj sladovine, OG ponderiran volumenom, pH zadnjeg kuhanja
+    rows = db.q("SELECT * FROM batch_brews WHERE batch_id=? AND done=1 ORDER BY n", (batch_id,))
+    upd = {"brewer": op}
+    wort = [x["wort_l"] for x in rows if x.get("wort_l")]
+    if wort:
+        upd["wort_l"] = round(sum(wort), 1)
+    og = [(x["og_sg"], x.get("wort_l") or 1) for x in rows if x.get("og_sg")]
+    if og:
+        upd["og_sg"] = round(sum(a * w for a, w in og) / sum(w for _a, w in og), 4)
+    ph = [x["ph"] for x in rows if x.get("ph")]
+    if ph:
+        upd["ph"] = ph[-1]
     if data.get("tank"):
         upd["tank"] = data["tank"]
-    upd["ferm_start"] = date
+    if k == 1:
+        upd["ferm_start"] = date  # prvo kuhanje = početak punjenja fermentora
     if data.get("ferm_temp"):
         upd["ferm_temp"] = data["ferm_temp"]
     db.update_batch(batch_id, upd)
@@ -544,33 +609,42 @@ def brew_day_finish(db, batch_id, data):
     if data.get("boil_temp"):
         t = float(data["boil_temp"])
         ok = t >= 100
-        db.save_record("ccp_boil", {"batch_id": batch_id, "lot": b["batch_no"], "date": date,
-                                    "start_time": data.get("boil_start") or None, "end_time": data.get("boil_end") or None,
-                                    "temp": t, "minutes": data.get("boil_min") or None, "limit_ok": 1 if ok else 0,
-                                    "result": "OK" if ok else "NE", "corrective": data.get("corrective") or ("/" if ok else ""),
-                                    "operator": op})
+        rec = {"batch_id": batch_id, "lot": b["batch_no"], "date": date,
+               "start_time": data.get("boil_start") or None, "end_time": data.get("boil_end") or None,
+               "temp": t, "minutes": data.get("boil_min") or None, "limit_ok": 1 if ok else 0,
+               "result": "OK" if ok else "NE", "corrective": data.get("corrective") or ("/" if ok else ""),
+               "operator": op}
+        cid = db.save_record("ccp_boil", rec)
+        try:
+            db.x("UPDATE ccp_boil SET brew_no=? WHERE id=?", (k, cid))
+        except Exception:  # noqa: BLE001
+            pass
     if data.get("mill_ok"):
         db.add_mill_check(date, "Uređaj je u redu", op, batch_id)
     dry = data.get("dry") or {}
     if "on" in dry:
         on = 1 if dry.get("on") else 0
         days = int(dry.get("days") or 3)
+        start = b.get("brew_date") or date
         db.update_batch(batch_id, {"dry_hop_on": on, "dry_hop_time": dry.get("time") or "09:00",
-                                   "dry_hop_date": (dt.date.fromisoformat(date) + dt.timedelta(days=days)).isoformat() if on else None})
+                                   "dry_hop_date": (dt.date.fromisoformat(start[:10]) + dt.timedelta(days=days)).isoformat() if on else None})
     b = db.batch(batch_id)
-    return {"batch_no": b["batch_no"], "dry_hop_date": b.get("dry_hop_date") if b.get("dry_hop_on") else None}
+    bi = web_brew.batch_info(db, b)
+    return {"batch_no": b["batch_no"], "k": k, "n": bi["n"], "done_all": bi["done"] >= bi["n"],
+            "dry_hop_date": b.get("dry_hop_date") if b.get("dry_hop_on") else None}
 
 
 # ------------------------------------------------------------------ hmeljenje: raspored za kuhanje i dry hop
-def _hop_needs(db, recipe_id, volume):
-    """Ukupna količina svakog hmelja u recepturi za zadani volumen: {item_id: (naziv, količina, jedinica)}."""
+# Hmelj u kuhanju = sastojak recepture „po kuhanju” (količina za JEDNO kuhanje); dry hop = sastojak „za fermentor”.
+# Raspored: redak {item_id, stage: 'boil'|'dry', min, frac} – frac = dio količine tog hmelja u toj fazi.
+def _hop_needs(db, recipe_id, brew_vol, ferm_vol):
+    """{(item_id, 'boil'|'dry'): (naziv, količina, jedinica)} – kuhanje za jedno kuhanje, dry hop za cijeli fermentor."""
+    import web_brew
     out = {}
-    for ln in db.scaled_needs(recipe_id, volume):
-        cat = db.val("SELECT category FROM items WHERE id=?", (ln["item_id"],)) or ""
-        if cat != "Hmelj":
-            continue
-        n, q, u = out.get(ln["item_id"], (ln["name"], 0, ln["unit"]))
-        out[ln["item_id"]] = (n, q + ln["need"], u)
+    for stage, key, vol in (("brew", "boil", brew_vol), ("ferm", "dry", ferm_vol)):
+        for ln in web_brew.stage_needs(db, recipe_id, stage, vol):
+            if (ln.get("category") or "") == "Hmelj":
+                out[(ln["item_id"], key)] = (ln["name"], ln["need"], ln["unit"])
     return out
 
 
@@ -579,29 +653,45 @@ def _grams(q, unit):
     return q * 1000 if u == "kg" else q
 
 
+def _vols(db, b, r):
+    """(volumen jednog kuhanja, volumen fermentora) za šaržu ili recepturu."""
+    import web_brew
+    if b:
+        bi = web_brew.batch_info(db, b)
+        return (bi["brew_vol"] or 0), (b.get("volume_l") or 0)
+    if r.get("id"):
+        bs, _n, fs = web_brew.sizes(db, r["id"])
+        return bs, fs
+    return 0, 0
+
+
 def hop_plan(db, batch_id=None, recipe_id=None):
-    """Raspored hmelja: dodaci tijekom kuhanja (minuta od početka) i dry hop (u fermentoru, X dana nakon kuhanja).
-    Redak: {item_id, stage: 'boil'|'dry', min, frac} – frac = dio ukupne količine tog hmelja u recepturi."""
+    """Raspored hmelja: dodaci tijekom kuhanja (minuta od početka; količina za jedno kuhanje) i dry hop
+    (u fermentoru, X dana nakon kuhanja; količina za cijeli fermentor) te ostali dodaci u kuhanju (npr. Whirlfloc)."""
+    import web_brew
     b = db.batch(batch_id) if batch_id else None
     rid = b["recipe_id"] if b else recipe_id
     r = db.one("SELECT * FROM recipes WHERE id=?", (rid,)) or {}
-    vol = (b.get("volume_l") if b else None) or r.get("batch_size_l") or 0
-    needs = _hop_needs(db, rid, vol) if rid else {}
+    brew_vol, ferm_vol = _vols(db, b, r)
+    needs = _hop_needs(db, rid, brew_vol, ferm_vol) if rid else {}
     raw = (b or {}).get("hop_schedule") or r.get("hop_schedule")
     try:
         rows = json.loads(raw) if raw else []
     except ValueError:
         rows = []
-    if not rows:  # zadano: sav hmelj na početku kuhanja
-        rows = [{"item_id": iid, "stage": "boil", "min": 0, "frac": 1} for iid in needs]
+    have = {(x.get("item_id"), x.get("stage") or "boil") for x in rows}
+    for (iid, st) in needs:  # hmelj u recepturi bez retka u rasporedu: kuhanje od početka / dry hop
+        if (iid, st) not in have:
+            rows.append({"item_id": iid, "stage": st, "min": 0, "frac": 1})
     boil = int((b or {}).get("boil_min") or r.get("boil_min") or 60)
     out = []
     for x in rows:
-        if x.get("item_id") not in needs:
-            continue
-        name, q, unit = needs[x["item_id"]]
-        g = round(_grams(q * float(x.get("frac") or 0), unit), 1)
         stg = x.get("stage") or "boil"
+        key = (x.get("item_id"), stg)
+        if key not in needs:
+            continue
+        name, q, unit = needs[key]
+        g = round(_grams(q * float(x.get("frac") or 0), unit), 1)
         mn = int(x.get("min") or 0)
         adj = x.get("adj")
         if adj is None:
@@ -612,24 +702,40 @@ def hop_plan(db, batch_id=None, recipe_id=None):
     out.sort(key=lambda x: (x["stage"] != "boil", x["min"], x["name"]))
     on = (b or {}).get("dry_hop_on")
     on = int(r.get("dry_hop") or 0) if on is None or (b and not b.get("dry_hop_date") and b["status"] == "Planirano") else int(on)
+    if any(k[1] == "dry" for k in needs) and on is None:
+        on = 1
     days = int(r.get("dry_hop_days") or 3)
     tm = (b or {}).get("dry_hop_time") or r.get("dry_hop_time") or "09:00"
     date = (b or {}).get("dry_hop_date")
     if not date and b and b.get("brew_date") and b["status"] != "Planirano":
         date = (dt.date.fromisoformat(b["brew_date"][:10]) + dt.timedelta(days=days)).isoformat()
-    hops = [{"item_id": iid, "name": n, "g": round(_grams(q, u), 1), "unit": "g" if (u or "").lower() in ("kg", "g") else u}
-            for iid, (n, q, u) in needs.items()]
+    hops = {}
+    for (iid, st), (n, q, u) in needs.items():
+        hp = hops.setdefault(iid, {"item_id": iid, "name": n, "g_boil": 0.0, "g_dry": 0.0,
+                                   "unit": "g" if (u or "").lower() in ("kg", "g") else u})
+        hp["g_boil" if st == "boil" else "g_dry"] = round(_grams(q, u), 1)
+    hops = sorted(hops.values(), key=lambda x: x["name"])
     # korekcija prema alfa kiselinama: recept (alfa u recepturi) / LOT koji se troši (FIFO ili stvarno utrošen)
-    alpha = _alpha_info(db, b, r, needs)
+    boil_needs = {iid: v for (iid, st), v in needs.items() if st == "boil"}
+    alpha = _alpha_info(db, b, r, boil_needs)
     for x in out:
         f = (alpha.get(x["item_id"]) or {}).get("factor")
         if x["stage"] == "boil" and x["adj"] and f and abs(f - 1) > 1e-6:
             x["g_adj"] = round(x["g"] * f, 1)
     for hp in hops:
         hp["alpha"] = alpha.get(hp["item_id"]) or {}
+        hp["g"] = round(hp["g_boil"] + hp["g_dry"], 1)
+    # ostali dodaci u kuhanju s minutom (npr. Whirlfloc) – za alarm
+    adds = []
+    if rid:
+        for ln in web_brew.stage_needs(db, rid, "brew", brew_vol):
+            if (ln.get("category") or "") == "Hmelj" or ln.get("add_min") in (None, ""):
+                continue
+            adds.append({"item_id": ln["item_id"], "name": ln["name"], "min": int(ln["add_min"]), "qty": ln["need"], "unit": ln["unit"]})
     return {"rows": out, "boil_min": boil, "hops": hops, "dry": {"on": on, "days": days, "time": tm, "date": date,
                                                                  "done": (b or {}).get("dry_hop_done")},
-            "recipe": r.get("name") or "", "recipe_id": rid, "alpha": {str(k): v for k, v in alpha.items()}}
+            "recipe": r.get("name") or "", "recipe_id": rid, "alpha": {str(k): v for k, v in alpha.items()},
+            "adds": adds, "brew_vol": brew_vol, "ferm_vol": ferm_vol}
 
 
 def _auto_adj(stage, minute, boil):
@@ -653,7 +759,7 @@ def _alpha_info(db, b, r, needs):
         info = {"recipe": ra.get(iid), "lot": None, "factor": None, "lots": []}
         if b and b.get("status") != "Planirano":
             used = db.q("""SELECT l.lot_no, l.alpha, c.qty FROM batch_consumption c JOIN lots l ON l.id=c.lot_id
-                           WHERE c.batch_id=? AND c.item_id=?""", (b["id"], iid))
+                           WHERE c.batch_id=? AND c.item_id=? AND COALESCE(c.brew_no,1)<>0""", (b["id"], iid))
             parts = [(u["lot_no"], u["alpha"], u["qty"]) for u in used]
         else:
             alloc, _miss = db.allocate_fifo(iid, q)
@@ -675,6 +781,8 @@ def alpha_adjust_needs(db, batch_id, prev):
     b = db.batch(batch_id)
     plan = hop_plan(db, batch_id)
     for p in prev:
+        if p.get("stage") == "ferm":
+            continue
         a = (plan.get("alpha") or {}).get(str(p["item_id"])) or {}
         f = a.get("factor")
         if not f or abs(f - 1) < 1e-6:
@@ -689,23 +797,27 @@ def alpha_adjust_needs(db, batch_id, prev):
 
 
 def save_hop_plan(db, rows, boil_min=60, dry=None, batch_id=None, recipe_id=None, as_default=False, alpha=None):
-    """rows: [{item_id, stage, min, g}] – g se preračuna u dio ukupne količine (frac)."""
+    """rows: [{item_id, stage, min, g}] – g se preračuna u dio količine tog hmelja u toj fazi (frac)."""
     b = db.batch(batch_id) if batch_id else None
     rid = b["recipe_id"] if b else recipe_id
     r = db.one("SELECT * FROM recipes WHERE id=?", (rid,)) or {}
-    vol = (b.get("volume_l") if b else None) or r.get("batch_size_l") or 0
-    needs = _hop_needs(db, rid, vol)
+    brew_vol, ferm_vol = _vols(db, b, r)
+    needs = _hop_needs(db, rid, brew_vol, ferm_vol)
+    names = {iid: v[0] for (iid, _s), v in needs.items()}
     clean = []
     for x in rows or []:
         iid = x.get("item_id")
-        if iid not in needs:
-            continue
-        tot = _grams(needs[iid][1], needs[iid][2]) or 1
+        stg = x.get("stage") or "boil"
+        if (iid, stg) not in needs:
+            nm = names.get(iid) or db.val("SELECT name FROM items WHERE id=?", (iid,)) or "Hmelj"
+            raise ValueError(f"{nm}: za {'dry hop' if stg == 'dry' else 'kuhanje'} dodajte ovaj hmelj u recepturu kao sastojak "
+                             f"„{'za fermentor' if stg == 'dry' else 'po kuhanju'}”.")
+        tot = _grams(needs[(iid, stg)][1], needs[(iid, stg)][2]) or 1
         g = float(x.get("g") or 0)
         mn = int(float(x.get("min") or 0))
-        if x.get("stage", "boil") == "boil" and not 0 <= mn <= int(boil_min or 60):
-            raise ValueError(f"{needs[iid][0]}: minuta mora biti između 0 (početak) i {boil_min} (kraj kuhanja).")
-        row = {"item_id": iid, "stage": x.get("stage") or "boil", "min": mn, "frac": round(g / tot, 4)}
+        if stg == "boil" and not 0 <= mn <= int(boil_min or 60):
+            raise ValueError(f"{needs[(iid, stg)][0]}: minuta mora biti između 0 (početak) i {boil_min} (kraj kuhanja).")
+        row = {"item_id": iid, "stage": stg, "min": mn, "frac": round(g / tot, 4)}
         if x.get("adj") is not None and bool(x.get("adj")) != _auto_adj(row["stage"], mn, boil_min):
             row["adj"] = bool(x["adj"])  # ručno odabrano (inače automatski: gorčina = kuha se ≥ 30 min)
         clean.append(row)

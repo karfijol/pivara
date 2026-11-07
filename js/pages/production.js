@@ -624,39 +624,95 @@ export async function hopEditor(app, opts) {
 // ================================================================== Dan kuhanja (mobitel)
 // Alarm se pušta kao medijski zvuk (HTML <audio>), a ne kao ton obavijesti: svira i kad su tonovi / zvono isključeni
 // (ovisi o glasnoći medija). Zvuk se ponavlja dok se ne klikne „U redu”.
-let ALARM = null;
-function alarmWav() {
-  const sr = 22050, secs = 1.2, n = Math.round(sr * secs);
+let ALARM = null, ALARM_KIND = null;
+// zvukovi alarma (izrađuju se u pregledniku, bez datoteka): izbor se pamti na ovom uređaju
+export const ALARM_SOUNDS = [["zvono", "Zvono (mekano, ugodno)"], ["akord", "Tri tona (kuhinjski timer)"], ["gong", "Gong (dubok, dugo zvoni)"],
+  ["pisak", "Pištanje (glasno, kao do sad)"]];
+function alarmKind() { try { return localStorage.getItem("alarm_sound") || "zvono"; } catch { return "zvono"; } }
+function alarmFlashOn() { try { return localStorage.getItem("alarm_flash") !== "0"; } catch { return true; } }
+function alarmWav(kind) {
+  const sr = 22050;
+  const secs = { zvono: 2.4, akord: 1.8, gong: 3.2, pisak: 1.2 }[kind] || 2;
+  const n = Math.round(sr * secs);
   const buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
-  const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  const w = (o, s2) => { for (let i = 0; i < s2.length; i++) v.setUint8(o + i, s2.charCodeAt(i)); };
   w(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); w(8, "WAVEfmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true);
   v.setUint16(22, 1, true); v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
   w(36, "data"); v.setUint32(40, n * 2, true);
-  for (let i = 0; i < n; i++) {
-    const t = i / sr, beepOn = (t % 0.4) < 0.25;
-    const s2 = beepOn ? Math.sin(2 * Math.PI * (t % 0.8 < 0.4 ? 988 : 784) * t) * 0.9 : 0;
-    v.setInt16(44 + i * 2, s2 * 32767, true);
-  }
+  const TAU = 2 * Math.PI;
+  // udarac zvona: osnovni ton + neharmonični prizvuci, eksponencijalno gašenje
+  const bell = (t, f, dec) => (t < 0 ? 0 : Math.exp(-t * dec) * (Math.sin(TAU * f * t) + 0.5 * Math.sin(TAU * f * 2.76 * t) * Math.exp(-t * 2)
+    + 0.25 * Math.sin(TAU * f * 5.4 * t) * Math.exp(-t * 4)) * Math.min(1, t * 400));
+  const sample = (t) => {
+    switch (kind) {
+      case "zvono": return 0.55 * (bell(t, 880, 2.2) + bell(t - 0.6, 1108.7, 2.2));          // ding-dong (A5, C#6), dvaput
+      case "akord": return 0.45 * [523.25, 659.25, 783.99].reduce((a, f, i) => a + bell(t - i * 0.22, f, 3.2), 0)   // C-E-G, pa ponovno
+        + 0.45 * [523.25, 659.25, 783.99].reduce((a, f, i) => a + bell(t - 0.9 - i * 0.22, f, 3.2), 0);
+      case "gong": return 0.8 * Math.exp(-t * 0.9) * (Math.sin(TAU * 110 * t) + 0.6 * Math.sin(TAU * 220.7 * t) + 0.4 * Math.sin(TAU * 331.9 * t)
+        + 0.3 * Math.sin(TAU * 437 * t) * Math.exp(-t * 1.5)) * Math.min(1, t * 60) / 1.6;
+      default: { const on = (t % 0.4) < 0.25; return on ? Math.sin(TAU * (t % 0.8 < 0.4 ? 988 : 784) * t) * 0.9 : 0; }
+    }
+  };
+  for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, sample(i / sr))) * 32767, true);
   return URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
 }
 function alarmEl() {
-  if (!ALARM) { ALARM = new Audio(alarmWav()); ALARM.loop = true; ALARM.preload = "auto"; }
+  const k = alarmKind();
+  if (!ALARM || ALARM_KIND !== k) {
+    try { if (ALARM) ALARM.pause(); } catch { /* */ }
+    ALARM = new Audio(alarmWav(k)); ALARM.loop = true; ALARM.preload = "auto"; ALARM_KIND = k;
+  }
   return ALARM;
 }
 // poziva se na klik (Start): preglednik dopušta zvuk tek nakon dodira korisnika
 export function unlockAlarm() {
   try { const a = alarmEl(); a.muted = true; a.play().then(() => { a.pause(); a.currentTime = 0; a.muted = false; }).catch(() => { a.muted = false; }); } catch { /* */ }
 }
+// proba zvuka (2 sekunde)
+function testAlarm() {
+  try { const a = alarmEl(); a.currentTime = 0; a.volume = 1; a.play().catch(() => {}); setTimeout(() => { try { if (!alarmDlg) { a.pause(); a.currentTime = 0; } } catch { /* */ } }, 2500); } catch { /* */ }
+  if (alarmFlashOn()) { flashOn(); setTimeout(() => { if (!alarmDlg) flashOff(); }, 2500); }
+}
+// bljeskanje cijelog zaslona dok se alarm ne potvrdi (vidi se i iz daljine)
+let flashEl = null;
+function flashOn() {
+  if (flashEl) return;
+  flashEl = h("div", { class: "alarm-flash" });
+  document.body.append(flashEl);
+}
+function flashOff() { if (flashEl) { flashEl.remove(); flashEl = null; } }
 let alarmDlg = null;
 function beepLong(text = "Vrijeme je isteklo") {
   try { if (navigator.vibrate) navigator.vibrate([600, 250, 600, 250, 600, 250, 600]); } catch { /* */ }
   try { const a = alarmEl(); a.currentTime = 0; a.volume = 1; a.play().catch(() => {}); } catch { /* */ }
+  if (alarmFlashOn()) flashOn();
+  // program nije na zaslonu (druga aplikacija / zaključan mobitel): obavijest, ako je dopuštena
+  try {
+    if (document.hidden && window.Notification && Notification.permission === "granted") {
+      navigator.serviceWorker?.getRegistration().then((reg) => {
+        const o = { body: text, icon: "icons/icon-192.png", tag: "brewday-alarm", renotify: true, requireInteraction: true, vibrate: [600, 250, 600] };
+        if (reg) reg.showNotification("⏰ Dan kuhanja", o); else new Notification("⏰ Dan kuhanja", o);
+      }).catch(() => {});
+    }
+  } catch { /* */ }
   if (alarmDlg) { alarmDlg.body.querySelector(".msg").textContent += "\n" + text; return; }
   alarmDlg = new Dialog("⏰ Dan kuhanja", { width: 420, cls: "alarm-dlg" });
-  alarmDlg.body.append(h("div", { class: "msg", style: { fontSize: "20px", fontWeight: 700 } }, text));
+  alarmDlg.body.append(h("div", { class: "msg", style: { fontSize: "22px", fontWeight: 700 } }, text));
   alarmDlg.buttons("U redu", () => alarmDlg.close(true), null);
-  alarmDlg.show().then(() => { try { ALARM.pause(); ALARM.currentTime = 0; if (navigator.vibrate) navigator.vibrate(0); } catch { /* */ } alarmDlg = null; });
-  setTimeout(() => { try { if (alarmDlg) ALARM.pause(); } catch { /* */ } }, 60000); // najviše minutu
+  alarmDlg.show().then(() => { try { ALARM.pause(); ALARM.currentTime = 0; if (navigator.vibrate) navigator.vibrate(0); } catch { /* */ } flashOff(); alarmDlg = null; });
+  setTimeout(() => { try { if (alarmDlg) ALARM.pause(); } catch { /* */ } }, 60000); // zvuk najviše minutu (bljeskanje ostaje do „U redu”)
+}
+// izbor zvuka i bljeskanja (na danu kuhanja)
+function alarmSettings() {
+  const sel = h("select", { style: { maxWidth: "100%" } }, ALARM_SOUNDS.map(([k, l]) => h("option", { value: k }, l)));
+  sel.value = alarmKind();
+  sel.addEventListener("change", () => { try { localStorage.setItem("alarm_sound", sel.value); } catch { /* */ } testAlarm(); });
+  const fl = h("input", { type: "checkbox" }); fl.checked = alarmFlashOn();
+  fl.addEventListener("change", () => { try { localStorage.setItem("alarm_flash", fl.checked ? "1" : "0"); } catch { /* */ } });
+  const notif = window.Notification && Notification.permission === "default"
+    ? btn("🔔 Dopusti obavijesti", async () => { try { await Notification.requestPermission(); } catch { /* */ } notif.remove(); }, "ghost") : null;
+  return h("div", { class: "alarm-set" }, h("span", { class: "muted" }, "Zvuk alarma"), sel, btn("▶ Probaj", () => testAlarm(), "ghost"),
+    h("label", { class: "chk" }, fl, " Bljeskanje zaslona"), notif);
 }
 
 class BrewDayDialog extends Dialog {
@@ -713,7 +769,7 @@ class BrewDayDialog extends Dialog {
     }
     this.body.append(this.fermBox);
     // 2. koraci s mjeračem vremena (iz recepture)
-    this.body.append(h("h3", { class: "sec" }, "2. Koraci"));
+    this.body.append(h("h3", { class: "sec" }, "2. Koraci"), alarmSettings());
     if (d.mill && d.k === 1) this.body.append(chk("mill", "Mlin pregledan prije mljevenja – uređaj je u redu (upisuje se kontrola mlina)"));
     this.body.append(chk("mill_done", "Mljevenje slada"));
     this._doneTxt = {};

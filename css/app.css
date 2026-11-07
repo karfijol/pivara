@@ -680,3 +680,18 @@ body:has(.modal-back) .undo-fab { display: none; }
   .brewday .bd-time { font-size: 22px; }
   .brewday .bd-row input[type=checkbox] { width: 26px; height: 26px; }
 }
+
+/* alarm na danu kuhanja: izbor zvuka i bljeskanje zaslona */
+.alarm-set { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+.alarm-set select { flex: 1 1 200px; }
+.alarm-flash { position: fixed; inset: 0; z-index: 9990; pointer-events: none; animation: alarmflash 0.7s steps(1, end) infinite; }
+@keyframes alarmflash { 0% { background: rgba(255, 255, 255, 0.92); } 50% { background: rgba(232, 160, 40, 0.92); } }
+.modal-back:has(.alarm-dlg) { z-index: 9995 !important; background: transparent; }
+.alarm-dlg { box-shadow: 0 0 0 4px var(--accent), 0 20px 60px rgba(0,0,0,.45); }
+@media (prefers-reduced-motion: reduce) { .alarm-flash { animation-duration: 1.6s; } }
+/* alarm: i na mobitelu kartica u sredini, a oko nje bljeska cijeli zaslon */
+.modal-back:has(.alarm-dlg) { align-items: center !important; justify-content: center; padding: 16px !important; }
+.modal.alarm-dlg { height: auto !important; max-height: 80vh; border-radius: 18px !important; width: min(420px, calc(100vw - 32px)) !important; }
+.modal.alarm-dlg .modal-body { padding: 18px 16px; }
+.modal.alarm-dlg .msg { font-size: 24px !important; line-height: 1.3; }
+.modal.alarm-dlg .modal-bar .btn { min-height: 56px; font-size: 20px; }

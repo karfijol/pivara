@@ -500,8 +500,9 @@ class ExtrasMixin:
         """Sastojci iz recepture, poredani po masi (voda prva); alergeni VELIKIM slovima.
         Vraća (tekst, set alergena)."""
         parts, allergens = {}, set()
-        for ln in self.q("""SELECT ri.qty, i.name, i.category, i.unit FROM recipe_items ri JOIN items i ON i.id=ri.item_id
-                            WHERE ri.recipe_id=?""", (recipe_id,)):
+        r0 = self.recipe(recipe_id) or {}
+        for ln in self.scaled_needs(recipe_id, r0.get("batch_size_l")):  # osnovna jedinica, cijeli fermentor
+            ln = dict(ln, qty=ln["need"])
             nm, cat = (ln["name"] or "").lower(), ln["category"] or ""
             if cat in ("Kemikalija", "Ambalaža") or any(k in nm + " " for k in SKIP_INGR):
                 continue

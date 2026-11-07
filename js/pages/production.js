@@ -85,7 +85,8 @@ export class LinesDialog extends Dialog {
     this.itemOpts = opts; // [[label, item_id, unit, price]]
     this.withPrice = withPrice;
     this.qtyLabel = qtyLabel;
-    this.stages = stages; // receptura: faza (po kuhanju / za fermentor) i minuta dodavanja u kuhanju
+    this.stages = stages; // receptura: faza (po kuhanju / za fermentor), vrijeme i jedinica (kg, g, kom, pakiranje)
+    this.unitMap = stages ? (window.APP ? window.APP.py.call("web_units.all_units") : {}) : null;
     this.form = new Form(headerFields, headerInitial || {}, headerCols || (headerFields.length > 6 ? 3 : 2));
     this.body.append(this.form.el, h("div", { class: "sec", style: { marginTop: "10px" } }, stages ? "Sastojci" : "Stavke"),
       h("div", { class: "muted", style: { fontSize: "12.5px", margin: "-2px 0 6px" } }, stages
@@ -98,7 +99,7 @@ export class LinesDialog extends Dialog {
     this.body.append(this.list, h("div", { class: "row gap", style: { marginTop: "6px", alignItems: "center" } },
       btn("＋ Dodaj stavku", () => this.addRow()), this.sum));
     this.lines = (lines || []).map((ln) => ({ item_id: ln.item_id, qty: ln.qty, unit_price: ln.unit_price || 0, name: ln.name, unit: ln.unit,
-      stage: ln.stage === "ferm" ? "ferm" : "brew", add_min: ln.add_min ?? null,
+      stage: ln.stage === "ferm" ? "ferm" : "brew", add_min: ln.add_min ?? null, qty_unit: ln.qty_unit || null,
       _q: ln.qty != null ? dec(ln.qty) : "", _p: ln.unit_price != null ? dec(ln.unit_price) : "", _m: ln.add_min != null ? String(ln.add_min) : "" }));
     this.render();
     this.buttons("Spremi", () => this.ok());
@@ -118,11 +119,28 @@ export class LinesDialog extends Dialog {
         !known && ln.item_id != null ? h("option", { value: "x" }, ln.name || "?") : null,
         this.itemOpts.map((o, k) => h("option", { value: String(k) }, o[0])));
       sel.value = known ? String(this.itemOpts.indexOf(known)) : (ln.item_id != null ? "x" : "");
-      const unit = h("span", { class: "muted" }, known ? known[2] || "" : ln.unit || "");
+      const unitLbl = (u) => (u === "pak" ? "pakiranje" : u);
+      let unit;
+      if (this.stages) {
+        unit = h("select", { class: "ln-unit", title: "Jedinica količine (zaliha se vodi u osnovnoj jedinici artikla)" });
+        const fillUnits = () => {
+          const base = known ? known[2] : ln.unit;
+          const opts = (this.unitMap && ln.item_id != null && this.unitMap[String(ln.item_id)]) || [base || "kg"];
+          unit.innerHTML = "";
+          for (const u of opts) unit.append(h("option", { value: u }, unitLbl(u)));
+          if (!ln.qty_unit || !opts.includes(ln.qty_unit)) ln.qty_unit = opts[0];
+          unit.value = ln.qty_unit;
+        };
+        fillUnits();
+        unit.addEventListener("change", () => { ln.qty_unit = unit.value; });
+        this._fillUnits = this._fillUnits || new Map();
+        this._fillUnits.set(ln, fillUnits);
+      } else unit = h("span", { class: "muted" }, known ? known[2] || "" : ln.unit || "");
       sel.addEventListener("change", () => {
         if (sel.value === "x") return;
         const o = sel.value === "" ? null : this.itemOpts[+sel.value];
-        ln.item_id = o ? o[1] : null; ln.unit = o ? o[2] : ""; unit.textContent = ln.unit || "";
+        ln.item_id = o ? o[1] : null; ln.unit = o ? o[2] : "";
+        if (this.stages) { ln.qty_unit = null; this._fillUnits.get(ln)(); } else unit.textContent = ln.unit || "";
         if (o && this.withPrice && !ln._p) { ln._p = dec(o[3] || 0); if (pr) pr.value = ln._p; }
         this.upd();
         q.focus();
@@ -179,6 +197,7 @@ export class LinesDialog extends Dialog {
       const row = { item_id: l.item_id, qty: q, unit_price: p };
       if (this.stages) {
         row.stage = l.stage === "ferm" ? "ferm" : "brew";
+        row.qty_unit = l.qty_unit || null;
         const m = String(l._m ?? "").trim();
         if (m !== "") {
           const mv = Math.round(num(m));
@@ -292,7 +311,7 @@ class RecipesPage extends Page {
         const st = this.db.stock(ln.item_id);
         const n = tot[ln.item_id] ? Math.trunc(st / tot[ln.item_id] + 1e-9) : 0;
         rows.push({ id: ln.id, name: ln.name, stage: ln.stage === "ferm" ? "za fermentor" + (ln.add_min ? ` · dan ${ln.add_min}` : "") : "po kuhanju" + (ln.add_min != null ? ` · ${ln.add_min} min` : (ln.category === "Hmelj" ? ` · ${r.boil_min || 60} min` : "")),
-          qty: fq(ln.qty), unit: ln.unit, stock: fq(st), brews: `${n} fermentor${n === 1 ? "" : "a"}`,
+          qty: fq(ln.qty_in), unit: ln.qty_unit === "pak" ? "pakiranje" : ln.qty_unit, stock: `${fq(st)} ${ln.unit}`, brews: `${n} fermentor${n === 1 ? "" : "a"}`,
           _tag: n < 1 ? "bad" : (n < 2 ? "warn" : "") });
       }
     }
@@ -395,7 +414,7 @@ class RecipesPage extends Page {
           + "Preračunati količine sastojaka na nove volumene (po kuhanju × " + fq(nbs / obs, 3) + ", za fermentor × " + fq(nfs / ofs, 3) + ")?\n\n"
           + "„Ne” = količine ostaju kako ste ih upisali.", "Preračun recepture", { ok: "Preračunaj", cancel: "Ne" })) {
         // preračunavaju se samo sastojci koji su već bili u recepturi s istom količinom (novo upisani ostaju kako su upisani)
-        const orig = new Set(this.db.recipe_lines(id).map((l) => `${l.item_id}|${l.stage === "ferm" ? "ferm" : "brew"}|${Math.round(l.qty * 10000)}`));
+        const orig = new Set(this.db.recipe_lines(id).map((l) => `${l.item_id}|${l.stage === "ferm" ? "ferm" : "brew"}|${Math.round(l.qty_in * 10000)}`));
         for (const l of lines) {
           if (!orig.has(`${l.item_id}|${l.stage === "ferm" ? "ferm" : "brew"}|${Math.round(l.qty * 10000)}`)) continue;
           l.qty = Math.round(l.qty * (l.stage === "ferm" ? nfs / ofs : nbs / obs) * 10000) / 10000;
@@ -419,7 +438,7 @@ class RecipesPage extends Page {
   async edit() {
     const id = this.need(this.table, "recepturu");
     if (!id) return;
-    const res = await this.dialog("Uredi recepturu", this.db.recipe(id), this.db.recipe_lines(id), id);
+    const res = await this.dialog("Uredi recepturu", this.db.recipe(id), this.db.recipe_lines(id).map((l) => ({ ...l, qty: l.qty_in, unit: l.qty_unit })), id);
     if (res) { await this.saveRecipe(res, id); this.app.refreshAll(); }
   }
 

@@ -378,9 +378,18 @@ class DB(HaccpMixin, ExtrasMixin):
         return self.one("SELECT * FROM recipes WHERE id=?", (id,))
 
     def recipe_lines(self, recipe_id):
-        return self.q("""SELECT ri.*, i.name, i.unit, i.category FROM recipe_items ri
+        """Retci recepture; qty = količina u OSNOVNOJ jedinici artikla (zaliha), qty_in/qty_unit = kako je upisano."""
+        rows = self.q("""SELECT ri.*, i.name, i.unit, i.category, i.piece_qty, i.reorder_qty FROM recipe_items ri
                          JOIN items i ON i.id=ri.item_id WHERE ri.recipe_id=?
-                         ORDER BY COALESCE(ri.stage,'brew')='ferm', i.category, i.name""", (recipe_id,))
+                         ORDER BY COALESCE(ri.stage,'brew')='ferm', i.category, i.name, COALESCE(ri.add_min,-1) DESC""", (recipe_id,))
+        import web_units
+        for r in rows:
+            r["qty_in"] = r["qty"]
+            u = r.get("qty_unit") or r["unit"]
+            r["qty_unit"] = u
+            f = web_units.factor(r, u)
+            r["qty"] = r4(r["qty"] * (f if f is not None else 1))
+        return rows
 
     def save_recipe(self, data, lines, id=None):
         data = dict(data)
@@ -398,12 +407,20 @@ class DB(HaccpMixin, ExtrasMixin):
                 id = self.con.execute(f"INSERT INTO recipes({','.join(keys)}) VALUES({','.join('?' * len(keys))})",
                                       [data[k] for k in keys]).lastrowid
             cols = {r["name"] for r in self.q("PRAGMA table_info(recipe_items)")}
+            import web_units
             for ln in lines:
                 if "stage" in cols:
                     am = ln.get("add_min")
-                    self.con.execute("INSERT INTO recipe_items(recipe_id,item_id,qty,stage,add_min) VALUES(?,?,?,?,?)",
+                    u = ln.get("qty_unit") or None
+                    it = self.one("SELECT * FROM items WHERE id=?", (ln["item_id"],)) or {}
+                    if u and web_units._n(u) == web_units._n(it.get("unit")):
+                        u = None
+                    if u and web_units.factor(it, u) is None:
+                        raise ValueError(f"{it.get('name')}: jedinica „{web_units.LABEL.get(web_units._n(u), u)}” ne može se preračunati u "
+                                         f"{it.get('unit')} – u Sirovinama upišite koliko je 1 kom / 1 pakiranje.")
+                    self.con.execute("INSERT INTO recipe_items(recipe_id,item_id,qty,stage,add_min,qty_unit) VALUES(?,?,?,?,?,?)",
                                      (id, ln["item_id"], ln["qty"], "ferm" if ln.get("stage") == "ferm" else "brew",
-                                      int(am) if am not in (None, "") else None))
+                                      int(am) if am not in (None, "") else None, u))
                 else:
                     self.con.execute("INSERT INTO recipe_items(recipe_id,item_id,qty) VALUES(?,?,?)",
                                      (id, ln["item_id"], ln["qty"]))

@@ -7,6 +7,13 @@ import * as store from "../store.js";
 
 const CATEGORIES = ["Slad", "Hmelj", "Kvasac", "Dodaci", "Ambalaža", "Kemikalija", "Ostalo"];
 const UNITS = ["kg", "g", "L", "ml", "kom", "pak"];
+const UNIT_OPTS = UNITS.map((u) => [u === "pak" ? "pakiranje" : u, u]);
+const unitLbl = (u) => (u === "pak" ? "pakiranje" : u);
+// primka / izdavanje: kod odabira artikla jedinica se postavi na osnovnu jedinicu artikla
+function unitFollow(db, f) {
+  if (!f.w.item_id || !f.w.qty_unit) return;
+  f.w.item_id.el.addEventListener("change", () => { const id = f.w.item_id.get(); const it = id ? db.item(id) : null; if (it) f.w.qty_unit.set(it.unit); });
+}
 const RED = "#E0675A";
 const PALETTE = ["#E3A12B", "#4F9DDE", "#5BBF7A", "#E0675A", "#A57BD6", "#3FB8B0", "#C9C24A", "#8A8F98"];
 const KEG_COLORS = { "Čist": "#5BBF7A", "Pun": "#E3A12B", "Kod kupca": "#4F9DDE", "Prljav": "#B9864A",
@@ -440,9 +447,10 @@ class ItemsPage extends Page {
     return [
       { key: "code", label: "Šifra" }, { key: "name", label: "Naziv", required: true },
       { key: "category", label: "Kategorija", type: "combo", options: CATEGORIES, editable: true, default: chem ? "Kemikalija" : "Slad" },
-      { key: "unit", label: "Jedinica mjere", type: "combo", options: UNITS, editable: true, default: chem ? "L" : "kg" },
-      { key: "min_stock", label: "Minimalna zaliha", type: "num", min: 0, default: 0 },
-      { key: "reorder_qty", label: "Pakiranje / min. narudžba", type: "num", min: 0, default: 0 },
+      { key: "unit", label: "Osnovna jedinica (zaliha se vodi u njoj)", type: "combo", options: UNIT_OPTS, editable: true, default: chem ? "L" : "kg" },
+      { key: "min_stock", label: "Minimalna zaliha (u osnovnoj jedinici)", type: "num", min: 0, default: 0 },
+      { key: "reorder_qty", label: "1 pakiranje = (osnovnih jedinica) · ujedno min. narudžba", type: "num", min: 0, default: 0 },
+      { key: "piece_qty", label: "1 kom = (osnovnih jedinica, npr. vrećica kvasca 0,0115 kg)", type: "num", min: 0 },
       { key: "supplier_id", label: "Glavni dobavljač", type: "combo", options: supplierOpts(this.db) },
       { key: "price", label: "Nabavna cijena (€/jed.)", type: "num", min: 0, default: 0 },
       { key: "is_chemical", label: "Kemikalija (praćenje sigurnosnih rokova)", type: "check", default: chem ? 1 : 0 },
@@ -454,22 +462,37 @@ class ItemsPage extends Page {
     ];
   }
 
-  _save(data, id = null) {
+  async _save(data, id = null) {
     data.shelf_after_open_days = Math.trunc(data.shelf_after_open_days || 0);
-    this.db.save_item(data, id);
+    if (!data.piece_qty) data.piece_qty = null;
+    if (id) {
+      const old = this.db.item(id);
+      if (data.unit && data.unit !== old.unit) {
+        const chk = this.app.py.call("web_units.change_unit_check", id, data.unit);
+        if (!chk.ok) return error(`Artikl već ima primke u jedinici ${chk.from}, a ${chk.from} se ne može pretvoriti u ${unitLbl(chk.to)}.\n\n`
+          + "Zaliha ostaje u osnovnoj jedinici; u primci, izdavanju i recepturi količinu možete upisati i u drugoj jedinici (kg, g, kom, pakiranje) – program je preračuna.");
+        if (chk.convert) {
+          if (!(await confirm(`Promijeniti osnovnu jedinicu ${chk.from} → ${chk.to}?\n\nSve količine artikla (LOT-ovi, kartica, utrošak šarži, receptura, narudžbenice, minimum, pakiranje) `
+            + `preračunat će se (× ${fq(chk.convert, 4)}), a cijene po jedinici (÷ ${fq(chk.convert, 4)}).`, "Jedinica mjere", { ok: "Preračunaj" }))) return;
+          try { this.app.py.call("web_units.change_unit", id, data.unit); } catch (e) { return error(e); }
+          for (const k of ["unit", "min_stock", "reorder_qty", "piece_qty", "price"]) delete data[k];
+        }
+      }
+    }
+    try { this.db.save_item(data, id); } catch (e) { return error(e); }
     this.app.refreshAll();
   }
 
   async new(chem = false) {
     const d = await askForm("Novi artikl", this.fields(chem), {}, { columns: 2 });
-    if (d) this._save(d);
+    if (d) await this._save(d);
   }
 
   async edit(id = null) {
     id = id || this.need(this.table, "artikl");
     if (!id) return;
     const d = await askForm("Uredi artikl", this.fields(), this.db.item(id), { columns: 2 });
-    if (d) this._save(d, id);
+    if (d) await this._save(d, id);
   }
 
   async receive(itemId = null, chem = null) {
@@ -480,22 +503,25 @@ class ItemsPage extends Page {
       { key: "item_id", label: "Artikl", type: "combo", options: opts, required: true },
       { key: "lot_no", label: "LOT broj (prazno = automatski interni)" },
       { key: "qty", label: "Količina", type: "num", required: true, positive: true },
+      { key: "qty_unit", label: "Jedinica (preračunava se u osnovnu jedinicu artikla)", type: "combo", options: UNIT_OPTS },
       { key: "received", label: "Datum primitka", type: "date", required: true, default: today() },
       { key: "expiry", label: "Rok trajanja (najbolje upotrijebiti do)", type: "date" },
       { key: "supplier_id", label: "Dobavljač", type: "combo", options: supplierOpts(this.db) },
-      { key: "unit_price", label: "Cijena €/jed. (bez PDV-a, s računa)", type: "num", min: 0 },
+      { key: "unit_price", label: "Cijena € po osnovnoj jedinici artikla (kg, L, kom…; bez PDV-a)", type: "num", min: 0 },
       { key: "invoice_no", label: "Broj računa dobavljača (za izvještaj knjigovođi)" },
       { key: "alpha", label: "Alfa kiseline % (samo hmelj, s deklaracije)", type: "num", min: 0 },
       { key: "note", label: "Napomena (br. otpremnice…)" },
       { key: "haccp", label: "Odmah ispuni HACCP zapisnik o prijemu (sirovine i ambalaža)", type: "check" },
-    ], { item_id: itemId, supplier_id: it ? it.supplier_id : null, unit_price: it ? it.price : 0, haccp: chem ? 0 : 1 });
+    ], { item_id: itemId, qty_unit: it ? it.unit : "kg", supplier_id: it ? it.supplier_id : null, unit_price: it ? it.price : 0, haccp: chem ? 0 : 1 },
+    { onReady: (f) => unitFollow(this.db, f) });
     if (!d) return;
     const want = d.haccp;
     const alpha = d.alpha;
     delete d.haccp; delete d.alpha;
     let lotId;
     try {
-      lotId = this.db.receive_lot(d.item_id, d.qty, d.lot_no, d.received, d.expiry, d.supplier_id, d.unit_price || 0, null, d.note);
+      lotId = this.app.py.callKw("web_units.receive", [d.item_id, d.qty, d.qty_unit || null],
+        { lot_no: d.lot_no, received: d.received, expiry: d.expiry, supplier_id: d.supplier_id, unit_price: d.unit_price || 0, note: d.note });
       if (d.invoice_no) this.app.py.call("web_costs.set_lot_invoice", [lotId], d.invoice_no);
       if (alpha) this.app.py.call("web_more.set_lot_alpha", [lotId], alpha);
       this.app.refreshAll();
@@ -513,12 +539,13 @@ class ItemsPage extends Page {
     const d = await askForm("Izdavanje sa skladišta (FIFO)", [
       { key: "item_id", label: "Artikl", type: "combo", options: opts, required: true },
       { key: "qty", label: "Količina", type: "num", required: true, positive: true },
+      { key: "qty_unit", label: "Jedinica", type: "combo", options: UNIT_OPTS },
       { key: "mtype", label: "Vrsta", type: "combo", options: ["IZDAVANJE", "OTPIS", "ČIŠĆENJE", "UZORAK"], default: "IZDAVANJE" },
       { key: "ref", label: "Referenca (npr. šarža, tank)" }, { key: "note", label: "Napomena" },
-    ], { item_id: itemId });
+    ], { item_id: itemId, qty_unit: itemId ? this.db.item(itemId).unit : "kg" }, { onReady: (f) => unitFollow(this.db, f) });
     if (!d) return;
     try {
-      const alloc = this.db.issue_fifo(d.item_id, d.qty, d.mtype, d.ref || "", d.note || "");
+      const alloc = this.app.py.call("web_units.issue", d.item_id, d.qty, d.qty_unit || null, d.mtype, d.ref || "", d.note || "");
       this.app.refreshAll();
       this.app.toast("Izdano iz LOT-ova: " + alloc.map((a) => `${a[1]} (${fq(a[2])})`).join(", "));
     } catch (e) { this.err(e); }

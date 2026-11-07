@@ -83,6 +83,11 @@ def open_db(path):
     except Exception:  # noqa: BLE001
         traceback.print_exc()
     try:
+        import web_units
+        web_units.ensure(DB_)
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
+    try:
         import web_brew
         web_brew.ensure(DB_)
     except Exception:  # noqa: BLE001

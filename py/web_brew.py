@@ -3,7 +3,9 @@
 * recipes.brew_size_l   – volumen jednog kuhanja; recipes.brews – broj kuhanja po fermentoru;
   recipes.batch_size_l  = brew_size_l × brews (ciljni volumen u fermentoru).
 * recipe_items.stage    – 'brew' (količina po kuhanju) ili 'ferm' (količina za cijeli fermentor: kvasac, dry hop…);
-  recipe_items.add_min  – minuta kuhanja u kojoj se dodaje (npr. Whirlfloc) – za alarm na danu kuhanja.
+  recipe_items.add_min  – VRIJEME (kao BeerSmith): za kuhanje = koliko minuta se dodatak kuha (90 od 90 = na početku,
+                          10 = 10 min prije kraja, 0 = na kraju); za fermentor (dry hop) = dan nakon kuhanja.
+  Svaki dodatak hmelja je zaseban redak recepture (isti hmelj može biti više puta s različitim vremenom).
 * recipes.mash_steps    – koraci ukomljavanja [{name, temp, min}], lauter_min, whirl_min, ciljne vrijednosti.
 * batches = jedan fermentor = jedan LOT piva; batches.brews = planirani broj kuhanja;
   batch_brews = pojedina kuhanja (datum, volumen sladovine, OG, pH, CCP…);
@@ -47,6 +49,9 @@ def ensure(db):
     if db.val("SELECT value FROM settings WHERE key='brew2_migrated'") != "1":
         _migrate(db)
         c.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('brew2_migrated','1')")
+    if db.val("SELECT value FROM settings WHERE key='brew3_migrated'") != "1":
+        _migrate_times(db)
+        c.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('brew3_migrated','1')")
     c.commit()
 
 
@@ -103,6 +108,54 @@ def _migrate(db):
         c.execute("UPDATE batches SET hop_schedule=? WHERE id=?", (json.dumps(_split_schedule(rows, _dry_fracs(rows))), b["id"]))
     c.execute("UPDATE batches SET brews=1 WHERE brews IS NULL")
     c.execute("UPDATE batches SET ferm_done=1 WHERE status<>'Planirano' AND ferm_done IS NULL")
+
+
+def _migrate_times(db):
+    """2.38: raspored hmelja recepture -> zasebni retci recepture s vremenom kuhanja (BeerSmith);
+    „minuta od početka” -> „vrijeme kuhanja” (koliko minuta se kuha) i za raspored pojedine šarže."""
+    c = db.con
+    for r in db.q("SELECT * FROM recipes"):
+        boil = int(r.get("boil_min") or 60)
+        try:
+            rows = json.loads(r.get("hop_schedule") or "[]") or []
+        except ValueError:
+            rows = []
+        hops = db.q("""SELECT ri.* FROM recipe_items ri JOIN items i ON i.id=ri.item_id
+                       WHERE ri.recipe_id=? AND i.category='Hmelj'""", (r["id"],))
+        for ln in hops:
+            stg = "dry" if ln.get("stage") == "ferm" else "boil"
+            mine = [x for x in rows if x.get("item_id") == ln["item_id"] and (x.get("stage") or "boil") == stg]
+            if not mine:
+                if stg == "boil":
+                    c.execute("UPDATE recipe_items SET add_min=? WHERE id=?", (boil, ln["id"]))  # zadano: od početka kuhanja
+                continue
+            c.execute("DELETE FROM recipe_items WHERE id=?", (ln["id"],))
+            left = 1.0
+            for x in mine:
+                f = float(x.get("frac") or 0)
+                left -= f
+                t = max(0, min(boil, boil - int(x.get("min") or 0))) if stg == "boil" else None
+                c.execute("INSERT INTO recipe_items(recipe_id,item_id,qty,stage,add_min) VALUES(?,?,?,?,?)",
+                          (r["id"], ln["item_id"], r4(ln["qty"] * f), ln.get("stage") or "brew", t))
+            if left > 0.001:
+                c.execute("INSERT INTO recipe_items(recipe_id,item_id,qty,stage,add_min) VALUES(?,?,?,?,?)",
+                          (r["id"], ln["item_id"], r4(ln["qty"] * left), ln.get("stage") or "brew", boil if stg == "boil" else None))
+        # ostali dodaci (npr. Whirlfloc) upisani kao minuta od početka -> vrijeme kuhanja
+        c.execute("""UPDATE recipe_items SET add_min=MAX(0, ?-add_min) WHERE recipe_id=? AND add_min IS NOT NULL
+                     AND COALESCE(stage,'brew')='brew' AND item_id NOT IN (SELECT id FROM items WHERE category='Hmelj')""",
+                  (boil, r["id"]))
+        c.execute("UPDATE recipes SET hop_schedule=NULL WHERE id=?", (r["id"],))
+    for b in db.q("""SELECT b.id, b.hop_schedule, b.boil_min, r.boil_min AS rboil FROM batches b LEFT JOIN recipes r ON r.id=b.recipe_id
+                     WHERE b.hop_schedule IS NOT NULL AND b.hop_schedule<>''"""):
+        try:
+            rows = json.loads(b["hop_schedule"]) or []
+        except ValueError:
+            continue
+        boil = int(b.get("boil_min") or b.get("rboil") or 60)
+        for x in rows:
+            if (x.get("stage") or "boil") == "boil":
+                x["min"] = max(0, min(boil, boil - int(x.get("min") or 0)))
+        c.execute("UPDATE batches SET hop_schedule=? WHERE id=?", (json.dumps(rows), b["id"]))
 
 
 # ------------------------------------------------------------------ recepture

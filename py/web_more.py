@@ -666,24 +666,35 @@ def _vols(db, b, r):
 
 
 def hop_plan(db, batch_id=None, recipe_id=None):
-    """Raspored hmelja: dodaci tijekom kuhanja (minuta od početka; količina za jedno kuhanje) i dry hop
-    (u fermentoru, X dana nakon kuhanja; količina za cijeli fermentor) te ostali dodaci u kuhanju (npr. Whirlfloc)."""
+    """Raspored hmelja kao u BeerSmithu: svaki dodatak ima VRIJEME KUHANJA (min = koliko dugo se kuha; boil = na početku,
+    0 = na kraju). Izvor su retci recepture (svaki dodatak hmelja zaseban redak), a šarža može imati vlastiti raspored.
+    Kuhanje: količina za jedno kuhanje; dry hop: za cijeli fermentor (min = dan nakon kuhanja)."""
     import web_brew
     b = db.batch(batch_id) if batch_id else None
     rid = b["recipe_id"] if b else recipe_id
     r = db.one("SELECT * FROM recipes WHERE id=?", (rid,)) or {}
     brew_vol, ferm_vol = _vols(db, b, r)
     needs = _hop_needs(db, rid, brew_vol, ferm_vol) if rid else {}
-    raw = (b or {}).get("hop_schedule") or r.get("hop_schedule")
+    boil = int((b or {}).get("boil_min") or r.get("boil_min") or 60)
+    raw = (b or {}).get("hop_schedule")
     try:
         rows = json.loads(raw) if raw else []
     except ValueError:
         rows = []
-    have = {(x.get("item_id"), x.get("stage") or "boil") for x in rows}
-    for (iid, st) in needs:  # hmelj u recepturi bez retka u rasporedu: kuhanje od početka / dry hop
-        if (iid, st) not in have:
-            rows.append({"item_id": iid, "stage": st, "min": 0, "frac": 1})
-    boil = int((b or {}).get("boil_min") or r.get("boil_min") or 60)
+    custom = bool(rows)
+    bs, _n, fs = web_brew.sizes(db, rid) if rid else (1, 1, 1)
+    if not rows and rid:  # iz recepture: svaki redak hmelja = jedan dodatak
+        for ln in db.recipe_lines(rid):
+            if (ln.get("category") or "") != "Hmelj":
+                continue
+            stg = "dry" if ln.get("stage") == "ferm" else "boil"
+            tot = needs.get((ln["item_id"], stg))
+            if not tot:
+                continue
+            q = ln["qty"] * ((brew_vol or bs) / bs if stg == "boil" else (ferm_vol or fs) / fs)
+            t = ln.get("add_min")
+            rows.append({"item_id": ln["item_id"], "stage": stg, "frac": round(q / tot[1], 6) if tot[1] else 0,
+                         "min": (boil if t in (None, "") else int(t)) if stg == "boil" else int(t or 0)})
     out = []
     for x in rows:
         stg = x.get("stage") or "boil"
@@ -699,12 +710,13 @@ def hop_plan(db, batch_id=None, recipe_id=None):
         out.append({"item_id": x["item_id"], "name": name, "stage": stg,
                     "min": mn, "frac": float(x.get("frac") or 0), "g": g, "adj": bool(adj),
                     "unit": "g" if (unit or "").lower() in ("kg", "g") else unit})
-    out.sort(key=lambda x: (x["stage"] != "boil", x["min"], x["name"]))
+    out.sort(key=lambda x: (x["stage"] != "boil", -x["min"] if x["stage"] == "boil" else x["min"], x["name"]))
+    dry_rows = [x for x in out if x["stage"] == "dry"]
     on = (b or {}).get("dry_hop_on")
-    on = int(r.get("dry_hop") or 0) if on is None or (b and not b.get("dry_hop_date") and b["status"] == "Planirano") else int(on)
-    if any(k[1] == "dry" for k in needs) and on is None:
-        on = 1
-    days = int(r.get("dry_hop_days") or 3)
+    rec_on = 1 if (int(r.get("dry_hop") or 0) or dry_rows) else 0
+    on = rec_on if on is None or (b and not b.get("dry_hop_date") and b["status"] == "Planirano") else int(on)
+    days_l = [x["min"] for x in dry_rows if x["min"] > 0]
+    days = min(days_l) if days_l else int(r.get("dry_hop_days") or 3)
     tm = (b or {}).get("dry_hop_time") or r.get("dry_hop_time") or "09:00"
     date = (b or {}).get("dry_hop_date")
     if not date and b and b.get("brew_date") and b["status"] != "Planirano":
@@ -725,22 +737,23 @@ def hop_plan(db, batch_id=None, recipe_id=None):
     for hp in hops:
         hp["alpha"] = alpha.get(hp["item_id"]) or {}
         hp["g"] = round(hp["g_boil"] + hp["g_dry"], 1)
-    # ostali dodaci u kuhanju s minutom (npr. Whirlfloc) – za alarm
+    # ostali dodaci u kuhanju s vremenom kuhanja (npr. Whirlfloc 15 min) – za alarm
     adds = []
     if rid:
-        for ln in web_brew.stage_needs(db, rid, "brew", brew_vol):
-            if (ln.get("category") or "") == "Hmelj" or ln.get("add_min") in (None, ""):
+        for ln in db.recipe_lines(rid):
+            if (ln.get("category") or "") == "Hmelj" or ln.get("stage") == "ferm" or ln.get("add_min") in (None, ""):
                 continue
-            adds.append({"item_id": ln["item_id"], "name": ln["name"], "min": int(ln["add_min"]), "qty": ln["need"], "unit": ln["unit"]})
+            adds.append({"item_id": ln["item_id"], "name": ln["name"], "min": int(ln["add_min"]),
+                         "qty": r4(ln["qty"] * (brew_vol or bs) / bs), "unit": ln["unit"]})
     return {"rows": out, "boil_min": boil, "hops": hops, "dry": {"on": on, "days": days, "time": tm, "date": date,
                                                                  "done": (b or {}).get("dry_hop_done")},
             "recipe": r.get("name") or "", "recipe_id": rid, "alpha": {str(k): v for k, v in alpha.items()},
-            "adds": adds, "brew_vol": brew_vol, "ferm_vol": ferm_vol}
+            "adds": adds, "brew_vol": brew_vol, "ferm_vol": ferm_vol, "custom": custom}
 
 
 def _auto_adj(stage, minute, boil):
-    """Dodatak za gorčinu (korigira se prema alfi): u kuhanju i kuha se barem 30 min."""
-    return stage == "boil" and (int(boil or 60) - int(minute or 0)) >= 30
+    """Dodatak za gorčinu (korigira se prema alfi): u kuhanju i kuha se barem 30 min (minute = vrijeme kuhanja)."""
+    return stage == "boil" and int(minute or 0) >= 30
 
 
 def _recipe_alpha(r):
@@ -805,7 +818,7 @@ def save_hop_plan(db, rows, boil_min=60, dry=None, batch_id=None, recipe_id=None
     needs = _hop_needs(db, rid, brew_vol, ferm_vol)
     names = {iid: v[0] for (iid, _s), v in needs.items()}
     clean = []
-    for x in rows or []:
+    for x in (rows or []) if rows is not None else []:
         iid = x.get("item_id")
         stg = x.get("stage") or "boil"
         if (iid, stg) not in needs:
@@ -816,7 +829,7 @@ def save_hop_plan(db, rows, boil_min=60, dry=None, batch_id=None, recipe_id=None
         g = float(x.get("g") or 0)
         mn = int(float(x.get("min") or 0))
         if stg == "boil" and not 0 <= mn <= int(boil_min or 60):
-            raise ValueError(f"{needs[(iid, stg)][0]}: minuta mora biti između 0 (početak) i {boil_min} (kraj kuhanja).")
+            raise ValueError(f"{needs[(iid, stg)][0]}: vrijeme kuhanja mora biti od 0 (na kraju) do {boil_min} min (na početku).")
         row = {"item_id": iid, "stage": stg, "min": mn, "frac": round(g / tot, 4)}
         if x.get("adj") is not None and bool(x.get("adj")) != _auto_adj(row["stage"], mn, boil_min):
             row["adj"] = bool(x["adj"])  # ručno odabrano (inače automatski: gorčina = kuha se ≥ 30 min)
@@ -827,15 +840,27 @@ def save_hop_plan(db, rows, boil_min=60, dry=None, batch_id=None, recipe_id=None
     days = int(d.get("days") or 3)
     tm = d.get("time") or "09:00"
     if b:
-        upd = {"hop_schedule": js, "boil_min": int(boil_min or 60), "dry_hop_on": on, "dry_hop_time": tm}
+        upd = {"boil_min": int(boil_min or 60), "dry_hop_on": on, "dry_hop_time": tm}
+        if rows is not None:
+            upd["hop_schedule"] = js
         if d.get("date"):
             upd["dry_hop_date"] = d["date"]
         elif b.get("brew_date") and b["status"] != "Planirano":
             upd["dry_hop_date"] = (dt.date.fromisoformat(b["brew_date"][:10]) + dt.timedelta(days=days)).isoformat()
         db.update_batch(batch_id, upd)
     if as_default or not b:
-        db.x("UPDATE recipes SET hop_schedule=?, boil_min=?, dry_hop=?, dry_hop_days=?, dry_hop_time=? WHERE id=?",
-             (js, int(boil_min or 60), on, days, tm, rid))
+        db.x("UPDATE recipes SET hop_schedule=NULL, boil_min=?, dry_hop=?, dry_hop_days=?, dry_hop_time=? WHERE id=?",
+             (int(boil_min or 60), on, days, tm, rid))
+        if rows is not None:  # raspored šarže kao zadano za recepturu: retci hmelja recepture (količina po kuhanju / fermentoru)
+            import web_brew
+            bs, _n, fs = web_brew.sizes(db, rid)
+            with db.con:
+                db.con.execute("DELETE FROM recipe_items WHERE recipe_id=? AND item_id IN (SELECT id FROM items WHERE category='Hmelj')", (rid,))
+                for x in clean:
+                    name, q, unit = needs[(x["item_id"], x["stage"])]
+                    qty = q * x["frac"] * ((bs / brew_vol) if x["stage"] == "boil" and brew_vol else (fs / ferm_vol) if ferm_vol else 1)
+                    db.con.execute("INSERT INTO recipe_items(recipe_id,item_id,qty,stage,add_min) VALUES(?,?,?,?,?)",
+                                   (rid, x["item_id"], r4(qty), "brew" if x["stage"] == "boil" else "ferm", x["min"]))
     if alpha is not None:  # alfa kiseline u recepturi (uvijek za recepturu)
         clean_a = {str(int(k)): float(v) for k, v in alpha.items() if v not in (None, "", 0)}
         db.x("UPDATE recipes SET hop_alpha=? WHERE id=?", (json.dumps(clean_a), rid))

@@ -693,9 +693,17 @@ def hop_plan(db, batch_id=None, recipe_id=None):
                 continue
             q = ln["qty"] * ((brew_vol or bs) / bs if stg == "boil" else (ferm_vol or fs) / fs)
             t = ln.get("add_min")
-            rows.append({"item_id": ln["item_id"], "stage": stg, "frac": round(q / tot[1], 6) if tot[1] else 0,
-                         "min": (boil if t in (None, "") else int(t)) if stg == "boil" else int(t or 0)})
+            row = {"item_id": ln["item_id"], "stage": stg, "frac": round(q / tot[1], 6) if tot[1] else 0, "line_id": ln["id"],
+                   "min": (boil if t in (None, "") else int(t)) if stg == "boil" else int(t or 0)}
+            if stg == "boil" and ln.get("alpha_adj") is not None:
+                row["adj"] = bool(ln["alpha_adj"])  # receptura pamti uključeno/isključeno za taj dodatak
+            rows.append(row)
     out = []
+    line_adj = {}
+    if custom and rid:  # raspored šarže: uključenost korekcije kakva je zapamćena u recepturi
+        for ln in db.recipe_lines(rid):
+            if ln.get("alpha_adj") is not None and ln.get("stage") != "ferm":
+                line_adj[(ln["item_id"], int(ln["add_min"] if ln.get("add_min") not in (None, "") else boil))] = bool(ln["alpha_adj"])
     for x in rows:
         stg = x.get("stage") or "boil"
         key = (x.get("item_id"), stg)
@@ -705,10 +713,12 @@ def hop_plan(db, batch_id=None, recipe_id=None):
         g = round(_grams(q * float(x.get("frac") or 0), unit), 1)
         mn = int(x.get("min") or 0)
         adj = x.get("adj")
+        if adj is None and stg == "boil":
+            adj = line_adj.get((x["item_id"], mn))
         if adj is None:
             adj = _auto_adj(stg, mn, boil)
-        out.append({"item_id": x["item_id"], "name": name, "stage": stg,
-                    "min": mn, "frac": float(x.get("frac") or 0), "g": g, "adj": bool(adj),
+        out.append({"item_id": x["item_id"], "name": name, "stage": stg, "line_id": x.get("line_id"),
+                    "min": mn, "frac": float(x.get("frac") or 0), "g": g, "adj": bool(adj) and stg == "boil",
                     "unit": "g" if (unit or "").lower() in ("kg", "g") else unit})
     out.sort(key=lambda x: (x["stage"] != "boil", -x["min"] if x["stage"] == "boil" else x["min"], x["name"]))
     dry_rows = [x for x in out if x["stage"] == "dry"]
@@ -729,7 +739,12 @@ def hop_plan(db, batch_id=None, recipe_id=None):
     hops = sorted(hops.values(), key=lambda x: x["name"])
     # korekcija prema alfa kiselinama: recept (alfa u recepturi) / LOT koji se troši (FIFO ili stvarno utrošen)
     boil_needs = {iid: v for (iid, st), v in needs.items() if st == "boil"}
-    alpha = _alpha_info(db, b, r, boil_needs)
+    fifo = _alpha_fifo(db, b)
+    adj_frac = {}
+    for x in out:
+        if x["stage"] == "boil" and x["adj"]:
+            adj_frac[x["item_id"]] = adj_frac.get(x["item_id"], 0) + x["frac"]
+    alpha = _alpha_info(db, b, r, boil_needs, fifo, adj_frac)
     for x in out:
         f = (alpha.get(x["item_id"]) or {}).get("factor")
         if x["stage"] == "boil" and x["adj"] and f and abs(f - 1) > 1e-6:
@@ -764,28 +779,82 @@ def _recipe_alpha(r):
         return {}
 
 
-def _alpha_info(db, b, r, needs):
-    """{item_id: {recipe, lot, factor, lots}} – lot = ponderirana alfa LOT-ova koji se troše."""
+def _alpha_fifo(db, b):
+    """Alfa LOT-a: FIFO (što će se tek trošiti) za recepturu, planiranu šaržu i šaržu kojoj slijedi još kuhanje;
+    inače stvarno utrošeni LOT-ovi."""
+    if not b or b.get("status") == "Planirano":
+        return True
+    import web_brew
+    bi = web_brew.batch_info(db, b)
+    return bi["done"] < bi["n"]
+
+
+def _lot_alpha(db, iid, qty):
+    """(ponderirana alfa LOT-ova koje FIFO uzima za qty ili None, [LOT-ovi])."""
+    alloc, _miss = db.allocate_fifo(iid, qty)
+    parts = [(lot_no, db.val("SELECT alpha FROM lots WHERE id=?", (lid,)), q) for lid, lot_no, q in alloc]
+    tot = sum(p[2] for p in parts)
+    a = round(sum(p[1] * p[2] for p in parts) / tot, 4) if parts and tot > 0 and all(p[1] for p in parts) else None
+    return a, parts
+
+
+def _alpha_info(db, b, r, needs, fifo=None, adj_frac=None):
+    """{item_id: {recipe, lot, factor, lots}} – lot = ponderirana alfa LOT-ova koji se troše.
+    Faktor = alfa recepta ÷ alfa LOT-a. Kod FIFO se računa iterativno: korigirana količina može zahvatiti
+    i sljedeći LOT (s drugom alfom), pa se faktor ponavlja dok se ne ustali."""
     ra = _recipe_alpha(r)
+    if fifo is None:
+        fifo = _alpha_fifo(db, b)
     out = {}
     for iid, (name, q, unit) in needs.items():
         info = {"recipe": ra.get(iid), "lot": None, "factor": None, "lots": []}
-        if b and b.get("status") != "Planirano":
+        if not fifo:
             used = db.q("""SELECT l.lot_no, l.alpha, c.qty FROM batch_consumption c JOIN lots l ON l.id=c.lot_id
                            WHERE c.batch_id=? AND c.item_id=? AND COALESCE(c.brew_no,1)<>0""", (b["id"], iid))
             parts = [(u["lot_no"], u["alpha"], u["qty"]) for u in used]
+            tot = sum(p[2] for p in parts)
+            lot_a = round(sum(p[1] * p[2] for p in parts) / tot, 4) if parts and tot > 0 and all(p[1] for p in parts) else None
         else:
-            alloc, _miss = db.allocate_fifo(iid, q)
-            parts = []
-            for lid, lot_no, qty in alloc:
-                parts.append((lot_no, db.val("SELECT alpha FROM lots WHERE id=?", (lid,)), qty))
+            lot_a, parts = _lot_alpha(db, iid, q)
+            fa = (adj_frac or {}).get(iid, 0)
+            if info["recipe"] and lot_a and fa > 0:
+                need = q
+                for _i in range(5):  # korigirana količina -> možda drugi LOT -> nova alfa
+                    f = info["recipe"] / lot_a
+                    need2 = q * (1 + fa * (f - 1))
+                    a2, p2 = _lot_alpha(db, iid, need2)
+                    if not a2 or abs(a2 - lot_a) < 1e-4 or abs(need2 - need) < 1e-6:
+                        if a2:
+                            lot_a, parts = a2, p2
+                        break
+                    lot_a, parts, need = a2, p2, need2
         info["lots"] = [{"lot": p[0], "alpha": p[1]} for p in parts]
-        tot = sum(p[2] for p in parts)
-        if parts and tot > 0 and all(p[1] for p in parts):
-            info["lot"] = round(sum(p[1] * p[2] for p in parts) / tot, 2)
-        if info["recipe"] and info["lot"]:
-            info["factor"] = round(info["recipe"] / info["lot"], 4)
+        if lot_a:
+            info["lot"] = round(lot_a, 2)
+        if info["recipe"] and lot_a:
+            info["factor"] = round(info["recipe"] / lot_a, 4)
         out[iid] = info
+    return out
+
+
+def alpha_factor_needs(db, b, needs, plan=None, brew_no=None):
+    """Korekcija gorčine na zbroju potreba šarže {item_id: količina kuhanja} (za inventuru i „Što naručiti”).
+    brew_no: faktor prema alfi LOT-ova utrošenih baš u tom kuhanju."""
+    plan = plan or hop_plan(db, b["id"])
+    ra = _recipe_alpha(db.recipe(b["recipe_id"]) if b.get("recipe_id") else {})
+    out = dict(needs)
+    for iid, q in needs.items():
+        a = (plan.get("alpha") or {}).get(str(iid)) or {}
+        f = a.get("factor")
+        if brew_no is not None and ra.get(iid):
+            used = db.q("""SELECT l.alpha, c.qty FROM batch_consumption c JOIN lots l ON l.id=c.lot_id
+                           WHERE c.batch_id=? AND c.item_id=? AND c.brew_no=?""", (b["id"], iid, brew_no))
+            tot = sum(u["qty"] for u in used)
+            if used and tot > 0 and all(u["alpha"] for u in used):
+                f = ra[iid] / (sum(u["alpha"] * u["qty"] for u in used) / tot)
+        fa = sum(x["frac"] for x in plan["rows"] if x["item_id"] == iid and x["stage"] == "boil" and x["adj"])
+        if f and fa > 0 and abs(f - 1) > 1e-6:
+            out[iid] = r4(q * (1 + fa * (f - 1)))
     return out
 
 
@@ -831,10 +900,27 @@ def save_hop_plan(db, rows, boil_min=60, dry=None, batch_id=None, recipe_id=None
         if stg == "boil" and not 0 <= mn <= int(boil_min or 60):
             raise ValueError(f"{needs[(iid, stg)][0]}: vrijeme kuhanja mora biti od 0 (na kraju) do {boil_min} min (na početku).")
         row = {"item_id": iid, "stage": stg, "min": mn, "frac": round(g / tot, 4)}
-        if x.get("adj") is not None and bool(x.get("adj")) != _auto_adj(row["stage"], mn, boil_min):
-            row["adj"] = bool(x["adj"])  # ručno odabrano (inače automatski: gorčina = kuha se ≥ 30 min)
+        if stg == "boil" and x.get("adj") is not None:
+            row["adj"] = bool(x["adj"])  # korekcija prema alfi – uključuje se po volji za svaki dodatak
+        if x.get("line_id"):
+            row["line_id"] = x["line_id"]
         clean.append(row)
-    js = json.dumps(clean)
+    # receptura pamti zadnji odabir korekcije za svaki dodatak hmelja (i kad se mijenja na danu kuhanja)
+    if rows is not None and rid:
+        lines = [ln for ln in db.recipe_lines(rid) if (ln.get("category") or "") == "Hmelj" and ln.get("stage") != "ferm"]
+        for row in clean:
+            if row["stage"] != "boil" or "adj" not in row:
+                continue
+            ln = next((x for x in lines if x["id"] == row.get("line_id")), None) or next(
+                (x for x in lines if x["item_id"] == row["item_id"]
+                 and int(x["add_min"] if x.get("add_min") not in (None, "") else (boil_min or 60)) == row["min"]), None)
+            if ln:
+                db.con.execute("UPDATE recipe_items SET alpha_adj=? WHERE id=?", (1 if row["adj"] else 0, ln["id"]))
+        db.con.commit()
+    if rows is not None and not b:  # receptura: mijenja se samo uključenost korekcije (količine su u sastojcima)
+        rows = None
+        clean = []
+    js = json.dumps([{k: v for k, v in x.items() if k != "line_id"} for x in clean])
     d = dry or {}
     on = 1 if d.get("on") else 0
     days = int(d.get("days") or 3)
@@ -859,8 +945,9 @@ def save_hop_plan(db, rows, boil_min=60, dry=None, batch_id=None, recipe_id=None
                 for x in clean:
                     name, q, unit = needs[(x["item_id"], x["stage"])]
                     qty = q * x["frac"] * ((bs / brew_vol) if x["stage"] == "boil" and brew_vol else (fs / ferm_vol) if ferm_vol else 1)
-                    db.con.execute("INSERT INTO recipe_items(recipe_id,item_id,qty,stage,add_min) VALUES(?,?,?,?,?)",
-                                   (rid, x["item_id"], r4(qty), "brew" if x["stage"] == "boil" else "ferm", x["min"]))
+                    db.con.execute("INSERT INTO recipe_items(recipe_id,item_id,qty,stage,add_min,alpha_adj) VALUES(?,?,?,?,?,?)",
+                                   (rid, x["item_id"], r4(qty), "brew" if x["stage"] == "boil" else "ferm", x["min"],
+                                    (1 if x.get("adj") else 0) if x["stage"] == "boil" and "adj" in x else None))
     if alpha is not None:  # alfa kiseline u recepturi (uvijek za recepturu)
         clean_a = {str(int(k)): float(v) for k, v in alpha.items() if v not in (None, "", 0)}
         db.x("UPDATE recipes SET hop_alpha=? WHERE id=?", (json.dumps(clean_a), rid))

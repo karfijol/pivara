@@ -2,8 +2,8 @@
 // u pozadini i ponudi tipkom „Osvježi”. Velike datoteke (Python, fontovi, ikone) čuvaju se trajno.
 // Podaci (baza na GitHubu) i popis korisnika NE idu kroz ovu predmemoriju.
 // VERSION i FILES upisuje skripta za objavu (build_web.py).
-const VERSION = "web 2.39-8cb4b7f9";
-const FILES = ["./", "index.html", "manifest.webmanifest", "py/app.zip?v=ebb18900", "css/app.css", "js/auth.js", "js/icons.js", "js/main.js", "js/py.js", "js/qr.js", "js/scanner.js", "js/store.js", "js/ui.js", "js/undo.js", "js/pages/costs.js", "js/pages/haccp.js", "js/pages/invoices.js", "js/pages/kegwork.js", "js/pages/offers.js", "js/pages/production.js", "js/pages/reminders.js", "js/pages/reports.js", "js/pages/settings.js", "js/pages/stock.js", "js/vendor/jsQR.js", "js/vendor/qrcode-generator.js"];
+const VERSION = "web 2.40-7a55992c";
+const FILES = ["./", "index.html", "manifest.webmanifest", "py/app.zip?v=fc8e060b", "css/app.css", "js/auth.js", "js/icons.js", "js/main.js", "js/py.js", "js/qr.js", "js/scanner.js", "js/store.js", "js/ui.js", "js/undo.js", "js/pages/costs.js", "js/pages/haccp.js", "js/pages/invoices.js", "js/pages/kegwork.js", "js/pages/offers.js", "js/pages/production.js", "js/pages/reminders.js", "js/pages/reports.js", "js/pages/settings.js", "js/pages/stock.js", "js/vendor/jsQR.js", "js/vendor/qrcode-generator.js"];
 const STATIC = "pivovara-static-v2";   // pyodide, fontovi, ikone
 const APP = "pivovara-app-" + VERSION;
 

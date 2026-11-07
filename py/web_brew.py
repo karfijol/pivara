@@ -29,7 +29,7 @@ def ensure(db):
                      ("cool_temp", "REAL")):
         if col not in cols("recipes"):
             c.execute(f"ALTER TABLE recipes ADD COLUMN {col} {typ}")
-    for col, typ in (("stage", "TEXT DEFAULT 'brew'"), ("add_min", "INTEGER")):
+    for col, typ in (("stage", "TEXT DEFAULT 'brew'"), ("add_min", "INTEGER"), ("alpha_adj", "INTEGER")):
         if col not in cols("recipe_items"):
             c.execute(f"ALTER TABLE recipe_items ADD COLUMN {col} {typ}")
     for col, typ in (("brews", "INTEGER"), ("ferm_done", "INTEGER")):
@@ -212,12 +212,34 @@ def batch_needs(db, b):
         brew_vol_total = sum((x.get("volume_l") or bi["brew_vol"]) for x in bi["brews"] if x.get("done"))
         ferm = bi["ferm_done"]
     out = {}
-    for ln in stage_needs(db, b["recipe_id"], "brew", brew_vol_total) if brew_vol_total else []:
-        out[ln["item_id"]] = r4(out.get(ln["item_id"], 0) + ln["need"])
+    done = [x for x in bi["brews"] if x.get("done")]
+    if not bi["legacy"] and len(done) > 1:
+        # više kuhanja: korekcija gorčine za svako kuhanje prema alfi LOT-ova utrošenih u tom kuhanju
+        for x in done:
+            part = {}
+            for ln in stage_needs(db, b["recipe_id"], "brew", x.get("volume_l") or bi["brew_vol"]):
+                part[ln["item_id"]] = r4(part.get(ln["item_id"], 0) + ln["need"])
+            for iid, q in _alpha(db, b, part, x["n"]).items():
+                out[iid] = r4(out.get(iid, 0) + q)
+    else:
+        for ln in stage_needs(db, b["recipe_id"], "brew", brew_vol_total) if brew_vol_total else []:
+            out[ln["item_id"]] = r4(out.get(ln["item_id"], 0) + ln["need"])
+        out = _alpha(db, b, out)  # hmelj za gorčinu prema alfi utrošenih LOT-ova
     if ferm:
         for ln in stage_needs(db, b["recipe_id"], "ferm", b.get("volume_l") or 0):
             out[ln["item_id"]] = r4(out.get(ln["item_id"], 0) + ln["need"])
     return out
+
+
+def _alpha(db, b, needs, brew_no=None):
+    """Korekcija gorčine prema alfa kiselinama (samo hmelj s uključenom korekcijom)."""
+    if not needs:
+        return needs
+    try:
+        import web_more
+        return web_more.alpha_factor_needs(db, b, needs, brew_no=brew_no)
+    except Exception:  # noqa: BLE001
+        return needs
 
 
 def remaining_needs(db, b):
@@ -231,6 +253,7 @@ def remaining_needs(db, b):
     if left_brews:
         for ln in stage_needs(db, b["recipe_id"], "brew", bi["brew_vol"] * left_brews):
             out[ln["item_id"]] = r4(out.get(ln["item_id"], 0) + ln["need"])
+        out = _alpha(db, b, out)
     if not bi["ferm_done"] or b["status"] == "Planirano":
         for ln in stage_needs(db, b["recipe_id"], "ferm", b.get("volume_l") or 0):
             out[ln["item_id"]] = r4(out.get(ln["item_id"], 0) + ln["need"])
@@ -267,3 +290,8 @@ def save_recipe_extra(db, recipe_id, mash):
 def batch_brews(db, batch_id):
     b = db.batch(batch_id)
     return {"info": batch_info(db, b), "brews": db.q("SELECT * FROM batch_brews WHERE batch_id=? ORDER BY n", (batch_id,))}
+
+
+def hop_ids(db):
+    """Artikli kategorije Hmelj (za stupac α korekcije u recepturi)."""
+    return [r["id"] for r in db.q("SELECT id FROM items WHERE category='Hmelj'")]

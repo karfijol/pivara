@@ -87,6 +87,7 @@ export class LinesDialog extends Dialog {
     this.qtyLabel = qtyLabel;
     this.stages = stages; // receptura: faza (po kuhanju / za fermentor), vrijeme i jedinica (kg, g, kom, pakiranje)
     this.unitMap = stages ? (window.APP ? window.APP.py.call("web_units.all_units") : {}) : null;
+    this.hopIds = new Set(stages && window.APP ? window.APP.py.call("web_brew.hop_ids") : []);
     this.form = new Form(headerFields, headerInitial || {}, headerCols || (headerFields.length > 6 ? 3 : 2));
     this.body.append(this.form.el, h("div", { class: "sec", style: { marginTop: "10px" } }, stages ? "Sastojci" : "Stavke"),
       h("div", { class: "muted", style: { fontSize: "12.5px", margin: "-2px 0 6px" } }, stages
@@ -99,7 +100,7 @@ export class LinesDialog extends Dialog {
     this.body.append(this.list, h("div", { class: "row gap", style: { marginTop: "6px", alignItems: "center" } },
       btn("＋ Dodaj stavku", () => this.addRow()), this.sum));
     this.lines = (lines || []).map((ln) => ({ item_id: ln.item_id, qty: ln.qty, unit_price: ln.unit_price || 0, name: ln.name, unit: ln.unit,
-      stage: ln.stage === "ferm" ? "ferm" : "brew", add_min: ln.add_min ?? null, qty_unit: ln.qty_unit || null,
+      stage: ln.stage === "ferm" ? "ferm" : "brew", add_min: ln.add_min ?? null, qty_unit: ln.qty_unit || null, alpha_adj: ln.alpha_adj ?? null,
       _q: ln.qty != null ? dec(ln.qty) : "", _p: ln.unit_price != null ? dec(ln.unit_price) : "", _m: ln.add_min != null ? String(ln.add_min) : "" }));
     this.render();
     this.buttons("Spremi", () => this.ok());
@@ -109,7 +110,8 @@ export class LinesDialog extends Dialog {
     this.list.innerHTML = "";
     const head = [h("span", {}, "Artikl"), h("span", {}, this.qtyLabel), h("span", {}, "Jed.")];
     if (this.withPrice) head.push(h("span", {}, "Cijena €/jed."));
-    if (this.stages) head.push(h("span", {}, "Faza"), h("span", { title: "Kuhanje: koliko minuta se kuha (90 = od početka kuhanja od 90 min, 0 = na kraju) · fermentor: dan nakon kuhanja" }, "Vrijeme"));
+    if (this.stages) head.push(h("span", {}, "Faza"), h("span", { title: "Kuhanje: koliko minuta se kuha (90 = od početka kuhanja od 90 min, 0 = na kraju) · fermentor: dan nakon kuhanja" }, "Vrijeme"),
+      h("span", { title: "Korekcija količine hmelja prema alfa kiselinama LOT-a – uključite za svaki dodatak po volji" }, "α kor."));
     head.push(h("span", {}));
     const cls = "ln-r" + (this.withPrice ? " wp" : "") + (this.stages ? " st" : "");
     this.list.append(h("div", { class: cls + " ln-h" }, ...head));
@@ -140,7 +142,7 @@ export class LinesDialog extends Dialog {
         if (sel.value === "x") return;
         const o = sel.value === "" ? null : this.itemOpts[+sel.value];
         ln.item_id = o ? o[1] : null; ln.unit = o ? o[2] : "";
-        if (this.stages) { ln.qty_unit = null; this._fillUnits.get(ln)(); } else unit.textContent = ln.unit || "";
+        if (this.stages) { ln.qty_unit = null; this._fillUnits.get(ln)(); ln.alpha_adj = null; this.render(); return; } else unit.textContent = ln.unit || "";
         if (o && this.withPrice && !ln._p) { ln._p = dec(o[3] || 0); if (pr) pr.value = ln._p; }
         this.upd();
         q.focus();
@@ -152,17 +154,29 @@ export class LinesDialog extends Dialog {
       if (pr) pr.addEventListener("input", () => { ln._p = pr.value; this.upd(); });
       const del = btn("✕", () => { this.lines.splice(i, 1); this.render(); }, "ghost");
       del.title = "Ukloni stavku";
-      let stSel = null, mi = null;
+      let stSel = null, mi = null, adjCb = null, adjUpd = () => {};
       if (this.stages) {
         stSel = h("select", {}, h("option", { value: "brew" }, "Po kuhanju"), h("option", { value: "ferm" }, "Za fermentor"));
         stSel.value = ln.stage || "brew";
         const ph = () => (ln.stage === "ferm" ? "dan" : "min");
         mi = h("input", { value: ln._m || "", inputmode: "numeric", placeholder: ph(), style: { textAlign: "right" },
           title: "Kuhanje: koliko minuta se kuha (= trajanje kuhanja → dodaje se na početku; 0 = na kraju). Fermentor: dan nakon kuhanja (dry hop)." });
-        stSel.addEventListener("change", () => { ln.stage = stSel.value; mi.placeholder = ph(); this.upd(); });
-        mi.addEventListener("input", () => { ln._m = mi.value; });
+        stSel.addEventListener("change", () => { ln.stage = stSel.value; mi.placeholder = ph(); this.upd(); adjUpd(); });
+        mi.addEventListener("input", () => { ln._m = mi.value; if (ln._autoAdj || ln.alpha_adj == null) { ln._autoAdj = true; adjUpd(true); } });
+        // α korekcija (samo hmelj u kuhanju): po volji uključeno/isključeno; zadano kad se tek upisuje = kuha se ≥ 30 min
+        adjCb = h("input", { type: "checkbox", title: "Korekcija količine prema alfa kiselinama LOT-a" });
+        const isHop = () => ln.item_id != null && this.hopIds.has(ln.item_id) && ln.stage !== "ferm";
+        adjUpd = (auto = false) => {
+          adjCb.disabled = !isHop();
+          if (!isHop()) { adjCb.checked = false; return; }
+          if (ln.alpha_adj == null || auto) { const t = String(ln._m ?? "").trim(); adjCb.checked = t === "" || num(t) >= 30; if (auto) ln.alpha_adj = adjCb.checked ? 1 : 0; }
+          else adjCb.checked = !!ln.alpha_adj;
+        };
+        adjCb.addEventListener("change", () => { ln.alpha_adj = adjCb.checked ? 1 : 0; ln._autoAdj = false; });
+        adjUpd();
       }
-      this.list.append(h("div", { class: cls }, sel, q, unit, pr, stSel, mi, del));
+      this.list.append(h("div", { class: cls }, sel, q, unit, pr, stSel, mi,
+        adjCb ? h("label", { class: "chk ln-adj", title: "α korekcija" }, adjCb, h("span", { class: "ln-adj-t" }, " α")) : null, del));
     });
     if (!this.lines.length) this.list.append(h("div", { class: "muted", style: { padding: "6px 2px" } }, "Još nema stavki – kliknite „Dodaj stavku”."));
     this.upd();
@@ -198,6 +212,10 @@ export class LinesDialog extends Dialog {
       if (this.stages) {
         row.stage = l.stage === "ferm" ? "ferm" : "brew";
         row.qty_unit = l.qty_unit || null;
+        if (row.stage === "brew" && this.hopIds.has(l.item_id)) {
+          const t = String(l._m ?? "").trim();
+          row.alpha_adj = l.alpha_adj != null ? (l.alpha_adj ? 1 : 0) : ((t === "" || num(t) >= 30) ? 1 : 0);
+        } else row.alpha_adj = null;
         const m = String(l._m ?? "").trim();
         if (m !== "") {
           const mv = Math.round(num(m));
@@ -310,7 +328,8 @@ class RecipesPage extends Page {
       for (const ln of this.db.recipe_lines(id)) {
         const st = this.db.stock(ln.item_id);
         const n = tot[ln.item_id] ? Math.trunc(st / tot[ln.item_id] + 1e-9) : 0;
-        rows.push({ id: ln.id, name: ln.name, stage: ln.stage === "ferm" ? "za fermentor" + (ln.add_min ? ` · dan ${ln.add_min}` : "") : "po kuhanju" + (ln.add_min != null ? ` · ${ln.add_min} min` : (ln.category === "Hmelj" ? ` · ${r.boil_min || 60} min` : "")),
+        rows.push({ id: ln.id, name: ln.name, stage: ln.stage === "ferm" ? "za fermentor" + (ln.add_min ? ` · dan ${ln.add_min}` : "") : "po kuhanju" + (ln.add_min != null ? ` · ${ln.add_min} min` : (ln.category === "Hmelj" ? ` · ${r.boil_min || 60} min` : ""))
+            + (ln.category === "Hmelj" && ln.stage !== "ferm" && (ln.alpha_adj != null ? ln.alpha_adj : ((ln.add_min ?? (r.boil_min || 60)) >= 30)) ? " · α" : ""),
           qty: fq(ln.qty_in), unit: ln.qty_unit === "pak" ? "pakiranje" : ln.qty_unit, stock: `${fq(st)} ${ln.unit}`, brews: `${n} fermentor${n === 1 ? "" : "a"}`,
           _tag: n < 1 ? "bad" : (n < 2 ? "warn" : "") });
       }
@@ -389,7 +408,17 @@ class RecipesPage extends Page {
       } catch { hopInfo.textContent = ""; }
     };
     const hopBtn = btn("🌿 Alfa kiseline i dry hop podsjetnik", async () => {
-      if (await hopEditor(this.app, { recipeId })) { toast("Raspored hmelja spremljen."); hopSum(); }
+      if (await hopEditor(this.app, { recipeId })) {
+        // α korekcija promijenjena u rasporedu: osvježi kvačice u retcima ovog prozora (da ih „Spremi” ne vrati)
+        const fresh = this.db.recipe_lines(recipeId);
+        for (const l of d.lines) {
+          const f = fresh.find((x) => x.item_id === l.item_id && (x.stage === "ferm" ? "ferm" : "brew") === (l.stage || "brew")
+            && String(x.add_min ?? "") === String(l._m ?? "").trim());
+          if (f && f.alpha_adj != null) l.alpha_adj = f.alpha_adj;
+        }
+        d.render();
+        toast("Spremljeno."); hopSum();
+      }
     }, "ghost");
     if (!recipeId) hopBtn.disabled = true;
     d.body.append(h("div", { class: "sec", style: { marginTop: "10px" } }, "Hmeljenje"),
@@ -506,7 +535,7 @@ export async function hopEditor(app, opts) {
       mn.oninput = () => { r.min = Math.round(num(mn.value) || 0); if (!r._adjSet) { r.adj = r.stage === "boil" && r.min >= 30; adj.checked = r.adj; } };
       g.oninput = () => { r.g = num(g.value) || 0; renderSum(); };
       adj.onchange = () => { r.adj = adj.checked; r._adjSet = true; };
-      if (ro) for (const el of [hs, st, mn, g, adj]) el.disabled = true;
+      if (ro) for (const el of [hs, st, mn, g]) el.disabled = true;
       list.append(h("div", { class: "hop-r" }, hs, st, mn, g, h("label", { class: "chk", style: { justifyContent: "center" } }, adj),
         ro ? h("span", {}) : btn("✕", () => { rows.splice(i, 1); render(); }, "ghost")));
     });
@@ -559,7 +588,7 @@ export async function hopEditor(app, opts) {
   d.body.append(
     h("div", { class: "row gap", style: { flexWrap: "wrap" } }, h("b", {}, "Trajanje kuhanja"), boil,
       h("span", { class: "muted" }, "min · vrijeme hmelja = koliko dugo se kuha: jednako trajanju → na početku, 10 → 10 min prije kraja, 0 → na kraju")),
-    ro ? h("div", { class: "banner ok" }, "Hmelj, količine i vrijeme kuhanja upisujete u sastojcima recepture (svaki dodatak zaseban redak). Ovdje su alfa kiseline i podsjetnik za dry hop.") : null,
+    ro ? h("div", { class: "banner ok" }, "Hmelj, količine i vrijeme kuhanja upisujete u sastojcima recepture (svaki dodatak zaseban redak). Ovdje uključujete α korekciju za pojedini dodatak, alfa kiseline i podsjetnik za dry hop.") : null,
     list, sum,
     ro ? null : h("div", { class: "row gap", style: { margin: "6px 0 12px" } }, btn("＋ Dodaj hmelj", () => {
       const hb = plan.hops.find((x) => x.g_boil > 0) || plan.hops[0];
@@ -568,7 +597,7 @@ export async function hopEditor(app, opts) {
     }, "ghost")),
     h("div", { class: "sec" }, "Alfa kiseline (korekcija gorčine)"),
     h("p", { class: "muted", style: { fontSize: "12.5px", margin: "4px 0" } }, "Upišite alfu kakva je u receptu. Alfu isporučenog hmelja upisujete kod primke ili u LOT-ovima. " +
-      "Na danu kuhanja dodaci s kvačicom „α korekcija” (zadano: vrijeme kuhanja 30 i više minuta) preračunaju se: količina × alfa recepta ÷ alfa LOT-a. Aroma i dry hop ostaju kako piše."),
+      "Na danu kuhanja dodaci s kvačicom „α korekcija” (uključujete po volji za svaki dodatak; receptura pamti zadnji odabir) preračunaju se: količina × alfa recepta ÷ alfa LOT-a. Aroma i dry hop ostaju kako piše."),
     alphaBox,
     h("div", { class: "sec" }, "Podsjetnik za dry hop"),
     h("label", { class: "chk big" }, dOn, " Ovo pivo se dry hopa – podsjeti me (uključite samo za piva s dry hopom)"),
@@ -582,7 +611,7 @@ export async function hopEditor(app, opts) {
     try {
       const b = Math.max(1, Math.round(num(boil.value) || 60));
       const alpha = Object.fromEntries(Object.entries(alphaIn).map(([k, inp]) => [k, num(inp.value) || null]));
-      py.callKw("web_more.save_hop_plan", [ro ? null : rows.map((r) => ({ item_id: r.item_id, stage: r.stage, min: r.min || 0, g: r.g, adj: r.stage === "boil" ? !!r.adj : false })), b,
+      py.callKw("web_more.save_hop_plan", [rows.map((r) => ({ item_id: r.item_id, stage: r.stage, min: r.min || 0, g: r.g, line_id: r.line_id || null, adj: r.stage === "boil" ? !!r.adj : false })), b,
         { on: dOn.checked, days: Math.round(num(dDays.value) || 3), time: dTime.value || "09:00", date: opts.batchId ? (dDate.value || null) : null }],
       { batch_id: opts.batchId || null, recipe_id: opts.recipeId || null, as_default: def.checked, alpha });
       d.close(true);

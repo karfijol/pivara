@@ -418,9 +418,11 @@ class DB(HaccpMixin, ExtrasMixin):
                     if u and web_units.factor(it, u) is None:
                         raise ValueError(f"{it.get('name')}: jedinica „{web_units.LABEL.get(web_units._n(u), u)}” ne može se preračunati u "
                                          f"{it.get('unit')} – u Sirovinama upišite koliko je 1 kom / 1 pakiranje.")
-                    self.con.execute("INSERT INTO recipe_items(recipe_id,item_id,qty,stage,add_min,qty_unit) VALUES(?,?,?,?,?,?)",
+                    aa = ln.get("alpha_adj")
+                    aa = None if aa in (None, "") or ln.get("stage") == "ferm" else (1 if aa else 0)
+                    self.con.execute("INSERT INTO recipe_items(recipe_id,item_id,qty,stage,add_min,qty_unit,alpha_adj) VALUES(?,?,?,?,?,?,?)",
                                      (id, ln["item_id"], ln["qty"], "ferm" if ln.get("stage") == "ferm" else "brew",
-                                      int(am) if am not in (None, "") else None, u))
+                                      int(am) if am not in (None, "") else None, u, aa))
                 else:
                     self.con.execute("INSERT INTO recipe_items(recipe_id,item_id,qty) VALUES(?,?,?)",
                                      (id, ln["item_id"], ln["qty"]))

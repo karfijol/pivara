@@ -76,30 +76,39 @@ export async function testAccess(app) {
 }
 
 // upute i kod za posrednika (Cloudflare Worker, besplatno)
-export const WORKER_CODE = `// Posrednik za prijavu u Sudski registar (sudreg-data.gov.hr) – za aplikaciju pivovare
+export const WORKER_CODE = `// Posrednik za aplikaciju pivovare: prijava u Sudski registar (sudreg-data.gov.hr) i provjera OIB-a u EU VIES (tvrtke i obrti u sustavu PDV-a)
 const ALLOWED = ["https://app.pivara.hr"];
 export default {
   async fetch(req) {
     const origin = req.headers.get("Origin") || "";
     const cors = { "Access-Control-Allow-Origin": ALLOWED.includes(origin) ? origin : ALLOWED[0],
-      "Access-Control-Allow-Headers": "Authorization, Content-Type", "Access-Control-Allow-Methods": "POST, OPTIONS" };
+      "Access-Control-Allow-Headers": "Authorization, Content-Type", "Access-Control-Allow-Methods": "GET, POST, OPTIONS" };
     if (req.method === "OPTIONS") return new Response(null, { headers: cors });
     if (!ALLOWED.includes(origin)) return new Response("Zabranjeno", { status: 403, headers: cors });
-    if (req.method !== "POST" || !new URL(req.url).pathname.endsWith("/token")) return new Response("Nije pronađeno", { status: 404, headers: cors });
-    const r = await fetch("https://sudreg-data.gov.hr/api/oauth/token", { method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: req.headers.get("Authorization") || "" },
-      body: "grant_type=client_credentials" });
-    return new Response(await r.text(), { status: r.status, headers: { ...cors, "Content-Type": "application/json" } });
+    const path = new URL(req.url).pathname;
+    if (req.method === "POST" && path.endsWith("/token")) {
+      const r = await fetch("https://sudreg-data.gov.hr/api/oauth/token", { method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: req.headers.get("Authorization") || "" },
+        body: "grant_type=client_credentials" });
+      return new Response(await r.text(), { status: r.status, headers: { ...cors, "Content-Type": "application/json" } });
+    }
+    const m = path.match(/\\/vies\\/(\\d{11})$/);
+    if (req.method === "GET" && m) {
+      const r = await fetch("https://ec.europa.eu/taxation_customs/vies/rest-api/ms/HR/vat/" + m[1], { headers: { Accept: "application/json" } });
+      return new Response(await r.text(), { status: r.status, headers: { ...cors, "Content-Type": "application/json" } });
+    }
+    return new Response("Nije pronađeno", { status: 404, headers: cors });
   },
 };`;
 
 export async function proxyHelp() {
-  const d = new Dialog("Posrednik za Sudski registar (Cloudflare Worker)", { width: 720 });
+  const d = new Dialog("Posrednik za Sudski registar i VIES (Cloudflare Worker)", { width: 720 });
   const code = h("textarea", { readonly: true, rows: 14, style: { width: "100%", fontFamily: "monospace", fontSize: "12px" } });
   code.value = WORKER_CODE;
   d.body.append(h("div", { class: "msg" },
     "Sudski registar dopušta prijavu samo na način koji preglednik ne smije izravno poslati s druge web stranice. " +
-    "Zato prijavu obavlja mali besplatni posrednik na Cloudflareu (radi samo za app.pivara.hr i ne sprema podatke):\n\n" +
+    "Zato prijavu obavlja mali besplatni posrednik na Cloudflareu (radi samo za app.pivara.hr i ne sprema podatke). Isti posrednik pretražuje i EU registar PDV obveznika (VIES) – tako se pronalaze i obrti u sustavu PDV-a.\n\n" +
+    "Ako ste workera već napravili, samo zamijenite njegov kod novim kodom ispod (Edit code → zalijepi → Deploy).\n\n" +
     "1. Otvorite dash.cloudflare.com i napravite besplatan račun (ili se prijavite).\n" +
     "2. Workers & Pages → Create → Create Worker → nazovite ga npr. sudreg → Deploy.\n" +
     "3. Edit code → obrišite postojeći kod i zalijepite kod ispod → Deploy.\n" +
@@ -139,6 +148,41 @@ export async function lookupOib(app, oib) {
     status: j.status, form: j.pravni_oblik && (j.pravni_oblik.vrsta_pravnog_oblika ? j.pravni_oblik.vrsta_pravnog_oblika.naziv : "") };
 }
 
+// EU VIES (preko posrednika): tvrtke i obrti u sustavu PDV-a – naziv i adresa
+export async function lookupVies(app, oib) {
+  const proxy = (app.db.get_setting("sudreg_proxy") || "").trim().replace(/\/+$/, "");
+  if (!proxy) return null;
+  let r;
+  try { r = await fetch(`${proxy}/vies/${oib}`); } catch { throw new Error("Posrednik (Cloudflare Worker) nije dostupan – provjerite adresu u Postavkama."); }
+  if (r.status === 404) throw new Error("Posrednik još nema provjeru obrta (VIES) – u Cloudflareu zamijenite kod workera novim kodom iz „Upute za posrednika” i kliknite Deploy.");
+  if (!r.ok) throw new Error(`VIES: greška ${r.status}.`);
+  const j = await r.json();
+  if (!j || !j.isValid || !j.name || j.name === "---") return null;
+  const parts = String(j.address || "").split(/\n|,\s*/).map((x) => x.trim()).filter(Boolean);
+  let postal = "", city = "";
+  const pi = parts.findIndex((x) => /^\d{5}\b/.test(x));
+  if (pi >= 0) { const m = parts[pi].match(/^(\d{5})\s*(.*)$/); postal = m[1]; city = m[2]; parts.splice(pi, 1); }
+  const t = (x) => x.toLowerCase().replace(/(^|[\s\-\/(.])(\p{L})/gu, (a, b, c) => b + c.toUpperCase());
+  const street = t(parts.join(", "));
+  city = t(city);
+  return { oib, name: String(j.name).trim(), street, postal, city, address: [street, [postal, city].filter(Boolean).join(" ")].filter(Boolean).join(", "), source: "VIES" };
+}
+
+// obrt koji nije u sustavu PDV-a: otvori Pretraživač obrtnog registra (OIB vlasnika = OIB obrta), OIB je u međuspremniku
+export async function craftHelp(oib) {
+  const d = new Dialog("Pretraga obrta", { width: 560 });
+  d.body.append(h("div", { class: "msg" },
+    "Subjekt nije pronađen u Sudskom registru ni u EU registru PDV obveznika (VIES).\n\n" +
+    "Ako je obrt koji nije u sustavu PDV-a: Obrtni registar ima zaštitu od automatskih upita pa ga program ne može sam pretražiti. " +
+    "Kliknite „Otvori Obrtni registar” – OIB je već kopiran: zalijepite ga u polje „OIB vlasnika”, kliknite Pretraži i prepišite naziv i adresu obrta."));
+  d.buttons(null, null, "Zatvori");
+  d.bar.prepend(btn("Otvori Obrtni registar", async () => {
+    try { await navigator.clipboard.writeText(oib); toast("OIB kopiran – zalijepite ga u „OIB vlasnika”."); } catch { /* */ }
+    window.open("https://pretrazivac-obrta.gov.hr/pretraga.htm", "_blank");
+  }, "primary"));
+  return d.show();
+}
+
 // upute kad pristupni podaci nisu upisani
 export async function credsHelp(app) {
   const d = new Dialog("Pretraga po OIB-u – Sudski registar", { width: 560 });
@@ -148,7 +192,8 @@ export async function credsHelp(app) {
     "1. Otvorite sudreg-data.gov.hr i kliknite „Registracija”.\n" +
     "2. Potvrdite e-mail adresu – otvorit će se stranica s pristupnim podacima (Client ID i Client Secret).\n" +
     "3. Upišite ih u Postavke → Ponude → „Sudski registar – pretraga po OIB-u” (kopirajte ih cijele – uvijek završavaju s dvije točke „..”).\n\n" +
-    "Obrtni registar nema javno sučelje za programe – podatke obrta upišite ručno (provjera: pretrazivac-obrta.gov.hr)."));
+    "Obrti: preko istog posrednika program pretražuje i EU registar PDV obveznika (VIES) – pronalazi tvrtke i obrte u sustavu PDV-a. " +
+    "Obrte izvan sustava PDV-a treba prepisati iz Obrtnog registra (pretrazivac-obrta.gov.hr)."));
   d.buttons(null, null, "Zatvori");
   d.bar.prepend(btn("Otvori sudreg-data.gov.hr", () => window.open("https://sudreg-data.gov.hr/", "_blank"), "ghost"),
     btn("Postavke", () => { d.close(null); app.show("settings"); }, "primary"));
@@ -162,23 +207,25 @@ export function oibButton(app, getOib, fill) {
     if (!oib) return info("Upišite OIB pa kliknite „Pretraži registar”.", "Pretraga po OIB-u");
     b.disabled = true; const old = b.textContent; b.textContent = "Tražim…";
     try {
-      const r = await lookupOib(app, oib);
-      if (!r) {
-        await info("Subjekt s tim OIB-om nije pronađen u Sudskom registru.\n\nAko je obrt ili fizička osoba, podatke upišite ručno "
-          + "(obrt možete provjeriti na pretrazivac-obrta.gov.hr).", "Pretraga po OIB-u");
-        return;
-      }
-      fill(r);
-      toast(`Upisano iz Sudskog registra: ${r.name}`);
-    } catch (e) {
-      if (e.noCreds) await credsHelp(app);
-      else if (e.needProxy) {
+      const s2 = oib.replace(/\s/g, "");
+      if (!oibValid(s2)) return info("OIB nije ispravan (mora imati 11 znamenki i ispravnu kontrolnu znamenku).", "Pretraga po OIB-u");
+      const hasCreds = (app.db.get_setting("sudreg_client_id") || "").trim() && (app.db.get_setting("sudreg_client_secret") || "").trim();
+      const hasProxy = !!(app.db.get_setting("sudreg_proxy") || "").trim();
+      if (!hasCreds && !hasProxy) return credsHelp(app);
+      let r = null, err = null;
+      if (hasCreds) { try { r = await lookupOib(app, s2); } catch (e) { err = e; } }
+      if (!r && hasProxy) { try { r = await lookupVies(app, s2); } catch (e) { err = err || e; } }
+      if (r) { fill(r); toast(`Upisano iz ${r.source === "VIES" ? "EU registra PDV obveznika (VIES)" : "Sudskog registra"}: ${r.name}`); return; }
+      if (err && err.needProxy) {
         const d = new Dialog("Pretraga po OIB-u", { width: 520 });
-        d.body.append(h("div", { class: "msg" }, e.message));
+        d.body.append(h("div", { class: "msg" }, err.message));
         d.buttons(null, null, "Zatvori");
         d.bar.prepend(btn("Upute za posrednika", () => { d.close(null); proxyHelp(); }, "primary"));
         await d.show();
-      } else await info(e.message, "Pretraga po OIB-u");
+      } else if (err && !hasProxy) await info(err.message, "Pretraga po OIB-u");
+      else if (err && err.message && /posrednik|VIES/i.test(err.message)) await info(err.message, "Pretraga po OIB-u");
+      else await craftHelp(s2);
+    } catch (e) { await info(e.message, "Pretraga po OIB-u");
     } finally { b.disabled = false; b.textContent = old; }
   }, "ghost");
   return b;

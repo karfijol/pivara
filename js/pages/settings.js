@@ -154,7 +154,7 @@ class SettingsPage extends Page {
 
     // ---------- ponude
     const co = card("Ponude", "Zaglavlje (uz logo PIVARA) i podnožje ponude te zadane vrijednosti za nove ponude.");
-    const ok = ["offer_header1", "offer_header2", "offer_footer", "offer_payment_desc", "offer_payment_method", "offer_valid_days", "sudreg_client_id", "sudreg_client_secret",
+    const ok = ["offer_header1", "offer_header2", "offer_footer", "offer_payment_desc", "offer_payment_method", "offer_valid_days", "sudreg_client_id", "sudreg_client_secret", "sudreg_proxy",
       "offer_hub3", "offer_iban", "offer_recipient", "offer_recipient_street", "offer_recipient_place", "offer_model", "offer_purpose", "offer_desc_tpl"];
     try { this.app.py.call("web_offers.consts"); } catch { /* */ }
     this.formO = new Form([
@@ -169,8 +169,9 @@ class SettingsPage extends Page {
       { label: "Sudski registar – pretraga po OIB-u (podaci kupca u ponudi)", type: "section" },
       { key: "sudreg_info", label: "", type: "info", full: true, default: "Besplatna registracija na sudreg-data.gov.hr → nakon potvrde e-maila dobijete Client ID i Client Secret. "
         + "Upišite ih ovdje; u ponudi i kod kupca tipka „Pretraži registar” upisuje naziv i adresu tvrtke prema OIB-u. Obrti nisu u sudskom registru." },
-      { key: "sudreg_client_id", label: "Client ID" },
-      { key: "sudreg_client_secret", label: "Client Secret" },
+      { key: "sudreg_client_id", label: "Client ID (završava s dvije točke „..”)" },
+      { key: "sudreg_client_secret", label: "Client Secret (završava s dvije točke „..”)" },
+      { key: "sudreg_proxy", label: "Adresa posrednika (Cloudflare Worker, npr. https://sudreg.ime.workers.dev)", full: true },
       { label: "2D kod za plaćanje (HUB 3) na ponudi", type: "section" },
       { key: "offer_hub3", label: "Ispiši HUB 3 kod za plaćanje mobilnom aplikacijom banke", type: "check", full: true },
       { key: "offer_iban", label: "IBAN primatelja" },
@@ -182,7 +183,15 @@ class SettingsPage extends Page {
       { key: "offer_desc_tpl", label: "Opis plaćanja u kodu – {broj} = broj ponude, {kupac} = kupac (najviše 35 znakova)", full: true }],
     { ...Object.fromEntries(ok.map((k) => [k, g(k)])), offer_first_no_y: g(`offer_first_no_${new Date().getFullYear()}`) || g("offer_first_no") },
     2);
-    co.append(this.formO.el, h("div", { style: { marginTop: "10px" } }, btn("Spremi", () => {
+    const sudTest = h("div", { class: "muted", style: { margin: "6px 0", whiteSpace: "pre-line" } });
+    co.append(this.formO.el, h("div", { class: "row gap", style: { marginTop: "10px", flexWrap: "wrap" } },
+      btn("Provjeri pristup Sudskom registru", async () => {
+        try { const d = this.formO.get(); for (const k of ["sudreg_client_id", "sudreg_client_secret", "sudreg_proxy"]) this.db.set_setting(k, String(d[k] || "").trim()); } catch { /* */ }
+        sudTest.textContent = "Provjeravam…";
+        const m = await import("../oib.js"); sudTest.textContent = await m.testAccess(this.app);
+      }, "ghost"),
+      btn("Upute za posrednika", async () => { const m = await import("../oib.js"); m.proxyHelp(); }, "ghost")), sudTest,
+    h("div", { style: { marginTop: "10px" } }, btn("Spremi", () => {
       try {
         const d = this.formO.get();
         if (d.offer_iban && !this.app.py.call("web_offers.iban_ok", d.offer_iban)) throw new Error("IBAN primatelja nije ispravan (provjerite znamenke).");

@@ -17,21 +17,98 @@ export function oibValid(oib) {
   return k === Number(s[10]);
 }
 
-async function token(id, secret) {
+// Prijava (OAuth2 client_credentials). Sudski registar traži Basic prijavu, a preglednik je ne smije poslati izravno
+// (registar za prijavu ne dopušta pozive s druge stranice – CORS). Zato: 1) posrednik (Cloudflare Worker), ako je upisan;
+// 2) izravni pokušaj s podacima u tijelu zahtjeva. Client ID i Secret uvijek završavaju s „..” – dodaju se ako su izgubljeni.
+function variants(v) { v = String(v || "").trim(); return v.endsWith("..") ? [v] : [v, v.replace(/\.*$/, "") + ".."]; }
+async function tryToken(proxy, id, secret) {
   const key = id + ":" + secret;
-  if (TOKEN && TOKEN.key === key && TOKEN.until > Date.now() + 30000) return TOKEN.token;
-  const form = `grant_type=client_credentials&client_id=${encodeURIComponent(id)}&client_secret=${encodeURIComponent(secret)}`;
-  let r = null;
-  try { r = await fetch(TOKEN_URL, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: form }); } catch { r = null; }
-  if (!r || !r.ok) { // drugi način prijave: pristupni podaci u zaglavlju (Basic)
-    try { r = await fetch(TOKEN_URL, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: "Basic " + btoa(key) }, body: "grant_type=client_credentials" }); } catch { /* */ }
+  if (proxy) {
+    try {
+      const r = await fetch(proxy.replace(/\/+$/, "") + "/token", { method: "POST", headers: { Authorization: "Basic " + btoa(key) } });
+      if (r.ok) return { ok: true, j: await r.json() };
+      return { ok: false, status: r.status, via: "proxy" };
+    } catch { return { ok: false, status: 0, via: "proxy" }; }
   }
-  if (!r) throw new Error("Sudski registar nije dostupan (nema veze s internetom ili je servis privremeno nedostupan).");
-  if (r.status === 401 || r.status === 400) throw new Error("Sudski registar je odbio pristupne podatke – provjerite Client ID i Client Secret (Postavke → Ponude).");
-  if (!r.ok) throw new Error(`Sudski registar: greška ${r.status} pri prijavi.`);
-  const j = await r.json();
-  TOKEN = { key, token: j.access_token, until: Date.now() + (Number(j.expires_in) || 3600) * 1000 };
-  return TOKEN.token;
+  try {
+    const r = await fetch(TOKEN_URL, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `grant_type=client_credentials&client_id=${encodeURIComponent(id)}&client_secret=${encodeURIComponent(secret)}` });
+    if (r.ok) return { ok: true, j: await r.json() };
+    return { ok: false, status: r.status, via: "direct" };
+  } catch { return { ok: false, status: 0, via: "direct" }; }
+}
+async function token(id, secret, proxy) {
+  const ck = id + ":" + secret + ":" + proxy;
+  if (TOKEN && TOKEN.key === ck && TOKEN.until > Date.now() + 30000) return TOKEN.token;
+  let last = null;
+  for (const i of variants(id)) {
+    for (const sc of variants(secret)) {
+      const r = await tryToken(proxy, i, sc);
+      if (r.ok && r.j && r.j.access_token) {
+        TOKEN = { key: ck, token: r.j.access_token, until: Date.now() + (Number(r.j.expires_in) || 3600) * 1000 };
+        return TOKEN.token;
+      }
+      last = r;
+      if (r.status === 0) break;
+    }
+    if (last && last.status === 0) break;
+  }
+  const e = new Error(last && last.status === 0
+    ? (proxy ? "Posrednik (Cloudflare Worker) nije dostupan – provjerite adresu posrednika u Postavkama → Ponude."
+      : "Sudski registar nije dostupan (nema veze s internetom ili je servis privremeno nedostupan).")
+    : (proxy ? "Sudski registar je odbio pristupne podatke – provjerite Client ID i Client Secret (moraju završavati s dvije točke „..”)."
+      : "Sudski registar ne prihvaća prijavu izravno iz preglednika (ili pristupni podaci nisu ispravni). Postavite besplatnog posrednika – upute su u Postavke → Ponude → „Upute za posrednika”."));
+  e.authFail = true; e.needProxy = !proxy && last && last.status !== 0;
+  throw e;
+}
+
+// provjera pristupa (Postavke → Ponude): vraća tekst rezultata
+export async function testAccess(app) {
+  const id = (app.db.get_setting("sudreg_client_id") || "").trim(), secret = (app.db.get_setting("sudreg_client_secret") || "").trim();
+  const proxy = (app.db.get_setting("sudreg_proxy") || "").trim();
+  if (!id || !secret) return "Upišite Client ID i Client Secret pa kliknite Spremi.";
+  TOKEN = null;
+  try {
+    await token(id, secret, proxy);
+    const r = await lookupOib(app, "28921383001"); // provjera na poznatom OIB-u (HEP d.d.)
+    return r ? `✓ Pristup radi${proxy ? " (preko posrednika)" : ""}. Probni upit: ${r.name}` : "✓ Prijava radi, ali probni upit nije vratio podatke.";
+  } catch (e) { return "✗ " + e.message; }
+}
+
+// upute i kod za posrednika (Cloudflare Worker, besplatno)
+export const WORKER_CODE = `// Posrednik za prijavu u Sudski registar (sudreg-data.gov.hr) – za aplikaciju pivovare
+const ALLOWED = ["https://app.pivara.hr"];
+export default {
+  async fetch(req) {
+    const origin = req.headers.get("Origin") || "";
+    const cors = { "Access-Control-Allow-Origin": ALLOWED.includes(origin) ? origin : ALLOWED[0],
+      "Access-Control-Allow-Headers": "Authorization, Content-Type", "Access-Control-Allow-Methods": "POST, OPTIONS" };
+    if (req.method === "OPTIONS") return new Response(null, { headers: cors });
+    if (!ALLOWED.includes(origin)) return new Response("Zabranjeno", { status: 403, headers: cors });
+    if (req.method !== "POST" || !new URL(req.url).pathname.endsWith("/token")) return new Response("Nije pronađeno", { status: 404, headers: cors });
+    const r = await fetch("https://sudreg-data.gov.hr/api/oauth/token", { method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: req.headers.get("Authorization") || "" },
+      body: "grant_type=client_credentials" });
+    return new Response(await r.text(), { status: r.status, headers: { ...cors, "Content-Type": "application/json" } });
+  },
+};`;
+
+export async function proxyHelp() {
+  const d = new Dialog("Posrednik za Sudski registar (Cloudflare Worker)", { width: 720 });
+  const code = h("textarea", { readonly: true, rows: 14, style: { width: "100%", fontFamily: "monospace", fontSize: "12px" } });
+  code.value = WORKER_CODE;
+  d.body.append(h("div", { class: "msg" },
+    "Sudski registar dopušta prijavu samo na način koji preglednik ne smije izravno poslati s druge web stranice. " +
+    "Zato prijavu obavlja mali besplatni posrednik na Cloudflareu (radi samo za app.pivara.hr i ne sprema podatke):\n\n" +
+    "1. Otvorite dash.cloudflare.com i napravite besplatan račun (ili se prijavite).\n" +
+    "2. Workers & Pages → Create → Create Worker → nazovite ga npr. sudreg → Deploy.\n" +
+    "3. Edit code → obrišite postojeći kod i zalijepite kod ispod → Deploy.\n" +
+    "4. Kopirajte adresu workera (npr. https://sudreg.vase-ime.workers.dev) i upišite je u Postavke → Ponude → „Adresa posrednika”.\n" +
+    "5. Kliknite „Provjeri pristup”."), code);
+  d.buttons(null, null, "Zatvori");
+  d.bar.prepend(btn("Kopiraj kod", async () => { try { await navigator.clipboard.writeText(WORKER_CODE); toast("Kod kopiran."); } catch { code.select(); } }, "ghost"),
+    btn("Otvori Cloudflare", () => window.open("https://dash.cloudflare.com/", "_blank"), "ghost"));
+  return d.show();
 }
 
 // vraća { oib, name, street, postal, city, address, status, form } ili null (nije u sudskom registru)
@@ -40,7 +117,7 @@ export async function lookupOib(app, oib) {
   if (!oibValid(s)) throw new Error("OIB nije ispravan (mora imati 11 znamenki i ispravnu kontrolnu znamenku).");
   const id = (app.db.get_setting("sudreg_client_id") || "").trim(), secret = (app.db.get_setting("sudreg_client_secret") || "").trim();
   if (!id || !secret) { const e = new Error("NOCREDS"); e.noCreds = true; throw e; }
-  const t = await token(id, secret);
+  const t = await token(id, secret, (app.db.get_setting("sudreg_proxy") || "").trim());
   let r;
   try {
     r = await fetch(`${API}/detalji_subjekta?tip_identifikatora=oib&identifikator=${s}&expand_relations=true&no_data_error=0`,
@@ -70,7 +147,7 @@ export async function credsHelp(app) {
     "Pristup je besplatan, ali traži jednokratnu registraciju:\n\n" +
     "1. Otvorite sudreg-data.gov.hr i kliknite „Registracija”.\n" +
     "2. Potvrdite e-mail adresu – otvorit će se stranica s pristupnim podacima (Client ID i Client Secret).\n" +
-    "3. Upišite ih u Postavke → Ponude → „Sudski registar – pretraga po OIB-u”.\n\n" +
+    "3. Upišite ih u Postavke → Ponude → „Sudski registar – pretraga po OIB-u” (kopirajte ih cijele – uvijek završavaju s dvije točke „..”).\n\n" +
     "Obrtni registar nema javno sučelje za programe – podatke obrta upišite ručno (provjera: pretrazivac-obrta.gov.hr)."));
   d.buttons(null, null, "Zatvori");
   d.bar.prepend(btn("Otvori sudreg-data.gov.hr", () => window.open("https://sudreg-data.gov.hr/", "_blank"), "ghost"),
@@ -95,7 +172,13 @@ export function oibButton(app, getOib, fill) {
       toast(`Upisano iz Sudskog registra: ${r.name}`);
     } catch (e) {
       if (e.noCreds) await credsHelp(app);
-      else await info(e.message, "Pretraga po OIB-u");
+      else if (e.needProxy) {
+        const d = new Dialog("Pretraga po OIB-u", { width: 520 });
+        d.body.append(h("div", { class: "msg" }, e.message));
+        d.buttons(null, null, "Zatvori");
+        d.bar.prepend(btn("Upute za posrednika", () => { d.close(null); proxyHelp(); }, "primary"));
+        await d.show();
+      } else await info(e.message, "Pretraga po OIB-u");
     } finally { b.disabled = false; b.textContent = old; }
   }, "ghost");
   return b;

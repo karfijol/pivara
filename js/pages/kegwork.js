@@ -303,10 +303,13 @@ class KegWorkPage extends Page {
     const o = this.app.py.call("web_kegs.overview");
     const c = o.counts;
     this.counts.innerHTML = "";
-    for (const [lab, val, col, sub] of [["Puni", c["Pun"], "#E3A12B", `${fq(o.total_litres, 0)} L piva`],
-      ["Prazni (prljavi)", c["Prljav"], "#B9864A", "za pranje"], ["Čisti", c["Čist"], "#5BBF7A", "spremni za punjenje"],
-      ["Kod kupaca", c["Kod kupca"], "#4F9DDE", "vani"], ["Servis", c["Servis"], "#E0675A", `ukupno kegova ${o.total}`]]) {
-      this.counts.append(h("div", { class: "kpi" }, h("div", { class: "bar", style: { background: col } }),
+    for (const [lab, val, col, sub, st] of [["Puni", c["Pun"], "#E3A12B", `${fq(o.total_litres, 0)} L piva`, "Pun"],
+      ["Prazni (prljavi)", c["Prljav"], "#B9864A", "za pranje", "Prljav"], ["Čisti", c["Čist"], "#5BBF7A", "spremni za punjenje", "Čist"],
+      ["Kod kupaca", c["Kod kupca"], "#4F9DDE", "vani", "Kod kupca"], ["Servis", c["Servis"], "#E0675A", `ukupno kegova ${o.total}`, "Servis"]]) {
+      // pločica otvara popis kegova u tom statusu
+      this.counts.append(h("div", { class: "kpi kpi-click", role: "button", tabindex: "0", title: `Prikaži kegove: ${lab.toLowerCase()}`,
+        onclick: () => this.statusList(st, lab), onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); this.statusList(st, lab); } } },
+      h("div", { class: "bar", style: { background: col } }),
         h("div", { class: "lab" }, lab), h("div", { class: "val" }, String(val || 0)), h("div", { class: "s" }, sub)));
     }
     this.stockT.setRows(o.stock.map((s, i) => ({ id: i, beer: s.beer, lot: s.lot, kegs: s.kegs, litres: fq(s.litres, 1),
@@ -335,6 +338,38 @@ class KegWorkPage extends Page {
   async detail(id) {
     const r = await kegDetail(this.app, id);
     if (r) this.refresh();
+  }
+
+  // popis kegova u odabranom statusu (klik na pločicu Puni / Prazni / Čisti / Kod kupaca / Servis)
+  async statusList(status, label) {
+    const days = (d) => { if (!d) return ""; const n = Math.floor((Date.now() - new Date(d.slice(0, 10) + "T00:00:00").getTime()) / 86400000); return n >= 0 ? String(n) : ""; };
+    const load = () => (this.db.kegs() || []).filter((k) => k.status === status).sort((a, b) => (a.status_date || "").localeCompare(b.status_date || "") || a.code.localeCompare(b.code, "hr", { numeric: true }));
+    let kegs = load();
+    const cols = [["code", "Keg", 90, "w"], ["size", "L", 50, "e"]];
+    if (status === "Pun" || status === "Kod kupca") cols.push(["beer", "Pivo", 150, "w"], ["lot", "LOT", 120, "w"], ["filled", "Punjeno", 95, "center"]);
+    if (status === "Pun") cols.push(["litres", "Piva (L)", 70, "e"]);
+    if (status === "Kod kupca") cols.push(["customer", "Kupac", 170, "w"]);
+    cols.push(["since", { Pun: "Puni od", Prljav: "Vraćeno / istočeno", "Čist": "Čist od", "Kod kupca": "Isporučeno", Servis: "Na servisu od" }[status] || "Od", 105, "center"],
+      ["days", "Dana", 55, "e"], ["note", "Napomena", 160, "w"]);
+    const t = new Table(cols, { height: 14, onDouble: async (id) => { if (await kegDetail(this.app, id)) { this.refresh(); fill(); } } });
+    const sum = h("div", { class: "muted", style: { margin: "4px 0 6px" } });
+    const fill = () => {
+      kegs = load();
+      t.setRows(kegs.map((k) => ({ id: k.id, code: k.code, size: fq(k.size_l), beer: k.beer || "", lot: k.batch_no || "", filled: d2ui(k.filled_date),
+        litres: k.fill_l ? fq(k.fill_l, 1) : "", customer: k.customer || "", since: d2ui(k.status_date), days: days(k.status_date), note: k.note || "",
+        _tag: status === "Kod kupca" && Number(days(k.status_date)) > 30 ? "warn" : "" })));
+      const L = kegs.reduce((a, k) => a + (Number(k.fill_l) || (status === "Pun" ? Number(k.size_l) || 0 : 0)), 0);
+      sum.textContent = `${kegs.length} keg${kegs.length === 1 ? "" : "ova"}` + (status === "Pun" ? ` · ${fq(L, 1)} L piva` : "")
+        + (status === "Kod kupca" ? ` · kod kupca dulje od 30 dana: ${kegs.filter((k) => Number(days(k.status_date)) > 30).length}` : "")
+        + " · dvoklik (dvostruki dodir) na keg prikazuje njegovu povijest";
+      if (!kegs.length) t.tbody.querySelector("tr.empty td").textContent = "Nema kegova u ovom statusu.";
+    };
+    const d = new Dialog(`Kegovi – ${label}`, { width: 900 });
+    d.body.append(sum, t.el);
+    fill();
+    d.buttons(null, null, "Zatvori");
+    d.bar.prepend(btn("Izvoz CSV", () => t.exportCsv(`kegovi_${status}`), "ghost"));
+    await d.show();
   }
 
   async scanEquipment() {

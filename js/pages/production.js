@@ -1,6 +1,7 @@
 // Proizvodnja i prodaja: recepture, planer fermentora, šarže, kegovi, kupci i otpremnice, trošarine, sljedivost.
 // Preneseno iz app.py (RecipesPage, BrewPreview, BatchesPage, KegsPage) i extras_ui.py (PlannerPage, SalesPage,
 // DeliveryDialog, ExcisePage, RecallPage, ReadingsDialog, naljepnice).
+import { oibButton } from "../oib.js";
 import {
   h, btn, Page, Table, Form, Dialog, askForm, confirm, info, error, toast, tableDialog,
   fq, money, fin, num, d2ui, today, addDays, daysLeft, sg, EPS, setLabel,
@@ -1689,6 +1690,14 @@ class SalesPage extends Page {
     { key: "contact", label: "Kontakt osoba" },
     { key: "phone", label: "Telefon" }, { key: "email", label: "E-mail" }, { key: "note", label: "Napomena" }];
 
+  // tipka „Pretraži registar” uz OIB kupca (Sudski registar)
+  oibBtn(f) {
+    f.w.oib.el.parentElement.append(h("div", { class: "row gap", style: { marginTop: "4px" } }, oibButton(this.app, () => f.w.oib.get(), (r) => {
+      f.w.name.set(r.name); f.w.oib.set(r.oib); f.w.address.set(r.street); f.w.postal_code.set(r.postal); f.w.city.set(r.city);
+      if (f.w.customer_type) f.w.customer_type.set("Pravna osoba");
+    })));
+  }
+
   build() {
     this.tbtn("＋ Nova otpremnica", () => this.newDn());
     this.tbtn("＋ Novi kupac", () => this.newC(), "ghost");
@@ -1718,14 +1727,14 @@ class SalesPage extends Page {
   }
 
   async newC() {
-    const d = await askForm("Novi kupac", SalesPage.FIELDS, {}, { columns: 2 });
+    const d = await askForm("Novi kupac", SalesPage.FIELDS, {}, { columns: 2, onReady: (f) => this.oibBtn(f) });
     if (d) { this.db.save_customer(d); this.refresh(); }
   }
 
   async editC() {
     const i = this.need(this.cust, "kupca");
     if (!i) return;
-    const d = await askForm("Kupac", SalesPage.FIELDS, this.db.one("SELECT * FROM customers WHERE id=?", [i]), { columns: 2 });
+    const d = await askForm("Kupac", SalesPage.FIELDS, this.db.one("SELECT * FROM customers WHERE id=?", [i]), { columns: 2, onReady: (f) => this.oibBtn(f) });
     if (d) {
       const old = this.db.val("SELECT name FROM customers WHERE id=?", [i]);
       this.db.save_customer(d, i);

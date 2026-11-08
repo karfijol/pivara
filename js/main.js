@@ -6,7 +6,7 @@ import * as undo from "./undo.js";
 import { h, btn, toast, info, error, confirm, busy, openFile, dbProxy, Dialog } from "./ui.js";
 import { icon } from "./icons.js";
 
-export const VERSION = "web 2.42";
+export const VERSION = "web 2.43";
 
 // modul (datoteka u js/pages) za svaku stranicu (karticu); skupine i kartice su u auth.GROUPS
 const MOD_OF = {
@@ -191,6 +191,13 @@ class App {
     // podsjetnik za trošarine više ne iskače pri ulasku – prikazuje se kao traka na nadzornoj ploči
     this.checkDbSize();
     try { if (store.tokenExpiry) py.call("web_more.set_token_expires", store.tokenExpiry); } catch (e) { console.warn(e); }
+    // jednokratno (2.43): ponude u 2026. nastavljaju od broja 50-2026
+    try {
+      if (this.db.get_setting("offer_first_2026_set") !== "1") {
+        if (!this.db.get_setting("offer_first_no_2026")) this.db.set_setting("offer_first_no_2026", "50");
+        this.db.set_setting("offer_first_2026_set", "1");
+      }
+    } catch (e) { console.warn(e); }
     // jednokratno (2.33): prazni kegovi bez kupca, šarže i piva – ostaje samo u povijesti kega
     try {
       if (this.db.get_setting("keg_empty_clear") !== "1") {

@@ -148,14 +148,12 @@ def _parse_no(no):
 def next_no(db, year=None):
     ensure(db)
     year = int(year or dt.date.today().year)
-    last = db.val("SELECT MAX(seq) FROM offers WHERE year=?", (year,))
-    if last:
-        return f"{last + 1}-{year}"
-    try:
-        first = int(db.get_setting("offer_first_no") or 1)
+    last = db.val("SELECT MAX(seq) FROM offers WHERE year=?", (year,)) or 0
+    try:  # prvi broj u godini (npr. 50-2026 kad se nastavlja brojanje iz drugog programa)
+        first = int(db.get_setting(f"offer_first_no_{year}") or db.get_setting("offer_first_no") or 1)
     except ValueError:
         first = 1
-    return f"{max(first, 1)}-{year}"
+    return f"{max(last + 1, first, 1)}-{year}"
 
 
 def offers(db):

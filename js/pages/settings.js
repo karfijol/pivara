@@ -154,7 +154,7 @@ class SettingsPage extends Page {
 
     // ---------- ponude
     const co = card("Ponude", "Zaglavlje (uz logo PIVARA) i podnožje ponude te zadane vrijednosti za nove ponude.");
-    const ok = ["offer_header1", "offer_header2", "offer_footer", "offer_payment_desc", "offer_payment_method", "offer_valid_days", "offer_first_no",
+    const ok = ["offer_header1", "offer_header2", "offer_footer", "offer_payment_desc", "offer_payment_method", "offer_valid_days", "sudreg_client_id", "sudreg_client_secret",
       "offer_hub3", "offer_iban", "offer_recipient", "offer_recipient_street", "offer_recipient_place", "offer_model", "offer_purpose", "offer_desc_tpl"];
     try { this.app.py.call("web_offers.consts"); } catch { /* */ }
     this.formO = new Form([
@@ -165,7 +165,12 @@ class SettingsPage extends Page {
       { key: "offer_payment_method", label: "Način plaćanja (zadano)", type: "combo", editable: true,
         options: ["Transakcijski račun", "Gotovina", "Kartica", "Ostalo"] },
       { key: "offer_valid_days", label: "Rok plaćanja (dana od izdavanja)", type: "num", min: 0 },
-      { key: "offer_first_no", label: "Prvi redni broj ponude u godini (ako se nastavlja postojeće brojanje)", type: "num", min: 1 },
+      { key: "offer_first_no_y", label: `Prvi broj ponude u ${new Date().getFullYear()}. (sljedeća ponuda dobiva barem taj broj, zatim +1)`, type: "num", min: 1 },
+      { label: "Sudski registar – pretraga po OIB-u (podaci kupca u ponudi)", type: "section" },
+      { key: "sudreg_info", label: "", type: "info", full: true, default: "Besplatna registracija na sudreg-data.gov.hr → nakon potvrde e-maila dobijete Client ID i Client Secret. "
+        + "Upišite ih ovdje; u ponudi i kod kupca tipka „Pretraži registar” upisuje naziv i adresu tvrtke prema OIB-u. Obrti nisu u sudskom registru." },
+      { key: "sudreg_client_id", label: "Client ID" },
+      { key: "sudreg_client_secret", label: "Client Secret" },
       { label: "2D kod za plaćanje (HUB 3) na ponudi", type: "section" },
       { key: "offer_hub3", label: "Ispiši HUB 3 kod za plaćanje mobilnom aplikacijom banke", type: "check", full: true },
       { key: "offer_iban", label: "IBAN primatelja" },
@@ -175,13 +180,15 @@ class SettingsPage extends Page {
       { key: "offer_model", label: "Model (npr. HR00)" },
       { key: "offer_purpose", label: "Šifra namjene (npr. OTHR)" },
       { key: "offer_desc_tpl", label: "Opis plaćanja u kodu – {broj} = broj ponude, {kupac} = kupac (najviše 35 znakova)", full: true }],
-    Object.fromEntries(ok.map((k) => [k, g(k)])), 2);
+    { ...Object.fromEntries(ok.map((k) => [k, g(k)])), offer_first_no_y: g(`offer_first_no_${new Date().getFullYear()}`) || g("offer_first_no") },
+    2);
     co.append(this.formO.el, h("div", { style: { marginTop: "10px" } }, btn("Spremi", () => {
       try {
         const d = this.formO.get();
         if (d.offer_iban && !this.app.py.call("web_offers.iban_ok", d.offer_iban)) throw new Error("IBAN primatelja nije ispravan (provjerite znamenke).");
         if (d.offer_model && !/^HR\d{2}$/i.test(d.offer_model.trim())) throw new Error("Model mora biti oblika HR i dvije znamenke, npr. HR00.");
-        for (const [k, v] of Object.entries(d)) this.db.set_setting(k, v === null || v === undefined ? "" : String(v));
+        if ("offer_first_no_y" in d) { d[`offer_first_no_${new Date().getFullYear()}`] = d.offer_first_no_y; delete d.offer_first_no_y; }
+        for (const [k, v] of Object.entries(d)) this.db.set_setting(k, v === null || v === undefined ? "" : String(v).trim());
         toast("Postavke ponuda spremljene.");
       } catch (e) { this.err(e); }
     })));

@@ -1,4 +1,5 @@
 // Ponude kupcima: odabir proizvoda iz cjenika, količine, zbroj; PDF s logom PIVARA. Cjenik se uređuje ovdje.
+import { oibButton } from "../oib.js";
 import { h, btn, Page, Table, Dialog, Form, askForm, confirm, info, error, toast, fq, money, num, d2ui, today } from "../ui.js";
 
 const eur = (x) => Number(x || 0).toLocaleString("hr-HR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -63,6 +64,11 @@ class OfferDialog extends Dialog {
         } },
       { key: "payment_desc", label: "Opis plaćanja", full: true },
       { key: "note", label: "Napomena (neobavezno)", type: "multi", full: true, height: 50 }], data, 3);
+    // pretraga po OIB-u (Sudski registar): naziv i adresa kupca
+    const oibCell = this.form.w.cust_oib.el.parentElement;
+    oibCell.append(h("div", { class: "row gap", style: { marginTop: "4px" } }, oibButton(app, () => this.form.w.cust_oib.get(), (r) => {
+      this.form.w.cust_name.set(r.name); this.form.w.cust_address.set(r.address); this.form.w.cust_oib.set(r.oib);
+    })));
     this.saveCust = h("input", { type: "checkbox" });
     this.saveCustRow = h("label", { class: "chk", style: { marginTop: "2px" } }, this.saveCust, " Spremi kupca u popis kupaca");
     // stavke

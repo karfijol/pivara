@@ -6,6 +6,7 @@ const SCOPE = "https://www.googleapis.com/auth/calendar.events";
 const API = "https://www.googleapis.com/calendar/v3/calendars/";
 let gisReady = null, tokenClient = null, tokenClientId = null;
 let TOKEN = null; // { token, until }
+let askConsent = false; // ponovno traži dopuštenje (korisnik nije označio kalendar)
 try { const t = JSON.parse(sessionStorage.getItem("gcal_token") || "null"); if (t && t.until > Date.now()) TOKEN = t; } catch { /* */ }
 
 function loadGis() {
@@ -44,14 +45,18 @@ export function connect(app) {
   return new Promise((resolve, reject) => {
     const go = () => {
       tokenClient.callback = (r) => {
-        if (r && r.access_token) {
+        if (r && r.access_token && window.google.accounts.oauth2.hasGrantedAllScopes && !window.google.accounts.oauth2.hasGrantedAllScopes(r, SCOPE)) {
+          askConsent = true;
+          reject(new Error("Google nije dao dopuštenje za kalendar. Kliknite ponovno i u Googleovom prozoru označite kvačicu „Pregled i uređivanje događaja u svim vašim kalendarima” (View and edit events)."));
+        } else if (r && r.access_token) {
+          askConsent = false;
           TOKEN = { token: r.access_token, until: Date.now() + (Number(r.expires_in) || 3600) * 1000 };
           try { sessionStorage.setItem("gcal_token", JSON.stringify(TOKEN)); } catch { /* */ }
           resolve(true);
         } else reject(new Error((r && (r.error_description || r.error)) || "Google prijava nije uspjela."));
       };
       tokenClient.error_callback = (e) => reject(new Error(e && e.type === "popup_closed" ? "Prozor za Google prijavu je zatvoren." : "Preglednik je blokirao prozor za Google prijavu – dopustite skočne prozore za ovu stranicu."));
-      tokenClient.requestAccessToken({ prompt: "" });
+      tokenClient.requestAccessToken({ prompt: askConsent ? "consent" : "" });
     };
     if (tokenClient && tokenClientId === settings(app).clientId) go();
     else prepare(app).then(go).catch(reject);
@@ -62,6 +67,14 @@ async function call(method, url, body) {
   const r = await fetch(url, { method, headers: { Authorization: "Bearer " + TOKEN.token, "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
   if (r.status === 401) { TOKEN = null; try { sessionStorage.removeItem("gcal_token"); } catch { /* */ } const e = new Error("Google prijava je istekla – kliknite „Pošalji u Google kalendar”."); e.relogin = true; throw e; }
   if (r.status === 404 || r.status === 410) return { gone: true };
+  if (r.status === 403) {
+    let m = ""; try { m = (await r.json()).error.message; } catch { /* */ }
+    if (/scope/i.test(m)) {
+      TOKEN = null; askConsent = true; try { sessionStorage.removeItem("gcal_token"); } catch { /* */ }
+      throw new Error("Google nije dao dopuštenje za kalendar. Kliknite ponovno „Poveži i provjeri” i u Googleovom prozoru označite kvačicu za uređivanje događaja u kalendaru.");
+    }
+    throw new Error(`Google kalendar: greška 403${m ? " – " + m : ""}`);
+  }
   if (!r.ok) { let m = ""; try { m = (await r.json()).error.message; } catch { /* */ } throw new Error(`Google kalendar: greška ${r.status}${m ? " – " + m : ""}`); }
   return r.status === 204 ? {} : r.json();
 }
@@ -164,7 +177,7 @@ export async function testCalendar(app) {
   try {
     if (!connected()) await connect(app);
     const { calId } = settings(app);
-    const r = await call("GET", API + encodeURIComponent(calId));
+    const r = await call("GET", API + encodeURIComponent(calId) + "/events?maxResults=1");
     if (r.gone) return "✗ Kalendar nije pronađen – provjerite Calendar ID (ili ostavite prazno za glavni kalendar).";
     return `✓ Povezano s kalendarom „${r.summary || calId}”. Najave se šalju automatski.`;
   } catch (e) { return "✗ " + e.message; }

@@ -258,7 +258,8 @@ class DashboardPage extends Page {
     this.invBar = h("div", { class: "banner warn", style: { display: "none", cursor: "pointer" }, onclick: () => this.app.show("invoices") });
     this.remBar = h("div", { class: "banner warn rem-bar", style: { display: "none", cursor: "pointer" }, onclick: () => this.app.show("reminders") });
     this.dryBar = h("div", { class: "banner ok dry-bar", style: { display: "none" } });
-    this.content.append(this.tokenBar, this.remBar, this.dryBar, this.exciseBar, this.invBar, cards, charts, low);
+    this.bookBar = h("div", { class: "banner ok book-bar", style: { display: "none", cursor: "pointer" }, onclick: () => this.app.show("bookings") });
+    this.content.append(this.tokenBar, this.remBar, this.bookBar, this.dryBar, this.exciseBar, this.invBar, cards, charts, low);
   }
 
   // podsjetnik za dry hop (danas ili kasni) + obavijest na uređaju
@@ -354,6 +355,19 @@ class DashboardPage extends Page {
           ...rd.slice(0, 4).map((r) => h("div", {}, r.message)), rd.length > 4 ? h("div", { class: "muted" }, `… i još ${rd.length - 4} – kliknite za sve podsjetnike.`) : null);
         this.remBar.append(box);
         import("./reminders.js").then((m) => m.notifyReminders(this.app, rd)).catch(() => {});
+      }
+    } catch (e) { console.warn(e); }
+    // kušanja u sljedećih 7 dana
+    try {
+      const bk = auth.canSee(this.app.user, "bookings") ? this.app.py.call("web_bookings.upcoming", 7) : [];
+      this.bookBar.style.display = bk.length ? "" : "none";
+      this.bookBar.innerHTML = "";
+      if (bk.length) {
+        const when = (b) => (b.days === 0 ? "DANAS" : b.days === 1 ? "sutra" : d2ui(b.date));
+        this.bookBar.className = "banner book-bar " + (bk.some((b) => b.days === 0) ? "warn" : "ok");
+        this.bookBar.append(h("div", { class: "rem-list" }, h("b", { class: "row gap" }, icon("beer", 18), `Kušanja (${bk.length})`),
+          ...bk.slice(0, 4).map((b) => h("div", {}, `${when(b)}${b.time ? " u " + b.time : ""} – ${b.group_name}${b.people ? `, ${b.people} os.` : ""}${b.status === "Najavljeno" ? " (nepotvrđeno)" : ""}`)),
+          bk.length > 4 ? h("div", { class: "muted" }, `… i još ${bk.length - 4}`) : null));
       }
     } catch (e) { console.warn(e); }
     try {

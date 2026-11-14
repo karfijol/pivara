@@ -1,4 +1,5 @@
 // Postavke: izgled, osnovni podaci, logo, prodaja, naljepnice, podaci i povezivanje s GitHubom.
+import * as gcal from "../gcal.js";
 import { h, btn, Page, Form, confirm, info, error, busy, toast, saveBlob, tableDialog, today } from "../ui.js";
 import * as store from "../store.js";
 import * as auth from "../auth.js";
@@ -63,6 +64,7 @@ class SettingsPage extends Page {
   static title = "Postavke";
 
   build() {
+    gcal.prepare(this.app).catch(() => {}); // Google prijava spremna da se prozor otvori odmah na klik
     const db = this.db;
     const g = (k) => db.get_setting(k);
 
@@ -147,14 +149,16 @@ class SettingsPage extends Page {
     this.formKeg = new Form([
       { key: "keg_size_l", label: "Osnovna veličina kega (L)", type: "num", required: true, positive: true },
       { key: "keg_fill_l", label: "Piva u punom kegu (L) – kupcu se izdaju samo kegovi s ovom količinom", type: "num", required: true, positive: true },
-      { key: "keg_deposit", label: "Depozit po kegu (€)", type: "num", min: 0 }], Object.fromEntries(kk.map((k) => [k, g(k)])), 3);
+      { key: "keg_deposit", label: "Depozit po kegu (€)", type: "num", min: 0 },
+      { key: "keg_service_work", label: "Servis kega – stavke za kvačice „Što je napravljeno” (jedna stavka po retku)", type: "multi", full: true, height: 150 }],
+    { ...Object.fromEntries(kk.map((k) => [k, g(k)])), keg_service_work: (() => { try { return this.app.py.call("web_kegs.consts").service_work.join("\n"); } catch { return g("keg_service_work") || ""; } })() }, 3);
     ck.append(this.formKeg.el, h("div", { style: { marginTop: "10px" } }, btn("Spremi", () => this.saveForm(this.formKeg, (d) => {
       if (d.keg_fill_l > d.keg_size_l) throw new Error("Količina piva u kegu ne može biti veća od veličine kega.");
     }))));
 
     // ---------- ponude
     const co = card("Ponude", "Zaglavlje (uz logo PIVARA) i podnožje ponude te zadane vrijednosti za nove ponude.");
-    const ok = ["offer_header1", "offer_header2", "offer_footer", "offer_payment_desc", "offer_payment_method", "offer_valid_days", "sudreg_client_id", "sudreg_client_secret", "sudreg_proxy",
+    const ok = ["offer_header1", "offer_header2", "offer_footer", "offer_payment_desc", "offer_payment_method", "offer_valid_days", "sudreg_client_id", "sudreg_client_secret", "sudreg_proxy", "gcal_client_id", "gcal_calendar_id",
       "offer_hub3", "offer_iban", "offer_recipient", "offer_recipient_street", "offer_recipient_place", "offer_model", "offer_purpose", "offer_desc_tpl"];
     try { this.app.py.call("web_offers.consts"); } catch { /* */ }
     this.formO = new Form([
@@ -172,6 +176,9 @@ class SettingsPage extends Page {
       { key: "sudreg_client_id", label: "Client ID (završava s dvije točke „..”)" },
       { key: "sudreg_client_secret", label: "Client Secret (završava s dvije točke „..”)" },
       { key: "sudreg_proxy", label: "Adresa posrednika (Cloudflare Worker, npr. https://sudreg.ime.workers.dev)", full: true },
+      { label: "Google kalendar – najave kušanja", type: "section" },
+      { key: "gcal_client_id", label: "Google Client ID (…apps.googleusercontent.com)", full: true },
+      { key: "gcal_calendar_id", label: "Calendar ID (prazno = glavni kalendar; preporuka: poseban kalendar „Kušanja”)", full: true },
       { label: "2D kod za plaćanje (HUB 3) na ponudi", type: "section" },
       { key: "offer_hub3", label: "Ispiši HUB 3 kod za plaćanje mobilnom aplikacijom banke", type: "check", full: true },
       { key: "offer_iban", label: "IBAN primatelja" },
@@ -190,14 +197,26 @@ class SettingsPage extends Page {
         sudTest.textContent = "Provjeravam…";
         const m = await import("../oib.js"); sudTest.textContent = await m.testAccess(this.app);
       }, "ghost"),
-      btn("Upute za posrednika", async () => { const m = await import("../oib.js"); m.proxyHelp(); }, "ghost")), sudTest,
+      btn("Upute za posrednika", async () => { const m = await import("../oib.js"); m.proxyHelp(); }, "ghost"),
+      btn("Google kalendar: poveži i provjeri", async () => {
+        const gc = gcal;
+        try { const d = this.formO.get(); const oldCal = this.db.get_setting("gcal_calendar_id") || "";
+          for (const k of ["gcal_client_id", "gcal_calendar_id"]) this.db.set_setting(k, String(d[k] || "").trim());
+          if ((d.gcal_calendar_id || "").trim() !== oldCal.trim()) this.app.py.call("web_bookings.reset_calendar"); } catch { /* */ }
+        sudTest.textContent = "Povezujem s Google kalendarom…";
+        sudTest.textContent = await gc.testCalendar(this.app);
+        if (sudTest.textContent.startsWith("✓")) { const r = await gc.syncQuiet(this.app); if (r && r.done) sudTest.textContent += ` Poslano najava: ${r.done}.`; }
+      }, "ghost"),
+      btn("Upute za Google kalendar", () => gcal.setupHelp(this.app), "ghost")), sudTest,
     h("div", { style: { marginTop: "10px" } }, btn("Spremi", () => {
       try {
         const d = this.formO.get();
         if (d.offer_iban && !this.app.py.call("web_offers.iban_ok", d.offer_iban)) throw new Error("IBAN primatelja nije ispravan (provjerite znamenke).");
         if (d.offer_model && !/^HR\d{2}$/i.test(d.offer_model.trim())) throw new Error("Model mora biti oblika HR i dvije znamenke, npr. HR00.");
         if ("offer_first_no_y" in d) { d[`offer_first_no_${new Date().getFullYear()}`] = d.offer_first_no_y; delete d.offer_first_no_y; }
+        if ("gcal_calendar_id" in d && String(d.gcal_calendar_id || "").trim() !== String(this.db.get_setting("gcal_calendar_id") || "").trim()) this.app.py.call("web_bookings.reset_calendar");
         for (const [k, v] of Object.entries(d)) this.db.set_setting(k, v === null || v === undefined ? "" : String(v).trim());
+        gcal.prepare(this.app).catch(() => {});
         toast("Postavke ponuda spremljene.");
       } catch (e) { this.err(e); }
     })));

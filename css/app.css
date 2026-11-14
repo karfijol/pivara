@@ -699,3 +699,15 @@ body:has(.modal-back) .undo-fab { display: none; }
 .kpi.kpi-click { transition: transform .08s ease, box-shadow .15s ease; }
 .kpi.kpi-click:hover { box-shadow: 0 0 0 2px var(--accent); }
 .kpi.kpi-click:active { transform: scale(0.97); }
+.ol-name input { width: 100%; font-weight: 600; }
+.svc-grid { display: flex; flex-direction: column; gap: 10px; }
+.svc-btn { padding: 14px 12px; border: 0; border-radius: 12px; background: var(--surface-2, #eef1ee); color: inherit; font-size: 16px; font-weight: 600; cursor: pointer; text-align: center; }
+.svc-btn:hover { filter: brightness(.97); }
+.svc-btn.on { background: var(--accent, #b8860b); color: #fff; }
+.svc-note { width: 100%; margin-top: 10px; }
+.svc-h { margin: 16px 0 6px; font-size: 18px; }
+.svc-list { margin: 0 0 10px; padding-left: 20px; }
+.svc-list li { padding: 3px 0; }
+.svc-list li span { margin-right: 8px; }
+.svc-x { border: 0; background: none; color: var(--muted, #888); cursor: pointer; font-size: 14px; }
+.row.gap .svc-note { flex: 1; margin-top: 0; }

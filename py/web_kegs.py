@@ -13,6 +13,20 @@ from db import today
 SERVICE_ITEMS = ["Vanjski izgled (udubljenja, oštećenja)", "Spear / ventil", "Brtve (O-prsteni)",
                  "Tlačna proba (bez propuštanja)", "Sigurnosni prsten / plomba", "Oznaka kega čitljiva"]
 
+# što je napravljeno na servisu (kvačice); popis se može mijenjati u Postavkama → Kegovi (keg_service_work, jedna stavka po retku)
+SERVICE_WORK = ["Popet ventil IN", "Popet ventil OUT", "Gumica IN", "Gumica OUT", "Gumica cijevi IN", "Gumica cijevi OUT",
+                "Gumica poklopca", "Sigurnosni ventil"]
+_OLD_WORK = "Vanjsko pranje\nPranje lužinom"
+
+
+def service_work(db):
+    v = (db.get_setting("keg_service_work") or "").strip()
+    if v.startswith(_OLD_WORK):   # zadani popis iz 2.48 → novi zadani popis
+        v = ""
+    items = [x.strip() for x in v.splitlines() if x.strip()] if v else []
+    return items or SERVICE_WORK
+
+
 # radni tok -> (akcija u bazi, dopušteni statusi, novi status, naziv)
 WORKFLOWS = {
     "tap": ("Istočeno (pivnica)", ["Pun"], "Prljav", "Istočeno u pivnici"),
@@ -27,6 +41,8 @@ def ensure(db):
     db.con.execute("""CREATE TABLE IF NOT EXISTS keg_service(
         id INTEGER PRIMARY KEY, keg_id INTEGER NOT NULL REFERENCES kegs(id) ON DELETE CASCADE,
         date TEXT, items TEXT, ok INTEGER DEFAULT 1, by TEXT, note TEXT)""")
+    if "work" not in {r["name"] for r in db.q("PRAGMA table_info(keg_service)")}:
+        db.con.execute("ALTER TABLE keg_service ADD COLUMN work TEXT")
     cols = {r["name"] for r in db.q("PRAGMA table_info(customers)")}
     for c in ("customer_type", "postal_code", "city"):
         if c not in cols:
@@ -46,7 +62,7 @@ def clear_returned_customers(db):
 
 def consts(db):
     return {"workflows": {k: {"action": v[0], "from": v[1], "to": v[2], "name": v[3]} for k, v in WORKFLOWS.items()},
-            "service_items": SERVICE_ITEMS, "keg_size": db.keg_size_default(), "keg_fill": db.keg_fill_default()}
+            "service_items": SERVICE_ITEMS, "service_work": service_work(db), "keg_size": db.keg_size_default(), "keg_fill": db.keg_fill_default()}
 
 
 # ------------------------------------------------------------------ pronalaženje kega (QR ili ručni upis)
@@ -124,6 +140,10 @@ def keg_detail(db, keg_id):
             s["items"] = json.loads(s["items"] or "{}")
         except ValueError:
             s["items"] = {}
+        try:
+            s["work"] = json.loads(s.get("work") or "[]")
+        except ValueError:
+            s["work"] = []
     fills = sum(1 for g in log if g["action"] == "Napuni")
     return {"keg": k, "log": log, "services": services, "fills": fills}
 
@@ -210,18 +230,36 @@ def save_customer(db, data, id=None):
 
 
 # ------------------------------------------------------------------ servis kega
-def save_service(db, keg_id, items, by=None, note=None, date=None, to_status=None):
-    """items: {stavka: 'DA'|'NE'}. Ako je neka stavka NE, keg ide na servis (ako nije drugačije odabrano)."""
+def save_service(db, keg_id, items, by=None, note=None, date=None, to_status=None, work=None):
+    """items: {stavka: 'DA'|'NE'}; work: [što je napravljeno]. Ako je neka stavka NE, keg ide na servis (ako nije drugačije odabrano).
+    Svaki pregled se upisuje i u povijest kega (radnja „Servis” s popisom radova)."""
+    import datetime as _dt
     ensure(db)
+    work = [w for w in (work or []) if str(w).strip()]
     ok = all(v == "DA" for v in items.values()) if items else True
-    db.x("INSERT INTO keg_service(keg_id,date,items,ok,by,note) VALUES(?,?,?,?,?,?)",
-         (keg_id, date or today(), json.dumps(items, ensure_ascii=False), 1 if ok else 0, by, note))
+    date = date or today()
+    db.x("INSERT INTO keg_service(keg_id,date,items,ok,by,note,work) VALUES(?,?,?,?,?,?,?)",
+         (keg_id, date, json.dumps(items, ensure_ascii=False), 1 if ok else 0, by, note,
+          json.dumps(work, ensure_ascii=False)))
+    bad = [k_ for k_, v in (items or {}).items() if v != "DA"]
+    parts = []
+    if work:
+        parts.append("Napravljeno: " + ", ".join(work))
+    if items:
+        parts.append("Pregled: " + ("ispravno" if ok else "neispravno – " + ", ".join(bad)))
+    if note:
+        parts.append(note)
+    if by:
+        parts.append(f"({by})")
     k = db.one("SELECT * FROM kegs WHERE id=?", (keg_id,))
+    db.x("INSERT INTO keg_log(keg_id,ts,action,status,batch_id,customer,note) VALUES(?,?,?,?,?,?,?)",
+         (keg_id, date + _dt.datetime.now().strftime(" %H:%M"), "Servis", k["status"], k["batch_id"], k["customer"],
+          " · ".join(parts)))
     target = to_status or (None if ok else "Na servis")
     if target == "Na servis" and k["status"] != "Servis":
         db.keg_action(keg_id, "Na servis", date=date, note="Servisni pregled: " + (note or "neispravno"))
     elif target == "Očisti" and k["status"] == "Servis":
-        db.keg_action(keg_id, "Očisti", date=date, note="Servis završen" + (f": {note}" if note else ""))
+        db.keg_action(keg_id, "Očisti", date=date, note="Servis završen" + (f": {', '.join(work)}" if work else (f": {note}" if note else "")))
     return ok
 
 

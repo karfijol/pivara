@@ -88,10 +88,10 @@ export async function kegDetail(app, kegId) {
     lot: g.batch_no || "", customer: g.customer || "", note: g.note || "" })));
   dlg.body.append(t.el);
   if (d.services.length) {
-    dlg.body.append(h("h4", {}, "Servisni pregledi"));
-    const st = new Table([["date", "Datum", 100, "center"], ["ok", "Rezultat", 100, "w"], ["bad", "Neispravno", 330, "w"],
+    dlg.body.append(h("h4", {}, "Servisi i pregledi"));
+    const st = new Table([["date", "Datum", 100, "center"], ["work", "Napravljeno", 300, "w"], ["ok", "Rezultat", 100, "w"], ["bad", "Neispravno", 200, "w"],
       ["by", "Pregledao", 140, "w"], ["note", "Napomena", 200, "w"]], { height: 5 });
-    st.setRows(d.services.map((s) => ({ id: s.id, date: d2ui(s.date), ok: s.ok ? "✔ ispravan" : "✖ neispravan",
+    st.setRows(d.services.map((s) => ({ id: s.id, date: d2ui(s.date), work: (s.work || []).join(", "), ok: s.ok ? "✔ ispravan" : "✖ neispravan",
       bad: Object.entries(s.items || {}).filter(([, v]) => v !== "DA").map(([a]) => a).join(", "), by: s.by || "",
       note: s.note || "", _tag: s.ok ? "ok" : "bad" })));
     dlg.body.append(st.el);
@@ -111,11 +111,61 @@ export async function kegDetail(app, kegId) {
   return dlg.show();
 }
 
-export async function serviceDialog(app, kegId) {
+// Servis kega (kao na mobitelu): velike tipke za odrađene radnje → popis odrađenog servisa → Potvrdi servis
+export function serviceDialog(app, kegId) {
   const py = app.py;
   const k = app.db.one("SELECT * FROM kegs WHERE id=?", [kegId]);
-  const items = py.call("web_kegs.consts").service_items;
-  const fields = [{ type: "section", label: `Kontrolna lista – ${k.code} (status: ${k.status})` }];
+  const work = py.call("web_kegs.consts").service_work;
+  const chosen = [];
+  const d = new Dialog(`Servis kega · ${k.code}`, { width: 460, cls: "svc-dlg" });
+  const listEl = h("ul", { class: "svc-list" });
+  const btns = {};
+  const render = () => {
+    for (const [w, b] of Object.entries(btns)) {
+      const on = chosen.includes(w);
+      b.classList.toggle("on", on);
+      b.textContent = (on ? "✓ " : "+ ") + w;
+    }
+    listEl.innerHTML = "";
+    if (!chosen.length) listEl.append(h("li", { class: "muted" }, "Još nema odabranih stavki."));
+    else chosen.forEach((w, i) => listEl.append(h("li", {}, h("span", {}, w),
+      h("button", { class: "svc-x", type: "button", title: "Makni", onclick: () => { chosen.splice(i, 1); render(); } }, "✕"))));
+    confirmBtn.disabled = !chosen.length && !note.value.trim();
+  };
+  const grid = h("div", { class: "svc-grid" }, work.map((w) => (btns[w] = h("button", { type: "button", class: "svc-btn",
+    onclick: () => { const i = chosen.indexOf(w); if (i >= 0) chosen.splice(i, 1); else chosen.push(w); render(); } }, "+ " + w))));
+  const note = h("input", { class: "svc-note", placeholder: "Ostalo / napomena (neobavezno)", oninput: () => render() });
+  const by = h("input", { class: "svc-note", value: deviceUser(app) || "", placeholder: "Servisirao" });
+  const done = k.status === "Servis" ? h("input", { type: "checkbox", checked: true }) : null;
+  d.body.append(
+    h("div", { class: "muted", style: { marginBottom: "10px" } }, "Odaberi sve odrađene servisne radnje, zatim potvrdi popis."),
+    grid, note,
+    h("h3", { class: "svc-h" }, "Popis odrađenog servisa"), listEl,
+    h("div", { class: "row gap", style: { alignItems: "center", flexWrap: "wrap" } }, h("span", { class: "muted" }, "Servisirao:"), by),
+    done ? h("label", { class: "chk", style: { marginTop: "8px" } }, done, " Servis završen – keg je čist (izlazi iz statusa Servis)") : null);
+  const confirmBtn = btn("Potvrdi servis", () => {
+    if (!chosen.length && !note.value.trim()) return d.err("Odaberite barem jednu odrađenu radnju.");
+    try {
+      py.callKw("web_kegs.save_service", [kegId, {}], { by: by.value.trim() || null, note: note.value.trim() || null,
+        to_status: done && done.checked ? "Očisti" : "", work: chosen.slice() });
+      toast(`Keg ${k.code}: servis upisan u povijest (${chosen.length} stavk${chosen.length === 1 ? "a" : chosen.length < 5 ? "e" : "i"}).`);
+      d.close(true);
+    } catch (e) { d.err(e.message || String(e)); }
+  });
+  d.bar.append(confirmBtn, btn("Očisti popis", () => { chosen.length = 0; note.value = ""; render(); }, "ghost"));
+  d.body.append(h("div", { style: { marginTop: "10px" } }, h("a", { href: "#", class: "muted", onclick: async (e) => {
+    e.preventDefault(); d.close(false); if (await inspectionDialog(app, kegId) && app.refreshAll) app.refreshAll(); } }, "Kontrolni pregled kega (DA/NE lista) →")));
+  render();
+  return d.show().then((r) => !!r);
+}
+
+// kontrolni pregled kega (DA/NE kontrolna lista)
+export async function inspectionDialog(app, kegId) {
+  const py = app.py;
+  const k = app.db.one("SELECT * FROM kegs WHERE id=?", [kegId]);
+  const C = py.call("web_kegs.consts"), items = C.service_items;
+  const fields = [{ key: "work", label: "Što je napravljeno (označite sve što je odrađeno)", type: "multicheck", options: C.service_work, per_row: 3 },
+    { type: "section", label: `Kontrolna lista – ${k.code} (status: ${k.status})` }];
   items.forEach((it, i) => fields.push({ key: "i" + i, label: it, type: "combo", options: ["DA", "NE"], default: "DA" }));
   fields.push(
     { key: "after", label: "Nakon pregleda", type: "combo", full: true, default: "auto",
@@ -123,14 +173,14 @@ export async function serviceDialog(app, kegId) {
         ["Pošalji na servis", "Na servis"], ["Bez promjene statusa", "none"]] },
     { key: "date", label: "Datum", type: "date", default: today() },
     { key: "by", label: "Pregledao", default: deviceUser(app) },
-    { key: "note", label: "Napomena (što je popravljeno / zamijenjeno)", type: "multi", full: true });
-  const d = await askForm("Servisni pregled kega", fields, {}, { columns: 2, okText: "Spremi pregled" });
+    { key: "note", label: "Napomena (ostalo što je napravljeno, dijelovi…)", type: "multi", full: true });
+  const d = await askForm(`Servis kega ${k.code}`, fields, {}, { columns: 2, width: 820, okText: "Spremi servis" });
   if (!d) return false;
   const res = {};
   items.forEach((it, i) => { res[it] = d["i" + i] || "DA"; });
   const to = d.after === "auto" ? null : d.after === "none" ? "" : d.after;
   try {
-    const ok = py.callKw("web_kegs.save_service", [kegId, res], { by: d.by, note: d.note, date: d.date, to_status: to });
+    const ok = py.callKw("web_kegs.save_service", [kegId, res], { by: d.by, note: d.note, date: d.date, to_status: to, work: d.work || [] });
     toast(ok ? `Keg ${k.code}: pregled spremljen – ispravan.` : `Keg ${k.code}: neispravan – označen za servis.`);
     return true;
   } catch (e) { error(e); return false; }

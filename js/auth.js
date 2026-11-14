@@ -16,7 +16,7 @@ export const GROUPS = [
   // kartica s trećim elementom = podkartica (prikazuje se kao preklopnik unutar nadređene kartice; 4. element = naziv u preklopniku)
   ["skladiste", "items", "Skladište", [["items", "Sirovine", null, "Sirovine"], ["chem", "Kemikalije", "items"], ["invoices", "Računi"],
     ["lots", "LOT-ovi"], ["reorder", "Nabava", null, "Što naručiti"], ["po", "Narudžbenice", "reorder"], ["suppliers", "Dobavljači", "reorder"]]],
-  ["prodaja", "offers", "Prodaja", [["offers", "Ponude"], ["sales", "Otpremnice i kupci"], ["pricelist", "Cjenik"]]],
+  ["prodaja", "offers", "Prodaja", [["offers", "Ponude"], ["sales", "Otpremnice i kupci"], ["pricelist", "Cjenik"], ["bookings", "Kušanja"]]],
   ["izvjesca", "year", "Izvješća", [["costs", "Troškovi · knjigovođa"], ["year", "Godišnji pregled"], ["excise", "Trošarine"],
     ["recall", "Sljedivost"]]],
   ["haccp", "haccp", "HACCP", [["haccp", "HACCP evidencije"]]],
@@ -35,7 +35,7 @@ export const ROLES = [
 // stranice (kartice) koje uloga vidi; uloga bez popisa vidi sve
 export const ROLE_PAGES = {
   pivar: ["batches", "planner", "recipes", "haccp", "settings"],
-  prodaja: ["offers", "sales", "pricelist", "kegwork", "kegs", "returns", "settings"],
+  prodaja: ["offers", "sales", "pricelist", "bookings", "kegwork", "kegs", "returns", "settings"],
   kegovi: ["kegwork", "kegs", "returns", "sales", "settings"],
   knjigovodja: ["costs", "year", "excise", "recall", "invoices", "settings"],
 };

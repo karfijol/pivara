@@ -81,8 +81,9 @@ class OfferDialog extends Dialog {
     this.linesEl = h("div", { class: "offer-lines" });
     this.totEl = h("div", { class: "offer-tot" });
     this.body.append(this.form.el, this.saveCustRow,
-      h("div", { class: "sec", style: { marginTop: "12px" } }, "Proizvodi"),
+      h("div", { class: "sec", style: { marginTop: "12px" } }, "Stavke ponude"),
       h("div", { class: "row gap", style: { flexWrap: "wrap", margin: "6px 0" } }, this.psel, this.pqty, btn("＋ Dodaj", () => this.addLine())),
+      this.freeRow(),
       this.linesEl, this.totEl);
     this.buttons("Spremi ponudu", () => this.ok(false));
     this.okBtn.className = "btn btn-ghost";
@@ -109,6 +110,35 @@ class OfferDialog extends Dialog {
   shown(l) { const r = Number(l.vat || 0); return this.net() && r ? Number(l.price) / (1 + r / 100) : Number(l.price); }
   toggleSaveCust() { this.saveCustRow.style.display = this.form.w.customer_id.get() ? "none" : ""; }
 
+  // slobodna stavka (nije u cjeniku): tekst, količina, jedinica, cijena, PDV
+  freeRow() {
+    const st = { flex: "0 0 auto", textAlign: "right" };
+    this.fname = h("input", { placeholder: "Slobodan unos – npr. Dostava, Najam točionika, Usluga…", style: { flex: "1 1 260px", minWidth: "0" } });
+    this.fqty = h("input", { value: "1", inputmode: "decimal", title: "Količina", style: { ...st, width: "64px" } });
+    this.funit = h("input", { value: "kom", title: "Jedinica", list: "ol-units", style: { flex: "0 0 auto", width: "76px" } });
+    this.fprice = h("input", { placeholder: "Cijena €", inputmode: "decimal", title: "Cijena po jedinici", style: { ...st, width: "90px" } });
+    this.fvat = h("select", { title: "PDV", style: { flex: "0 0 auto" } }, ["25", "13", "5", "0"].map((v) => h("option", { value: v }, `PDV ${v} %`)));
+    const dl = h("datalist", { id: "ol-units" }, ["kom", "L", "kg", "h", "usluga", "paušal", "km", "dan"].map((u) => h("option", { value: u })));
+    for (const el of [this.fname, this.fqty, this.funit, this.fprice])
+      el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); this.addFree(); } });
+    return h("div", { class: "row gap", style: { flexWrap: "wrap", margin: "0 0 6px" } }, this.fname, this.fqty, this.funit, this.fprice, this.fvat, dl,
+      btn("＋ Dodaj slobodnu stavku", () => this.addFree(), "ghost"));
+  }
+
+  addFree() {
+    const name = this.fname.value.trim();
+    if (!name) { this.fname.focus(); return this.err("Upišite tekst stavke."); }
+    let q, v;
+    try { q = num(this.fqty.value); } catch { q = 0; }
+    if (!(q > 0)) return this.err("Upišite količinu veću od 0.");
+    try { v = num(this.fprice.value || "0"); } catch { return this.err("Neispravna cijena."); }
+    const r = Number(this.fvat.value);
+    const price = this.net() && r ? Math.round(v * (1 + r / 100) * 10000) / 10000 : v;
+    this.lines.push({ product_id: null, name, descr: "", unit: this.funit.value.trim() || "kom", qty: q, price, vat: r });
+    this.err(""); this.fname.value = ""; this.fqty.value = "1"; this.fprice.value = ""; this.fname.focus();
+    this.renderLines();
+  }
+
   addLine() {
     const id = Number(this.psel.value);
     if (!id) return this.err("Odaberite proizvod.");
@@ -129,7 +159,7 @@ class OfferDialog extends Dialog {
   renderLines() {
     this.linesEl.innerHTML = "";
     if (!this.lines.length) {
-      this.linesEl.append(h("div", { class: "muted", style: { padding: "8px 0" } }, "Još nema stavki – odaberite proizvod i količinu pa kliknite „Dodaj”."));
+      this.linesEl.append(h("div", { class: "muted", style: { padding: "8px 0" } }, "Još nema stavki – odaberite proizvod iz cjenika ili upišite slobodnu stavku pa kliknite „Dodaj”."));
     } else {
       this.linesEl.append(h("div", { class: "ol-row ol-head" }, h("span", {}, "#"), h("span", {}, "Proizvod"), h("span", {}, "Količina"),
         h("span", {}, this.net() ? "Cijena € bez PDV" : "Cijena €"), h("span", {}, this.net() ? "Iznos € bez PDV" : "Iznos €"), h("span", {})));
@@ -149,7 +179,9 @@ class OfferDialog extends Dialog {
         const up = btn("↑", () => { if (i) { [this.lines[i - 1], this.lines[i]] = [this.lines[i], this.lines[i - 1]]; this.renderLines(); } }, "ghost");
         const del = btn("✕", () => { this.lines.splice(i, 1); this.renderLines(); }, "ghost");
         this.linesEl.append(h("div", { class: "ol-row" }, h("span", { class: "muted" }, `${i + 1}.`),
-          h("span", { class: "ol-name" }, h("b", {}, l.name), l.descr ? h("small", { class: "muted" }, l.descr) : null),
+          l.product_id ? h("span", { class: "ol-name" }, h("b", {}, l.name), l.descr ? h("small", { class: "muted" }, l.descr) : null)
+            : h("span", { class: "ol-name" }, h("input", { value: l.name, title: "Slobodna stavka – tekst možete mijenjati", oninput: (e) => { l.name = e.target.value; } }),
+              h("small", { class: "muted" }, `slobodna stavka · PDV ${fq(l.vat)} %`)),
           h("span", { class: "ol-q" }, q, h("small", { class: "muted" }, l.unit)), h("span", { class: "ol-q" }, pr, h("small", { class: "muted" }, "€")), amt,
           h("span", { class: "ol-act" }, up, del)));
       });
@@ -170,6 +202,7 @@ class OfferDialog extends Dialog {
   ok(pdf = false) {
     try {
       const d = this.form.get();
+      for (const l of this.lines) if (!String(l.name || "").trim()) throw new Error("Slobodna stavka mora imati tekst.");
       for (const l of this.lines) if (!(Number(l.qty) > 0)) throw new Error(`Količina za „${l.name}” mora biti veća od 0.`);
       this.close({ data: d, lines: this.lines, saveCustomer: !d.customer_id && this.saveCust.checked, pdf });
     } catch (e) { this.err(e.message); }

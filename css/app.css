@@ -775,3 +775,21 @@ body:has(.modal-back) .undo-fab { display: none; }
   .crumb-path a:last-child { color: var(--text); }
 }
 .crumb-path a:empty { display: none; }
+
+/* ---------- 2.52: pločice 2 u redu, velike, ispunjavaju zaslon ---------- */
+@media (max-width: 700px) {
+  .hub-tiles, .hub-tiles.m-only { grid-template-columns: 1fr 1fr !important; gap: 10px; grid-auto-rows: minmax(132px, 1fr); }
+  .hub-tile { flex-direction: column; align-items: flex-start; justify-content: space-between; gap: 10px; min-height: 132px;
+    padding: 16px 14px; border-radius: 20px; border-top: 4px solid var(--tc); }
+  .hub-tile:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .hub-ico { width: 54px; height: 54px; border-radius: 16px; }
+  .hub-ico .lic, .hub-ico svg { width: 30px; height: 30px; }
+  .hub-txt b { font-size: 17px; }
+  .hub-txt small { font-size: 12.5px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .hub-go { display: none; }
+  /* glavne pločice (skupina) zauzmu cijeli slobodni prostor iznad donje trake */
+  .page.hub { display: flex; flex-direction: column; min-height: calc(100dvh - 70px - env(safe-area-inset-bottom, 0px)); padding-bottom: 14px; }
+  .page.hub .hub-tiles { flex: 1; }
+  .page.set-page.m-hub .set-hub { min-height: calc(100dvh - 190px); }
+}
+@media (max-width: 700px) { .hub-tile { justify-content: center; } .hub-txt b { font-size: 18px; } }

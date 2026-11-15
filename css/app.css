@@ -711,3 +711,67 @@ body:has(.modal-back) .undo-fab { display: none; }
 .svc-list li span { margin-right: 8px; }
 .svc-x { border: 0; background: none; color: var(--muted, #888); cursor: pointer; font-size: 14px; }
 .row.gap .svc-note { flex: 1; margin-top: 0; }
+
+/* ---------- 2.51: mobitel – izbornici kao pločice, traka „‹ natrag” ---------- */
+.m-only, .m-tiles { display: none !important; }
+.hub-head { display: flex; align-items: center; gap: 10px; margin: 4px 0 16px; }
+.hub-head h1 { margin: 0; font-size: 24px; }
+.hub-crumb { color: var(--muted); font-size: 13px; font-weight: 600; }
+.hub-tiles { display: grid; grid-template-columns: 1fr; gap: 10px; }
+.hub-tile { --tc: var(--accent); display: flex; align-items: center; gap: 14px; min-height: 72px; padding: 12px 14px; border-radius: 16px;
+  background: var(--card); border: var(--card-border, 1px solid var(--line)); color: var(--text); text-decoration: none;
+  -webkit-tap-highlight-color: transparent; transition: transform .08s ease, background .15s; }
+.hub-tile:active { transform: scale(.98); background: var(--sel, var(--accent-soft)); }
+.hub-ico { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 14px;
+  color: var(--tc); background: color-mix(in srgb, var(--tc) 15%, transparent); }
+.hub-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.hub-txt b { font-size: 17px; font-weight: 700; line-height: 1.2; }
+.hub-txt small { color: var(--muted); font-size: 13px; line-height: 1.3; }
+.hub-go { flex: none; color: var(--muted); display: inline-flex; }
+.m-sec { color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .06em; margin: 16px 4px 8px; }
+.crumb-bar { position: sticky; top: 0; z-index: 25; display: flex; align-items: center; gap: 6px; padding: 8px 10px; background: var(--bg);
+  border-bottom: 1px solid var(--line); }
+.crumb-back { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 12px;
+  border: 0; background: var(--card); color: var(--text); cursor: pointer; }
+.crumb-back:active { background: var(--sel, var(--accent-soft)); }
+.crumb-path { display: flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; white-space: nowrap; font-weight: 600; font-size: 15px; }
+.crumb-path a { color: var(--muted); text-decoration: none; padding: 10px 2px; overflow: hidden; text-overflow: ellipsis; }
+.crumb-path a + a::before { content: "›"; margin: 0 6px 0 2px; color: var(--muted); }
+.crumb-bar + .page { padding-top: 10px; }
+@media (min-width: 520px) and (max-width: 700px) { .hub-tiles { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 700px) {
+  .m-only { display: flex !important; }
+  .hub-tiles.m-only { display: grid !important; }
+  .page.hub { padding-top: 16px; }
+  .page-tabs, .sub-tabs { display: none !important; }
+  /* HACCP: pločice umjesto bočnog izbornika */
+  .subnav .side2 { display: none !important; }
+  .page.m-hub .m-tiles { display: block !important; }
+  .page.m-hub .subnav { display: none; }
+  .page:not(.m-hub) .m-tiles { display: none !important; }
+  .panel-wrap { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+  .panel-wrap > .crumb-bar { margin: -4px -10px 0; }
+  .page.haccp-page:not(.m-hub) > .page-head { display: none; }
+  /* Postavke */
+  .set-tabs { display: none !important; }
+  .page.m-hub .set-pane, .page.m-hub .set-bar { display: none !important; }
+  .page:not(.m-hub) .set-hub { display: none !important; }
+  .set-bar { margin: 0 -10px 10px; }
+  /* dodir: veće ciljeve i čišći prikaz */
+  .seg { display: flex; overflow-x: auto; scrollbar-width: none; flex-wrap: nowrap; }
+  .seg::-webkit-scrollbar { display: none; }
+  .seg button { flex: none; min-height: 44px; }
+  .bb-btn { min-height: 56px; }
+  .page-head .sub { display: none; }
+  .tile { min-height: 110px; border-radius: 16px; }
+  .tile:active, .kpi-click:active { transform: scale(.98); }
+  a, button { -webkit-tap-highlight-color: transparent; }
+}
+.panel-wrap { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+@media (max-width: 700px) {
+  body.sub-open .main > .crumb-bar { display: none !important; }
+  .page.set-page:not(.m-hub) > .page-head { display: none; }
+  .page.set-page:not(.m-hub) .set-bar { margin-top: -10px; position: sticky; top: 0; z-index: 25; }
+  .crumb-path a:last-child { color: var(--text); }
+}
+.crumb-path a:empty { display: none; }

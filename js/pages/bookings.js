@@ -6,18 +6,18 @@ const DAYS = ["ned", "pon", "uto", "sri", "čet", "pet", "sub"];
 const eur = (x) => (x || x === 0 ? Number(x).toLocaleString("hr-HR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €" : "");
 
 export class BookingsPage extends Page {
-  static title = "Kušanja i grupe";
-  static subtitle = "Najave grupa za kušanje piva · svaka najava se automatski upisuje u Google kalendar";
+  static title = "Rezervacije";
+  static subtitle = "Rezervacije grupa za kušanje i druge dolaske · svaka se automatski upisuje u Google kalendar";
 
   build() {
-    this.tbtn("＋ Nova najava", () => this.edit(null));
+    this.tbtn("＋ Nova rezervacija", () => this.edit(null));
     this.tbtn("✎ Uredi", () => { const id = this.need(this.table, "najavu"); if (id) return this.edit(id); }, "ghost|rec");
     this.tbtn("✔ Potvrđeno", () => this.status("Potvrđeno"), "ghost|rec");
     this.tbtn("🍺 Održano", () => this.status("Održano"), "ghost|rec");
     this.tbtn("✕ Otkaži", () => this.status("Otkazano"), "ghost|rec");
     this.tbtn("🗑 Obriši", () => this.del(), "ghost|more");
     this.tbtn("📅 Pošalji u Google kalendar", () => this.sync(), "ghost|more");
-    this.tbtn("Izvoz CSV", () => this.table.exportCsv("kusanja"), "ghost|more");
+    this.tbtn("Izvoz CSV", () => this.table.exportCsv("rezervacije"), "ghost|more");
     this.past = h("input", { type: "checkbox", onchange: () => this.refresh() });
     this.tb.insertBefore(h("label", { class: "chk", style: { marginLeft: "8px" } }, this.past, " Prikaži i prošla"), this.tbRight);
     this.calBar = h("div", { class: "banner warn", style: { display: "none" } });
@@ -40,7 +40,7 @@ export class BookingsPage extends Page {
         status: b.status, cal: b.gcal_dirty ? (gcal.configured(this.app) ? "čeka" : "—") : (b.gcal_id ? "✓" : ""), note: b.note || "",
         _tag: b.status === "Otkazano" ? "muted" : b.days === 0 ? "bad" : b.days > 0 && b.days <= 3 ? "warn" : b.status === "Potvrđeno" ? "ok" : "" };
     }));
-    if (!rows.length) this.table.tbody.querySelector("tr.empty td").textContent = "Nema najavljenih kušanja – kliknite „Nova najava”.";
+    if (!rows.length) this.table.tbody.querySelector("tr.empty td").textContent = "Nema rezervacija – kliknite „Nova rezervacija”.";
     const act = rows.filter((b) => b.status !== "Otkazano");
     this.sum.textContent = act.length ? `${act.length} najav${act.length === 1 ? "a" : "e"} · ${act.reduce((a, b) => a + (b.people || 0), 0)} osoba · ${eur(act.reduce((a, b) => a + (b.total || 0), 0))}` : "";
     this.renderCalBar();
@@ -79,7 +79,7 @@ export class BookingsPage extends Page {
     const c = py.call("web_bookings.consts");
     const b = id ? py.call("web_bookings.booking", id) : null;
     if (id && !b) return;
-    const v = await askForm(b ? `Najava – ${b.group_name}` : "Nova najava kušanja", [
+    const v = await askForm(b ? `Najava – ${b.group_name}` : "Nova rezervacija", [
       { key: "date", label: "Datum", type: "date", required: true },
       { key: "time", label: "Vrijeme dolaska", type: "time" },
       { key: "duration_min", label: "Trajanje (min)", type: "num", min: 0 },

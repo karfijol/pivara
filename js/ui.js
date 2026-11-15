@@ -644,3 +644,4 @@ export class Page {
 export function dbProxy() {
   return new Proxy({}, { get: (_, name) => (...args) => py.call("db." + String(name), ...args) });
 }
+export const isMobile = () => window.matchMedia("(max-width: 700px)").matches;

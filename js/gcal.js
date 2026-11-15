@@ -92,7 +92,7 @@ function eventOf(b) {
     b.contact && `Kontakt: ${b.contact}`, b.phone && `Telefon: ${b.phone}`, b.email && `E-mail: ${b.email}`,
     b.price_pp && `Cijena po osobi: ${String(b.price_pp).replace(".", ",")} €` + (b.people ? ` (ukupno ${String(Math.round(b.price_pp * b.people * 100) / 100).replace(".", ",")} €)` : ""),
     b.deposit && `Predujam: ${String(b.deposit).replace(".", ",")} €`, b.note && `Napomena: ${b.note}`].filter(Boolean).join("\n");
-  const ev = { summary: `🍺 Kušanje: ${b.group_name}${b.people ? ` (${b.people} os.)` : ""}${b.status === "Najavljeno" ? " – najava" : ""}`,
+  const ev = { summary: `🍺 ${b.package || "Rezervacija"}: ${b.group_name}${b.people ? ` (${b.people} os.)` : ""}${b.status === "Najavljeno" ? " – nepotvrđeno" : ""}`,
     description: desc, colorId: COLOR[b.status] || "5", location: "",
     extendedProperties: { private: { pivovaraBooking: String(b.id) } } };
   if (b.time) {
@@ -162,7 +162,7 @@ export function setupHelp(app) {
     "4. APIs & Services → Credentials → Create credentials → OAuth client ID → Application type: Web application → " +
     `Authorized JavaScript origins → Add URI: ${origin} → Create.\n` +
     "5. Kopirajte „Client ID” (završava s .apps.googleusercontent.com) i upišite ga u Postavke → Prodaja i ponude → Google kalendar.\n" +
-    "6. Kalendar: prazno = vaš glavni kalendar. Za poseban kalendar (preporuka: „Kušanja”, koji možete podijeliti s osobljem) " +
+    "6. Kalendar: prazno = vaš glavni kalendar. Za poseban kalendar (preporuka: „Rezervacije”, koji možete podijeliti s osobljem) " +
     "u Google kalendaru otvorite njegove postavke → „Integrate calendar” → kopirajte „Calendar ID”.\n" +
     "7. Kliknite „Poveži i provjeri”. Prvi put Google pita za dopuštenje (može pisati da aplikacija nije provjerena – kliknite Continue/Nastavi)."));
   d.buttons(null, null, "Zatvori");

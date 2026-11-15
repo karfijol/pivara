@@ -1,5 +1,5 @@
 // HACCP evidencije (prijenos haccp_ui.py) i upozorenja / zadaci (prijenos alerts_ui.py).
-import { h, btn, Page, Table, Dialog, Form, askForm, confirm, info, error, toast, fq, d2ui, today, checkTime, sg, layoutToolbar, splitLabel, actionGroup, setLabel } from "../ui.js";
+import { h, btn, Page, Table, Dialog, Form, askForm, confirm, info, error, toast, fq, d2ui, today, checkTime, sg, layoutToolbar, splitLabel, actionGroup, setLabel, isMobile } from "../ui.js";
 import { icon } from "../icons.js";
 
 // ------------------------------------------------------------------ konstante iz haccp_db (jednom iz Pythona)
@@ -1170,13 +1170,22 @@ class HaccpPage extends Page {
 
   build() {
     this.tb.style.display = "none";
+    this.el.classList.add("haccp-page");
     this.nav = h("div", { class: "side2" });
     this.host = h("div", { class: "panel" });
-    this.content.append(h("div", { class: "subnav" }, this.nav, this.host));
+    // mobitel: pločice evidencija (umjesto bočnog izbornika) + traka „‹ HACCP”
+    this.mTiles = h("div", { class: "m-tiles" });
+    this.mBar = h("div", { class: "crumb-bar m-only" }, h("button", { type: "button", class: "crumb-back", "aria-label": "Natrag", onclick: () => this.showTiles() }, icon("left", 22)),
+      h("div", { class: "crumb-path" }, h("a", { href: "#haccp", onclick: (e) => { e.preventDefault(); this.showTiles(); } }, "HACCP evidencije")));
+    this.content.append(this.mTiles, h("div", { class: "subnav" }, this.nav, h("div", { class: "panel-wrap" }, this.mBar, this.host)));
     this.navb = {}; this.panels = {}; this.cur = null;
     this.classes = {};
+    let grpEl = null;
     for (const [key, label, cls, ic] of SECTIONS) {
-      if (!key) { this.nav.append(h("div", { class: "sec" }, label)); continue; }
+      if (!key) { this.nav.append(h("div", { class: "sec" }, label)); this.mTiles.append(h("div", { class: "m-sec" }, label)); grpEl = null; continue; }
+      if (!grpEl) { grpEl = h("div", { class: "hub-tiles" }); this.mTiles.append(grpEl); }
+      grpEl.append(h("a", { href: `#haccp/${key}`, class: "hub-tile", onclick: (e) => { e.preventDefault(); this.show(key); } },
+        h("span", { class: "hub-ico" }, icon(ic || "haccp", 24)), h("span", { class: "hub-txt" }, h("b", {}, label)), h("span", { class: "hub-go" }, icon("right", 20))));
       const a = h("a", { href: `#haccp/${key}`, onclick: (e) => { e.preventDefault(); this.show(key); } }, ic ? icon(ic, 18) : null, h("span", {}, label));
       this.nav.append(a);
       this.navb[key] = a;
@@ -1184,8 +1193,18 @@ class HaccpPage extends Page {
     }
   }
 
+  showTiles() {
+    this.el.classList.add("m-hub");
+    this.mHub = true;
+    if (this.app.current === "haccp") history.replaceState(null, "", "#haccp");
+    this.app.main.scrollTop = 0;
+  }
+  onShow() { this.mHub = true; }
+  onBack() { if (isMobile() && !this.mHub) { this.showTiles(); return true; } return false; }
+
   show(key) {
     if (!this.classes[key]) key = "tasks";
+    this.el.classList.remove("m-hub"); this.mHub = false;
     if (this.cur && this.navb[this.cur]) this.navb[this.cur].classList.remove("on");
     if (!this.panels[key]) {
       try { this.panels[key] = new this.classes[key](this); } catch (e) { console.error(e); error("Greška pri izradi: " + e.message); return; }
@@ -1200,10 +1219,9 @@ class HaccpPage extends Page {
 
   refresh() {
     let key = this.cur;
-    if (!key) {
-      const sub = location.hash.slice(1).split("/")[1];
-      key = sub && this.classes[sub] ? sub : "tasks";
-    }
+    const sub = location.hash.slice(1).split("/")[1];
+    if (isMobile() && (this.mHub || !this.cur) && !(sub && this.classes[sub])) { this.showTiles(); return; }
+    if (!key) key = sub && this.classes[sub] ? sub : "tasks";
     this.show(key);
   }
 }

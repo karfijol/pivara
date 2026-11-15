@@ -6,7 +6,7 @@ import * as undo from "./undo.js";
 import { h, btn, toast, info, error, confirm, busy, openFile, dbProxy, Dialog } from "./ui.js";
 import { icon } from "./icons.js";
 
-export const VERSION = "web 2.50";
+export const VERSION = "web 2.51";
 
 // modul (datoteka u js/pages) za svaku stranicu (karticu); skupine i kartice su u auth.GROUPS
 const MOD_OF = {
@@ -20,6 +20,27 @@ const MODULES = ["stock", "production", "haccp", "settings", "kegwork", "costs",
 const BOTTOM = ["dash", "kegovi", "proizvodnja", "skladiste", "prodaja", "haccp", "izvjesca", "settings"];
 const SHORT = { dash: "Početna", kegovi: "Kegovi", proizvodnja: "Proizv.", prodaja: "Prodaja", skladiste: "Skladište",
   haccp: "HACCP", izvjesca: "Izvješća", settings: "Postavke" };
+
+// mobitel: izbornici ispod glavnih (donja traka) prikazuju se kao pločice (hub.<skupina>[.<kartica>])
+export const isMobile = () => window.matchMedia("(max-width: 700px)").matches;
+const isHub = (k) => typeof k === "string" && k.startsWith("hub.");
+const TILE = {
+  kegwork: ["qr", "Skeniranje QR, punjenje, pranje, otprema"], kegs: ["kegs", "Svi kegovi, statusi i povijest"],
+  returns: ["returns", "Kegovi koje kupci trebaju vratiti"], batches: ["batches", "Šarže, dan kuhanja i fermentacija"],
+  planner: ["planner", "Plan kuhanja i fermentora"], recipes: ["recipes", "Recepture i sastojci"],
+  items: ["items", "Zalihe sirovina i kemikalija"], chem: ["drops", "Sredstva za pranje i dezinfekciju"],
+  invoices: ["receipt", "Računi dobavljača i plaćanja"], lots: ["lots", "LOT-ovi, rokovi i inventura"],
+  reorder: ["cart", "Što naručiti, narudžbenice, dobavljači"], po: ["po", "Narudžbenice dobavljačima"],
+  suppliers: ["suppliers", "Popis dobavljača"], offers: ["offers", "Izrada i slanje ponuda"],
+  sales: ["truck", "Otpremnice, kupci i dostave"], pricelist: ["tag", "Proizvodi i cijene"],
+  bookings: ["calplus", "Rezervacije grupa · Google kalendar"], costs: ["costs", "Troškovi i izvoz za knjigovođu"],
+  year: ["year", "Godišnji pregled proizvodnje i prodaje"], excise: ["excise", "Obračun trošarina"],
+  recall: ["recall", "Sljedivost LOT-ova i povlačenje"], settings: ["settings", "Tvrtka, ponude, kegovi, korisnici"],
+  reminders: ["timer", "Podsjetnici i rokovi"], haccp: ["haccp", "HACCP evidencije"], dash: ["dash", "Pregled"],
+};
+// opis na drugoj razini (kartica je ujedno i prva podkartica)
+const TILE2 = { items: "Zalihe sirovina, primka i izdavanje", reorder: "Prijedlog narudžbe prema zalihama i planu" };
+const TILE_COL = ["#D4A13A", "#4F9DDE", "#52A86B", "#E0675A", "#9B7BD4", "#3BB3A8", "#E08A3C", "#8A8F98"];
 
 class App {
   constructor() {
@@ -124,14 +145,15 @@ class App {
     } catch (e) { console.warn(e); }
     const first = auth.firstPage(this.user);
     let key = (location.hash || "#" + first).slice(1).split("/")[0];
-    if (!MOD_OF[key] || !auth.canSee(this.user, key)) key = first;
+    if (!isHub(key) && (!MOD_OF[key] || !auth.canSee(this.user, key))) key = first;
+    if (isHub(key) && !isMobile()) key = first;
     await Promise.all([this.loadLogos(), this.loadModule(MOD_OF[key] || "stock")]);
     document.getElementById("splash")?.remove();
     this.buildShell();
-    this.show(this.classes[key] ? key : first);
+    this.show(this.classes[key] || isHub(key) ? key : first);
     window.addEventListener("hashchange", () => {
       const k = location.hash.slice(1).split("/")[0];
-      if (k && k !== this.current && MOD_OF[k]) this.show(k);
+      if (k && k !== this.current && (MOD_OF[k] || isHub(k))) this.show(k);
     });
     this.preload();
     this.setupBack();
@@ -321,7 +343,7 @@ class App {
     const navList = h("div", { class: "nav" });
     this.groupBtns = {};
     for (const [g, ic, label] of this.visibleGroups()) {
-      const b = h("a", { class: "nav-btn", href: "#" + this.groupTarget(g), onclick: (e) => { e.preventDefault(); this.closeMenu(); this.show(this.groupTarget(g)); } },
+      const b = h("a", { class: "nav-btn", href: "#" + this.groupTarget(g), onclick: (e) => { e.preventDefault(); this.closeMenu(); this.openGroup(g); } },
         h("span", { class: "ico" }, icon(ic)), label);
       this.groupBtns[g] = b;
       navList.append(b);
@@ -331,7 +353,7 @@ class App {
     const bottom = h("nav", { class: "bottom-bar" });
     const vis = new Map(this.visibleGroups().map((x) => [x[0], x]));
     for (const g of BOTTOM.filter((k) => vis.has(k) && (k !== "settings" || vis.size <= 4)).slice(0, 4)) {
-      const b = h("a", { href: "#" + this.groupTarget(g), class: "bb-btn", onclick: (e) => { e.preventDefault(); this.closeMenu(); this.show(this.groupTarget(g)); } },
+      const b = h("a", { href: "#" + this.groupTarget(g), class: "bb-btn", onclick: (e) => { e.preventDefault(); this.closeMenu(); this.openGroup(g); } },
         icon(vis.get(g)[1], 22), h("span", {}, SHORT[g] || vis.get(g)[2]));
       this.bottomBtns[g] = b;
       bottom.append(b);
@@ -368,6 +390,79 @@ class App {
     let last = null;
     try { last = localStorage.getItem("tab_" + g); } catch { /* */ }
     return grp[3].some(([k]) => k === last) ? last : grp[3][0][0];
+  }
+  // podkartice kartice k (k sama + kartice kojima je k nadređena)
+  topOf(tabs) { return tabs.filter((t) => !t[2] || !tabs.some((x) => x[0] === t[2])); }
+  kids(tabs, k) { return tabs.filter((t) => t[0] === k || t[2] === k); }
+  hubOf(g) {
+    const grp = this.visibleGroups().find((x) => x[0] === g);
+    if (!grp) return null;
+    const top = this.topOf(grp[3]);
+    return top.length > 1 || (top.length === 1 && this.kids(grp[3], top[0][0]).length > 1) ? grp : null;
+  }
+  openGroup(g) {
+    if (isMobile() && this.hubOf(g)) {
+      const grp = this.hubOf(g);
+      const top = this.topOf(grp[3]);
+      // skupina s jednom karticom koja ima podkartice → odmah druga razina
+      return this.show(top.length === 1 ? `hub.${g}.${top[0][0]}` : `hub.${g}`);
+    }
+    return this.show(this.groupTarget(g));
+  }
+  showHub(key, isBack = false) {
+    const [, g, parent] = key.split(".");
+    const grp = this.hubOf(g);
+    if (!grp || !isMobile()) return this.show(grp ? this.groupTarget(g) : auth.firstPage(this.user), null, true);
+    const tabs = grp[3];
+    let list = parent ? this.kids(tabs, parent) : this.topOf(tabs);
+    if (!list.length) return this.show(`hub.${g}`, null, isBack);
+    if (!isBack && this.current && this.current !== key) this.backStack = (this.backStack || []).filter((k) => k !== key).concat(this.current).slice(-30);
+    this.current = key;
+    for (const [k, b] of Object.entries(this.groupBtns || {})) b.classList.toggle("active", k === g);
+    for (const [k, b] of Object.entries(this.bottomBtns || {})) b.classList.toggle("active", k === g);
+    if (location.hash.slice(1) !== key) history.replaceState(null, "", "#" + key);
+    const topCount = this.topOf(tabs).length;
+    const pLabel = parent ? (tabs.find((t) => t[0] === parent) || [])[1] : null;
+    this.main.innerHTML = "";
+    const crumbs = [];
+    if (parent && topCount > 1) crumbs.push([grp[2], `hub.${g}`]);
+    const head = h("div", { class: "hub-head" },
+      parent && topCount > 1 ? h("button", { type: "button", class: "crumb-back", "aria-label": "Natrag", onclick: () => this.show(`hub.${g}`) }, icon("left", 22)) : null,
+      h("div", {}, crumbs.length ? h("div", { class: "hub-crumb" }, grp[2]) : null, h("h1", {}, parent && topCount > 1 ? pLabel : grp[2])));
+    const tiles = h("div", { class: "hub-tiles" }, list.map(([k, label, , subLabel], i) => {
+      const deeper = !parent && this.kids(tabs, k).length > 1;
+      const [ic, sub0] = TILE[k] || ["chevron", ""];
+      const sub = parent && k === parent && TILE2[k] ? TILE2[k] : sub0;
+      const go = deeper ? `hub.${g}.${k}` : k;
+      return h("a", { href: "#" + go, class: "hub-tile", style: { "--tc": TILE_COL[i % TILE_COL.length] },
+        onclick: (e) => { e.preventDefault(); this.show(go); } },
+      h("span", { class: "hub-ico" }, icon(ic, 26)),
+      h("span", { class: "hub-txt" }, h("b", {}, parent ? (subLabel || label) : label), sub ? h("small", {}, sub) : null),
+      h("span", { class: "hub-go" }, icon("right", 20)));
+    }));
+    this.main.append(h("div", { class: "page hub" }, head, tiles));
+    this.main.scrollTop = 0;
+    document.body.classList.remove("has-selbar");
+    return null;
+  }
+  // mobitel: traka „‹ Skupina › Kartica” iznad stranice (natrag na pločice)
+  crumbBar(key) {
+    const g = auth.GROUP_OF[key];
+    const grp = this.hubOf(g);
+    if (!grp) return null;
+    const tabs = grp[3];
+    const cur = tabs.find((t) => t[0] === key);
+    if (!cur) return null;
+    const parent = cur[2] || (this.kids(tabs, key).length > 1 ? key : null);
+    const topCount = this.topOf(tabs).length;
+    const up = parent ? `hub.${g}.${parent}` : `hub.${g}`;
+    const path = [];
+    if (topCount > 1) path.push([grp[2], `hub.${g}`]);
+    if (parent) path.push([(tabs.find((t) => t[0] === parent) || [])[1], `hub.${g}.${parent}`]);
+    const bar = h("div", { class: "crumb-bar" },
+      h("button", { type: "button", class: "crumb-back", "aria-label": "Natrag", onclick: () => this.show(up) }, icon("left", 22)),
+      h("div", { class: "crumb-path" }, path.map(([l, k]) => h("a", { href: "#" + k, onclick: (e) => { e.preventDefault(); this.show(k); } }, l))));
+    return bar;
   }
   tabsBar(key) {
     const g = auth.GROUP_OF[key];
@@ -464,6 +559,8 @@ class App {
     return this.pages[key];
   }
   show(key, action = null, isBack = false) {
+    document.body.classList.remove("sub-open");
+    if (isHub(key)) return this.showHub(key, isBack);
     if (!MOD_OF[key] || !auth.canSee(this.user, key)) key = auth.firstPage(this.user);
     if (!this.classes[key] && MOD_OF[key]) {
       // stranica još nije učitana: učitaj je pa prikaži (traje djelić sekunde)
@@ -472,6 +569,7 @@ class App {
     }
     const p = this.page(key);
     if (!p) return null;
+    const entering = this.current !== key;
     if (!isBack && this.current && this.current !== key) {
       this.backStack = (this.backStack || []).filter((k) => k !== key).concat(this.current).slice(-30);
     }
@@ -482,10 +580,11 @@ class App {
     for (const [k, b] of Object.entries(this.bottomBtns || {})) { b.classList.toggle("active", k === g); b.href = "#" + this.groupTarget(k); }
     if (location.hash.slice(1).split("/")[0] !== key) history.replaceState(null, "", "#" + key);
     this.main.innerHTML = "";
-    const tb = this.tabsBar(key);
-    if (tb) this.main.append(...tb.childNodes);
+    if (isMobile()) { const cb = this.crumbBar(key); if (cb) this.main.append(cb); }
+    else { const tb = this.tabsBar(key); if (tb) this.main.append(...tb.childNodes); }
     this.main.append(p.el);
     this.main.scrollTop = 0;
+    if (entering && isMobile() && typeof p.onShow === "function") { try { p.onShow(); } catch (e) { console.error(e); } }
     try { p.refresh(); } catch (e) { console.error(e); error(e.message); }
     document.body.classList.remove("has-selbar");
     if (p._selUpd) p._selUpd();
@@ -516,7 +615,7 @@ class App {
     try { history.pushState({ pivovaraGuard: 1 }, "", location.href); } catch { /* */ }
     window.addEventListener("popstate", () => {
       const k = location.hash.slice(1).split("/")[0];
-      if (k && k !== this.current && MOD_OF[k]) return; // promjena adrese (#stranica) – obradi hashchange
+      if (k && k !== this.current && (MOD_OF[k] || isHub(k))) return; // promjena adrese (#stranica) – obradi hashchange
       if (this.goBack()) { try { history.pushState({ pivovaraGuard: 1 }, "", location.href); } catch { /* */ } }
     });
     // povlačenje prstom s lijeva na desno (mobitel)

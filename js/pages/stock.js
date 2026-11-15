@@ -365,7 +365,7 @@ class DashboardPage extends Page {
       if (bk.length) {
         const when = (b) => (b.days === 0 ? "DANAS" : b.days === 1 ? "sutra" : d2ui(b.date));
         this.bookBar.className = "banner book-bar " + (bk.some((b) => b.days === 0) ? "warn" : "ok");
-        this.bookBar.append(h("div", { class: "rem-list" }, h("b", { class: "row gap" }, icon("beer", 18), `Kušanja (${bk.length})`),
+        this.bookBar.append(h("div", { class: "rem-list" }, h("b", { class: "row gap" }, icon("beer", 18), `Rezervacije (${bk.length})`),
           ...bk.slice(0, 4).map((b) => h("div", {}, `${when(b)}${b.time ? " u " + b.time : ""} – ${b.group_name}${b.people ? `, ${b.people} os.` : ""}${b.status === "Najavljeno" ? " (nepotvrđeno)" : ""}`)),
           bk.length > 4 ? h("div", { class: "muted" }, `… i još ${bk.length - 4}`) : null));
       }

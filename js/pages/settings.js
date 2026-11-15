@@ -1,7 +1,8 @@
 // Postavke: izgled, osnovni podaci, logo, prodaja, naljepnice, podaci i povezivanje s GitHubom.
 import * as gcal from "../gcal.js";
-import { h, btn, Page, Form, confirm, info, error, busy, toast, saveBlob, tableDialog, today } from "../ui.js";
+import { h, btn, Page, Form, confirm, info, error, busy, toast, saveBlob, tableDialog, today, isMobile } from "../ui.js";
 import * as store from "../store.js";
+import { icon } from "../icons.js";
 import * as auth from "../auth.js";
 import { Table, askForm, Dialog, d2ui } from "../ui.js";
 
@@ -176,9 +177,9 @@ class SettingsPage extends Page {
       { key: "sudreg_client_id", label: "Client ID (završava s dvije točke „..”)" },
       { key: "sudreg_client_secret", label: "Client Secret (završava s dvije točke „..”)" },
       { key: "sudreg_proxy", label: "Adresa posrednika (Cloudflare Worker, npr. https://sudreg.ime.workers.dev)", full: true },
-      { label: "Google kalendar – najave kušanja", type: "section" },
+      { label: "Google kalendar – rezervacije", type: "section" },
       { key: "gcal_client_id", label: "Google Client ID (…apps.googleusercontent.com)", full: true },
-      { key: "gcal_calendar_id", label: "Calendar ID (prazno = glavni kalendar; preporuka: poseban kalendar „Kušanja”)", full: true },
+      { key: "gcal_calendar_id", label: "Calendar ID (prazno = glavni kalendar; preporuka: poseban kalendar „Rezervacije”)", full: true },
       { label: "2D kod za plaćanje (HUB 3) na ponudi", type: "section" },
       { key: "offer_hub3", label: "Ispiši HUB 3 kod za plaćanje mobilnom aplikacijom banke", type: "check", full: true },
       { key: "offer_iban", label: "IBAN primatelja" },
@@ -309,16 +310,35 @@ class SettingsPage extends Page {
       if (!tabs.some((t) => t[0] === cur)) cur = "firma";
       const bar = h("div", { class: "set-tabs" });
       const panes = {};
+      const SET_IC = { firma: ["settings", "Naziv, logo, adrese, izgled"], prodaja: ["offers", "Ponude, Sudski registar, Google kalendar"],
+        kegovi: ["kegs", "Veličine, depozit, stavke servisa"], korisnici: ["users", "Korisnici, uloge i prijava"], podaci: ["download", "Sigurnosna kopija, arhiva, GitHub"] };
+      // mobitel: pločice → odabrani dio s trakom „‹ Postavke”
+      const mTiles = h("div", { class: "hub-tiles m-only set-hub" });
+      const mBar = h("div", { class: "crumb-bar m-only set-bar" }, h("button", { type: "button", class: "crumb-back", "aria-label": "Natrag", onclick: () => this.setHub(true) }, icon("left", 22)),
+        h("div", { class: "crumb-path" }, h("a", { href: "#settings", onclick: (e) => { e.preventDefault(); this.setHub(true); } }, "Postavke"),
+          this.setCur = h("a", { href: "#settings", onclick: (e) => e.preventDefault() }, "")));
+      const pick = (k) => {
+        bar.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x.dataset.k === k));
+        for (const [pk, pe] of Object.entries(panes)) pe.classList.toggle("hidden", pk !== k);
+        try { localStorage.setItem("set_tab", k); } catch { /* */ }
+        this.setCur.textContent = (tabs.find((t) => t[0] === k) || [])[1] || "";
+        this.setHub(false);
+      };
+      this.el.classList.add("set-page");
+      this.setHub = (on) => { this.el.classList.toggle("m-hub", !!on); document.body.classList.toggle("sub-open", !on && isMobile()); this.mHubOn = !!on; this.app.main.scrollTop = 0; };
+      this.onShow = () => this.setHub(true);
+      this.onBack = () => { if (isMobile() && !this.mHubOn) { this.setHub(true); return true; } return false; };
       for (const [k, label, cards] of tabs) {
         panes[k] = h("div", { class: "set-pane" + (k === cur ? "" : " hidden") }, cards);
-        const b = h("button", { type: "button", class: k === cur ? "on" : "" }, label);
-        b.onclick = () => {
-          bar.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
-          for (const [pk, pe] of Object.entries(panes)) pe.classList.toggle("hidden", pk !== k);
-          try { localStorage.setItem("set_tab", k); } catch { /* */ }
-        };
+        const b = h("button", { type: "button", class: k === cur ? "on" : "", "data-k": k }, label);
+        b.onclick = () => pick(k);
         bar.append(b);
+        const [ic, sub] = SET_IC[k] || ["settings", ""];
+        mTiles.append(h("a", { href: "#settings", class: "hub-tile", onclick: (e) => { e.preventDefault(); pick(k); } },
+          h("span", { class: "hub-ico" }, icon(ic, 24)), h("span", { class: "hub-txt" }, h("b", {}, label), h("small", {}, sub)), h("span", { class: "hub-go" }, icon("right", 20))));
       }
+      this.content.append(mTiles, mBar);
+      if (isMobile()) this.setHub(true);
       this.content.append(bar, ...Object.values(panes));
     } else {
       // korisnik bez administratorskih prava vidi samo izgled i svoje podatke

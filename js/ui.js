@@ -645,3 +645,21 @@ export function dbProxy() {
   return new Proxy({}, { get: (_, name) => (...args) => py.call("db." + String(name), ...args) });
 }
 export const isMobile = () => window.matchMedia("(max-width: 700px)").matches;
+
+// red „čipova” za filtriranje (npr. po vrsti piva): items = [[vrijednost, oznaka, broj]]; "" = sve
+export function chipRow(items, cur, onPick, allLabel = "Sva piva") {
+  const total = items.reduce((a, x) => a + (x[2] || 0), 0);
+  const row = h("div", { class: "chip-row" });
+  for (const [v, lab, n] of [["", allLabel, total], ...items]) {
+    const b = h("button", { type: "button", class: "chip" + (v === cur ? " on" : "") }, lab, h("span", { class: "chip-n" }, String(n)));
+    b.onclick = () => onPick(v);
+    row.append(b);
+  }
+  return row;
+}
+// broj kegova po pivu → [[pivo, pivo, n]] (abecedno, bez piva na kraju)
+export function beerCounts(kegs) {
+  const m = new Map();
+  for (const k of kegs) { const b = k.beer || "(bez piva)"; m.set(b, (m.get(b) || 0) + 1); }
+  return [...m.entries()].sort((a, b) => (a[0] === "(bez piva)") - (b[0] === "(bez piva)") || a[0].localeCompare(b[0], "hr")).map(([b, n]) => [b, b, n]);
+}

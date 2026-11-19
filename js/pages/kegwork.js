@@ -1,5 +1,5 @@
 // Rad s kegovima (za mobitel): istakanje, pranje, punjenje, otprema, povrat – skeniranjem QR koda ili upisom broja.
-import { h, btn, Page, Table, Dialog, Form, askForm, confirm, choice, info, error, toast, fq, d2ui, today, num, setLabel } from "../ui.js";
+import { h, btn, Page, Table, Dialog, Form, askForm, confirm, choice, info, error, toast, fq, d2ui, today, num, setLabel, chipRow, beerCounts } from "../ui.js";
 import { Scanner, beep } from "../scanner.js";
 import { qrSvg } from "../qr.js";
 import { icon } from "../icons.js";
@@ -109,6 +109,37 @@ export async function kegDetail(app, kegId) {
   dlg.bar.append(btn("🛠 Servisni pregled", async () => { if (await serviceDialog(app, kegId)) dlg.close("changed"); }, "ghost"));
   dlg.bar.append(btn("Zatvori", () => dlg.close(null), "primary"));
   return dlg.show();
+}
+
+// pronađi keg (QR kamera ili upis oznake); camera = kamera se uključi odmah; vraća id kega ili null
+export async function findKegDialog(app, { mode = "detail", camera = false } = {}) {
+
+  const dlg = new Dialog(mode === "service" ? "Servis kega – odaberite keg" : camera ? "Očitaj QR kega" : "Pronađi keg", { width: 520 });
+  const inp = h("input", { placeholder: "Keg-001, 001 ili 1", style: { width: "100%" } });
+  const sc = new Scanner((code) => go(code));
+  const go = (text) => {
+    if (/^OPREMA-/i.test((text || "").trim())) { beep(true); sc.stop(); dlg.close(null); equipmentAction(app, text); return; }
+    const found = app.py.call("web_kegs.find_keg", text);
+    if (found.length === 1) { beep(true); sc.stop(); dlg.close(found[0].id); }
+    else if (!found.length && /[a-z]/i.test(text)) {
+      beep(false); sc.stop();
+      unknownKeg(app, text).then((code) => {
+        if (!code) return;
+        const f2 = app.py.call("web_kegs.find_keg", code);
+        if (f2.length === 1) dlg.close(f2[0].id);
+      });
+    } else { beep(false); sc.flash(false); dlg.err(found.length ? `Više kegova odgovara: ${found.map((k) => k.code).join(", ")}` : `Keg „${text}” nije pronađen.`); }
+  };
+  inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); go(inp.value); } });
+  dlg.body.append(sc.el, h("div", { class: "row gap" }, inp), h("div", { class: "row gap", style: { marginTop: "8px" } },
+    btn("📷 Skeniraj QR", async () => { try { await sc.start(); } catch (e) { dlg.err(e.message); } }, "ghost"),
+    btn("Traži", () => go(inp.value))));
+  dlg.buttons(null, null, "Zatvori");
+  const shown = dlg.show();
+  if (camera) sc.start().catch((e) => dlg.err(e.message));
+  const id = await shown;
+  sc.stop();
+  return id === null || id === undefined ? null : id;
 }
 
 // Servis kega (kao na mobitelu): velike tipke za odrađene radnje → popis odrađenog servisa → Potvrdi servis
@@ -342,7 +373,7 @@ class KegWorkPage extends Page {
       this.recentT.el);
     this.home.append(this.tiles, this.counts,
       h("div", { class: "card" }, h("h3", {}, "Zaliha piva u punim kegovima"), this.stockSum = h("div", { class: "muted" }), this.stockT.el),
-      h("div", { class: "card" }, h("h3", {}, "Kegovi po statusu"), h("div", { style: { margin: "4px 0 8px" } }, this.seg),
+      h("div", { class: "card" }, h("h3", {}, "Kegovi po statusu"), h("div", { style: { margin: "4px 0 8px" } }, this.seg), this.listChips = h("div", {}),
         h("div", { class: "muted", style: { fontSize: "12px", marginBottom: "6px" } }, "Dvoklik (ili dvostruki dodir) na keg prikazuje njegovu povijest."),
         this.listT.el),
       this.recentBox);
@@ -380,7 +411,14 @@ class KegWorkPage extends Page {
 
   renderList() {
     const f = this.listFilter;
-    const rows = (this.kegs || []).filter((k) => f === "Sve" ? k.status !== "Otpisan" : k.status === f);
+    let rows = (this.kegs || []).filter((k) => f === "Sve" ? k.status !== "Otpisan" : k.status === f);
+    this.listChips.innerHTML = "";
+    if (f === "Pun" || f === "Kod kupca") {
+      const bc = beerCounts(rows);
+      if (this.listBeer && !bc.some((x) => x[0] === this.listBeer)) this.listBeer = "";
+      if (bc.length > 1 || this.listBeer) this.listChips.append(chipRow(bc, this.listBeer || "", (v) => { this.listBeer = v; this.renderList(); }));
+      if (this.listBeer) rows = rows.filter((k) => (k.beer || "(bez piva)") === this.listBeer);
+    }
     this.listT.setRows(rows.map((k) => ({ id: k.id, code: k.code, status: k.status, beer: k.beer || "", lot: k.batch_no || "",
       filled: d2ui(k.filled_date), customer: k.customer || "" })));
   }
@@ -393,8 +431,27 @@ class KegWorkPage extends Page {
   // popis kegova u odabranom statusu (klik na pločicu Puni / Prazni / Čisti / Kod kupaca / Servis)
   async statusList(status, label) {
     const days = (d) => { if (!d) return ""; const n = Math.floor((Date.now() - new Date(d.slice(0, 10) + "T00:00:00").getTime()) / 86400000); return n >= 0 ? String(n) : ""; };
-    const load = () => (this.db.kegs() || []).filter((k) => k.status === status).sort((a, b) => (a.status_date || "").localeCompare(b.status_date || "") || a.code.localeCompare(b.code, "hr", { numeric: true }));
+    const all = () => (this.db.kegs() || []).filter((k) => k.status === status).sort((a, b) => (a.status_date || "").localeCompare(b.status_date || "") || a.code.localeCompare(b.code, "hr", { numeric: true }));
+    const withBeer = status === "Pun" || status === "Kod kupca";
+    let fBeer = "", fCust = "", byBeer = false;
+    const load = () => {
+      const r = all().filter((k) => (!fBeer || (k.beer || "(bez piva)") === fBeer) && (!fCust || (k.customer || "(bez kupca)") === fCust));
+      if (byBeer) r.sort((a, b) => (a.beer || "~").localeCompare(b.beer || "~", "hr") || (a.batch_no || "").localeCompare(b.batch_no || "") || a.code.localeCompare(b.code, "hr", { numeric: true }));
+      return r;
+    };
     let kegs = load();
+    const chips = h("div", {});
+    const renderChips = () => {
+      chips.innerHTML = "";
+      if (!withBeer) return;
+      const base = all();
+      chips.append(chipRow(beerCounts(base.filter((k) => !fCust || (k.customer || "(bez kupca)") === fCust)), fBeer, (v) => { fBeer = v; fill(); }));
+      if (status === "Kod kupca") {
+        const m = new Map();
+        for (const k of base.filter((k) => !fBeer || (k.beer || "(bez piva)") === fBeer)) { const c = k.customer || "(bez kupca)"; m.set(c, (m.get(c) || 0) + 1); }
+        chips.append(chipRow([...m.entries()].sort((a, b) => a[0].localeCompare(b[0], "hr")).map(([c, n]) => [c, c, n]), fCust, (v) => { fCust = v; fill(); }, "Svi kupci"));
+      }
+    };
     const cols = [["code", "Keg", 90, "w"], ["size", "L", 50, "e"]];
     if (status === "Pun" || status === "Kod kupca") cols.push(["beer", "Pivo", 150, "w"], ["lot", "LOT", 120, "w"], ["filled", "Punjeno", 95, "center"]);
     if (status === "Pun") cols.push(["litres", "Piva (L)", 70, "e"]);
@@ -405,20 +462,29 @@ class KegWorkPage extends Page {
     const sum = h("div", { class: "muted", style: { margin: "4px 0 6px" } });
     const fill = () => {
       kegs = load();
+      renderChips();
       t.setRows(kegs.map((k) => ({ id: k.id, code: k.code, size: fq(k.size_l), beer: k.beer || "", lot: k.batch_no || "", filled: d2ui(k.filled_date),
         litres: k.fill_l ? fq(k.fill_l, 1) : "", customer: k.customer || "", since: d2ui(k.status_date), days: days(k.status_date), note: k.note || "",
         _tag: status === "Kod kupca" && Number(days(k.status_date)) > 30 ? "warn" : "" })));
       const L = kegs.reduce((a, k) => a + (Number(k.fill_l) || (status === "Pun" ? Number(k.size_l) || 0 : 0)), 0);
-      sum.textContent = `${kegs.length} keg${kegs.length === 1 ? "" : "ova"}` + (status === "Pun" ? ` · ${fq(L, 1)} L piva` : "")
+      sum.textContent = (fBeer || fCust ? [fBeer, fCust].filter(Boolean).join(" · ") + ": " : "") + `${kegs.length} keg${kegs.length === 1 ? "" : "ova"}` + (status === "Pun" ? ` · ${fq(L, 1)} L piva` : "")
         + (status === "Kod kupca" ? ` · kod kupca dulje od 30 dana: ${kegs.filter((k) => Number(days(k.status_date)) > 30).length}` : "")
         + " · dvoklik (dvostruki dodir) na keg prikazuje njegovu povijest";
       if (!kegs.length) t.tbody.querySelector("tr.empty td").textContent = "Nema kegova u ovom statusu.";
     };
     const d = new Dialog(`Kegovi – ${label}`, { width: 900 });
-    d.body.append(sum, t.el);
+    d.body.append(chips, sum, t.el);
     fill();
     d.buttons(null, null, "Zatvori");
     d.bar.prepend(btn("Izvoz CSV", () => t.exportCsv(`kegovi_${status}`), "ghost"));
+    if (withBeer) {
+      const sortBtn = btn("⇅ Sortiraj po vrsti piva", () => {
+        byBeer = !byBeer;
+        setLabel(sortBtn, byBeer ? "⇅ Sortiraj po datumu" : "⇅ Sortiraj po vrsti piva");
+        fill();
+      }, "primary");
+      d.bar.before(h("div", { class: "modal-bar sort-bar" }, sortBtn));
+    }
     await d.show();
   }
 
@@ -451,30 +517,8 @@ class KegWorkPage extends Page {
   }
 
   async findKeg(mode = "detail") {
-    const dlg = new Dialog(mode === "service" ? "Servis kega – odaberite keg" : "Pronađi keg", { width: 520 });
-    const inp = h("input", { placeholder: "Keg-001, 001 ili 1", style: { width: "100%" } });
-    const sc = new Scanner((code) => go(code));
-    const go = (text) => {
-      if (/^OPREMA-/i.test((text || "").trim())) { beep(true); sc.stop(); dlg.close(null); equipmentAction(this.app, text); return; }
-      const found = this.app.py.call("web_kegs.find_keg", text);
-      if (found.length === 1) { beep(true); sc.stop(); dlg.close(found[0].id); }
-      else if (!found.length && /[a-z]/i.test(text)) {
-        beep(false); sc.stop();
-        unknownKeg(this.app, text).then((code) => {
-          if (!code) return;
-          const f2 = this.app.py.call("web_kegs.find_keg", code);
-          if (f2.length === 1) dlg.close(f2[0].id);
-        });
-      } else { beep(false); sc.flash(false); dlg.err(found.length ? `Više kegova odgovara: ${found.map((k) => k.code).join(", ")}` : `Keg „${text}” nije pronađen.`); }
-    };
-    inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); go(inp.value); } });
-    dlg.body.append(sc.el, h("div", { class: "row gap" }, inp), h("div", { class: "row gap", style: { marginTop: "8px" } },
-      btn("📷 Skeniraj QR", async () => { try { await sc.start(); } catch (e) { dlg.err(e.message); } }, "ghost"),
-      btn("Traži", () => go(inp.value))));
-    dlg.buttons(null, null, "Zatvori");
-    const id = await dlg.show();
-    sc.stop();
-    if (id === null || id === undefined) return;
+    const id = await findKegDialog(this.app, { mode });
+    if (id === null) return;
     if (mode === "service") { if (await serviceDialog(this.app, id)) this.refresh(); } else this.detail(id);
   }
 

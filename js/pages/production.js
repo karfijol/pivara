@@ -4,7 +4,7 @@
 import { oibButton } from "../oib.js";
 import {
   h, btn, Page, Table, Form, Dialog, askForm, confirm, info, error, toast, tableDialog,
-  fq, money, fin, num, d2ui, today, addDays, daysLeft, sg, EPS, setLabel,
+  fq, money, fin, num, d2ui, today, addDays, daysLeft, sg, EPS, setLabel, chipRow, beerCounts,
 } from "../ui.js";
 
 // ---------------------------------------------------------------- zajedničko
@@ -1283,7 +1283,11 @@ class KegsPage extends Page {
   static subtitle = "Pregled i uređivanje kegova · svakodnevni rad (punjenje, pranje, otprema, povrat) radi se u „Rad s kegovima (QR)”";
 
   build() {
-    this.tbtn("📱 Rad s kegovima (QR)", () => this.app.show("kegwork"));
+    this.tbtn("📷 Očitaj QR", async () => {
+      const m = await import("./kegwork.js");
+      const id = await m.findKegDialog(this.app, { camera: true });
+      if (id !== null && await m.kegDetail(this.app, id)) this.app.refreshAll();
+    });
     this.tbtn("＋ Novi kegovi", () => this.new(), "ghost");
     // ručna promjena statusa (ispravci) – za svakodnevni rad koristi se Rad s kegovima
     this.manual = h("select", { class: "more", style: { width: "auto" }, title: "Ručna promjena statusa odabranih kegova" },
@@ -1301,10 +1305,17 @@ class KegsPage extends Page {
     this.tbtn("Izvoz CSV", () => this._more("Izvoz CSV"), "ghost|more");
     this.sumL = {};
     const cards = h("div", { class: "cards", style: { gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))" } });
+    this.kpiEl = {};
+    this.fStatus = ""; this.fBeer = "";
     for (const s of K(this.app).KEG_STATUS) {
       this.sumL[s] = h("div", { class: "val" }, "0");
-      cards.append(h("div", { class: "kpi", style: { cursor: "default", textAlign: "center" } }, h("div", { class: "lab" }, s), this.sumL[s]));
+      const pick = () => { this.fStatus = this.fStatus === s ? "" : s; this.fBeer = ""; this.fCust = ""; this.refresh(); };
+      this.kpiEl[s] = h("div", { class: "kpi kpi-click", role: "button", tabindex: "0", title: `Prikaži kegove: ${s} (ponovni klik = svi)`,
+        style: { cursor: "pointer", textAlign: "center" }, onclick: pick,
+        onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } } }, h("div", { class: "lab" }, s), this.sumL[s]);
+      cards.append(this.kpiEl[s]);
     }
+    this.fltBar = h("div", {});
     this.table = T([
       ["code", "Oznaka", 100, "w"], ["size", "Vol. (L)", 70, "e"], ["fill", "Piva (L)", 70, "e"], ["type", "Tip", 120, "w"],
       ["status", "Status", 100, "w"], ["batch", "Šarža", 90, "w"], ["beer", "Pivo", 170, "w"],
@@ -1312,7 +1323,7 @@ class KegsPage extends Page {
       ["since", "Od datuma", 95, "center"], ["days", "Dana", 60, "e"], ["note", "Napomena", 150, "w"]],
     { multi: true, onDouble: () => this.history() });
     this.search(this.table);
-    this.content.append(cards, this.table.el);
+    this.content.append(cards, this.fltBar, this.table.el);
   }
 
   async _more(v) {
@@ -1334,7 +1345,34 @@ class KegsPage extends Page {
   refresh() {
     const sum = this.db.keg_summary();
     for (const [s, n] of Object.entries(sum)) if (this.sumL[s]) this.sumL[s].textContent = String(n);
-    this.table.setRows(this.db.kegs().map((k) => {
+    for (const [s, el] of Object.entries(this.kpiEl || {})) el.classList.toggle("kpi-on", s === this.fStatus);
+    let kegs = this.db.kegs();
+    this.fltBar.innerHTML = "";
+    if (this.fStatus) {
+      kegs = kegs.filter((k) => k.status === this.fStatus);
+      const n0 = kegs.length;
+      let chips = null;
+      if (this.fStatus === "Pun" || this.fStatus === "Kod kupca") {
+        const bc = beerCounts(kegs);
+        if (this.fBeer && !bc.some((x) => x[0] === this.fBeer)) this.fBeer = "";
+        chips = chipRow(bc, this.fBeer, (v) => { this.fBeer = v; this.refresh(); });
+        if (this.fBeer) kegs = kegs.filter((k) => (k.beer || "(bez piva)") === this.fBeer);
+        if (this.fStatus === "Kod kupca") {
+          const m = new Map();
+          for (const k of kegs) { const c = k.customer || "(bez kupca)"; m.set(c, (m.get(c) || 0) + 1); }
+          if (this.fCust && !m.has(this.fCust)) this.fCust = "";
+          const cc = chipRow([...m.entries()].sort((x, y) => x[0].localeCompare(y[0], "hr")).map(([c, n]) => [c, c, n]), this.fCust || "",
+            (v) => { this.fCust = v; this.refresh(); }, "Svi kupci");
+          chips = h("div", {}, chips, cc);
+          if (this.fCust) kegs = kegs.filter((k) => (k.customer || "(bez kupca)") === this.fCust);
+        }
+      }
+      const L = this.fStatus === "Pun" ? kegs.reduce((a, k) => a + (Number(k.fill_l) || Number(k.size_l) || 0), 0) : 0;
+      this.fltBar.append(h("div", { class: "flt-bar" },
+        h("span", {}, `Prikazano: ${this.fStatus}${this.fBeer ? " · " + this.fBeer : ""}${this.fCust ? " · " + this.fCust : ""} – ${this.fBeer || this.fCust ? `${kegs.length} od ${n0} kegova` : `${kegs.length} keg${kegs.length === 1 ? "" : "ova"}`}${L ? ` · ${fq(L, 1)} L piva` : ""}`),
+        btn("✕ Prikaži sve kegove", () => { this.fStatus = ""; this.fBeer = ""; this.fCust = ""; this.refresh(); }, "ghost")), chips);
+    }
+    this.table.setRows(kegs.map((k) => {
       const dd = k.status_date ? -daysLeft(k.status_date) : "";
       const tag = { "Pun": "ok", "Kod kupca": typeof dd === "number" && dd > 45 ? "warn" : "", "Prljav": "warn",
         "Servis": "bad", "Otpisan": "muted" }[k.status] || "";

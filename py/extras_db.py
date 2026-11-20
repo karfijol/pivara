@@ -45,6 +45,11 @@ EXTRA_SETTINGS = {"excise_rate": "5.31", "excise_reduced": "2.65", "small_brewer
 OFFICIAL_ABV = [(("lager", "pils"), 6.04), (("ipa",), 5.59), (("pale ale",), 5.74), (("stout",), 4.24),
                 (("sour",), 4.02)]
 
+# fiksni % alkohola za prijavu trošarina (MI-PI) po vrsti piva – ne računa se iz mjerenja; mijenja se u Trošarine → Postavke
+EXCISE_ABV_DEFAULT = "Pilsner = 6,0\nStout = 4,2\nSour = 4,0\nIPA = 5,6\nPale Ale = 5,7"
+EXCISE_ABV_ALIASES = {"pilsner": ("pilsner", "pils", "lager"), "stout": ("stout",), "sour": ("sour",), "ipa": ("ipa", "india pale"),
+                      "pale ale": ("pale ale", "apa")}
+
 # boje zastavica za kegove (2.9)
 LABEL_COLORS = {"Žuta": "#F6D23C", "Tirkizna": "#2EC4B6", "Narančasta": "#F28C28", "Smeđa": "#6B3E26",
                 "Crvena": "#C8102E", "Zelena": "#3DA35D", "Plava": "#2F6FD0", "Ljubičasta": "#7B4FA0",
@@ -211,13 +216,53 @@ class ExtrasMixin:
     def excise_rate(self):
         return float(self.get_setting("excise_reduced" if self.get_setting("small_brewery") == "1" else "excise_rate") or 0)
 
+    def excise_abv_table(self):
+        """[(vrsta, ključne riječi, % vol)] iz postavke excise_abv_types (redak „Naziv = 5,6”)."""
+        txt = (self.get_setting("excise_abv_types") or "").strip() or EXCISE_ABV_DEFAULT
+        out = []
+        for line in txt.splitlines():
+            if "=" not in line:
+                continue
+            name, v = line.rsplit("=", 1)
+            name = name.strip()
+            try:
+                abv = round(float(v.strip().replace("%", "").replace(",", ".")), 1)
+            except ValueError:
+                continue
+            if name and abv > 0:
+                out.append((name, EXCISE_ABV_ALIASES.get(name.lower(), (name.lower(),)), abv))
+        return out
+
+    def excise_abv_for(self, name, code=None):
+        """Fiksni % vol za naziv piva (najdulja ključna riječ koja se nalazi u nazivu), inače None."""
+        n = (name or "").lower()
+        best = None
+        for _vrsta, keys, abv in self.excise_abv_table():
+            for k in keys:
+                if k and k in n and (best is None or len(k) > best[0]):
+                    best = (len(k), abv)
+        if best is None and (code or "").upper() == "LA":
+            best = next(((0, a) for v, _k, a in self.excise_abv_table() if v.lower() == "pilsner"), None)
+        return best[1] if best else None
+
+    def excise_abv(self, batch):
+        """% vol za trošarine: fiksno po vrsti piva; ako vrsta nije u popisu, službena analiza / izmjereni alkohol."""
+        if not batch:
+            return None
+        r = self.one("SELECT name, code FROM recipes WHERE id=?", (batch.get("recipe_id"),)) if batch.get("recipe_id") else None
+        fixed = self.excise_abv_for((r or {}).get("name") or batch.get("recipe"), (r or {}).get("code"))
+        if fixed:
+            return fixed
+        a = self.beer_abv(batch)
+        return round(a, 1) if a else None
+
     def excise_rows(self, d_from, d_to):
         rate = self.excise_rate()
         rows = []
         for p in self.packaging_rows(d_from, d_to):
             b = self.batch(p["batch_id"]) if p.get("batch_id") else None
             hl = (p.get("total_l") or 0) / 100
-            abv = self.beer_abv(b)
+            abv = self.excise_abv(b)
             rows.append({"id": p["id"], "date": p["date"], "lot": p.get("batch_no") or p.get("lot") or "",
                          "beer": b["recipe"] if b else "", "pack": p.get("pack_type") or "", "hl": hl, "abv": abv,
                          "hl_vol": hl * abv if abv else None, "excise": hl * abv * rate if abv else None})
@@ -365,7 +410,14 @@ class ExtrasMixin:
                                     VALUES(?,?,?,?,?,?,?,?)""",
                                  (period, p["id"], p.get("batch_id"), p["date"], 1,
                                   ((b or {}).get("recipe") or "").upper(), round((p.get("total_l") or 0) / 100, 3),
-                                  round(self.beer_abv(b), 1) if self.beer_abv(b) else None))
+                                  self.excise_abv(b)))
+            # fiksni % vol po vrsti piva (i za ranije upisane stavke), osim za već prijavljene mjesece
+            if not self.excise_reported(period):
+                for e in self.q("SELECT e.id, e.trade_name, e.abv, e.batch_id FROM excise_entries e WHERE e.period=?", (period,)):
+                    b = self.batch(e["batch_id"]) if e.get("batch_id") else None
+                    fixed = self.excise_abv_for(e.get("trade_name")) or (self.excise_abv_for(b.get("recipe")) if b else None)
+                    if fixed and e.get("abv") != fixed:
+                        self.con.execute("UPDATE excise_entries SET abv=? WHERE id=?", (fixed, e["id"]))
             self.con.commit()
         except sqlite3.OperationalError:  # samo čitanje (npr. knjigovođa): nova pakiranja upisat će netko s pravom upisa
             self.con.rollback()

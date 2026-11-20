@@ -382,3 +382,142 @@ def qr_sheet(db, codes, app=None, size_mm=30, with_beer=False):
             c.drawCentredString(x + cell / 2, y + cell - 3 * mm, brand)
     c.save()
     return path
+
+
+# ------------------------------------------------------------------ oprani kegovi (za CIP zapisnik)
+def expand_codes(txt):
+    """'K30-001–K30-003, K20-005' -> {'K30-001','K30-002','K30-003','K20-005'}"""
+    import re
+    out = set()
+    for part in re.split(r"[,;\n]+", txt or ""):
+        part = part.strip()
+        if not part:
+            continue
+        m = None
+        if "–" in part:
+            a_, b_ = [x.strip() for x in part.split("–", 1)]
+            ma, mb = re.match(r"^(.*?)(\d+)$", a_), re.match(r"^(.*?)(\d+)$", b_)
+            if ma and mb and ma.group(1) == mb.group(1) and 0 <= int(mb.group(2)) - int(ma.group(2)) < 1000:
+                m = (ma.group(1), ma.group(2), mb.group(2))
+        if m:
+            for n in range(int(m[1]), int(m[2]) + 1):
+                out.add(f"{m[0]}{str(n).zfill(len(m[1]))}")
+        else:
+            out.add(part)
+    return sorted(out)
+
+
+def washed(db, days=60):
+    """Kegovi oprani u zadnjih N dana (zadnje pranje svakog kega), po danima; last = dan zadnjeg pranja.
+    cip = za taj dan već postoji CIP zapisnik u kojem je keg naveden."""
+    import datetime as _dt
+    since = (_dt.date.today() - _dt.timedelta(days=days)).isoformat()
+    rows = db.q("""SELECT g.keg_id, MAX(substr(g.ts,1,10)) AS d FROM keg_log g
+                   WHERE g.action='Očisti' AND substr(g.ts,1,10)>=? GROUP BY g.keg_id""", (since,))
+    cips = {}
+    for c in db.q("SELECT date, keg_codes FROM cips WHERE date>=? AND COALESCE(keg_codes,'')<>''", (since,)):
+        cips.setdefault(c["date"], set()).update(expand_codes(c["keg_codes"]))
+    groups = {}
+    for r in rows:
+        k = db.one("SELECT id, code, status FROM kegs WHERE id=?", (r["keg_id"],))
+        if not k:
+            continue
+        k["cip"] = k["code"] in cips.get(r["d"], set())
+        groups.setdefault(r["d"], []).append(k)
+    out = [{"date": d, "kegs": sorted(v, key=lambda k: k["code"])} for d, v in sorted(groups.items(), reverse=True)]
+    return {"groups": out, "last": out[0]["date"] if out else None}
+
+
+# ------------------------------------------------------------------ promjena LOT-a punog kega (ispravak pogrešnog upisa)
+def _sync_excise(db, pack_id, removed=False):
+    """Stavka trošarina vezana uz pakiranje prati izmjenu (osim u već prijavljenim mjesecima)."""
+    try:
+        db._ensure_excise_table()
+    except Exception:  # noqa: BLE001
+        return []
+    out = []
+    for e in db.q("SELECT * FROM excise_entries WHERE packaging_id=?", (pack_id,)):
+        if db.excise_reported(e["period"]):
+            out.append(e["period"])
+            continue
+        if removed:
+            db.x("DELETE FROM excise_entries WHERE id=?", (e["id"],))
+            continue
+        p = db.one("SELECT * FROM packaging WHERE id=?", (pack_id,))
+        b = db.batch(p["batch_id"]) if p.get("batch_id") else None
+        db.x("UPDATE excise_entries SET batch_id=?, hl=?, trade_name=?, abv=? WHERE id=?",
+             (p.get("batch_id"), round((p.get("total_l") or 0) / 100, 3), ((b or {}).get("recipe") or "").upper(),
+              db.excise_abv(b), e["id"]))
+    return out
+
+
+def change_lot_check(db, keg_ids):
+    kegs = [db.one("SELECT k.*, b.batch_no FROM kegs k LEFT JOIN batches b ON b.id=k.batch_id WHERE k.id=?", (i,)) for i in keg_ids]
+    bad = [k["code"] for k in kegs if k and k["status"] != "Pun"]
+    return {"kegs": [{"id": k["id"], "code": k["code"], "lot": k.get("batch_no") or "", "status": k["status"]} for k in kegs if k],
+            "bad": bad}
+
+
+def change_lot(db, keg_ids, batch_id, by=None):
+    """Punim kegovima promijeni LOT (šaržu): keg, zapis punjenja u povijesti, HACCP pakiranje i trošarine.
+    Vraća {done, reported: [mjeseci već prijavljeni carini]}."""
+    from haccp_db import compress_codes
+    nb = db.batch(batch_id)
+    if not nb:
+        raise ValueError("Odaberite ispravan LOT (šaržu).")
+    kegs = [db.one("SELECT * FROM kegs WHERE id=?", (i,)) for i in keg_ids]
+    kegs = [k for k in kegs if k]
+    bad = [k["code"] for k in kegs if k["status"] != "Pun"]
+    if bad:
+        raise ValueError("LOT se mijenja samo punim kegovima. Nisu puni: " + ", ".join(bad))
+    kegs = [k for k in kegs if k["batch_id"] != batch_id]
+    if not kegs:
+        raise ValueError(f"Odabrani kegovi već imaju LOT {nb['batch_no']}.")
+    import datetime as _dt
+    now = _dt.datetime.now().strftime(" %H:%M")
+    reported = set()
+    moved = {}  # (datum, operater) -> [kegovi] za novo pakiranje
+    for k in kegs:
+        ob = db.batch(k["batch_id"]) if k.get("batch_id") else None
+        old_no = (ob or {}).get("batch_no") or "—"
+        fill = k.get("fill_l") or k.get("size_l") or 0
+        db.x("UPDATE kegs SET batch_id=? WHERE id=?", (batch_id, k["id"]))
+        last_fill = db.one("SELECT id FROM keg_log WHERE keg_id=? AND action='Napuni' ORDER BY ts DESC, id DESC LIMIT 1", (k["id"],))
+        if last_fill:
+            db.x("UPDATE keg_log SET batch_id=? WHERE id=?", (batch_id, last_fill["id"]))
+        db.x("INSERT INTO keg_log(keg_id,ts,action,status,batch_id,customer,note) VALUES(?,?,?,?,?,?,?)",
+             (k["id"], today() + now, "Promjena LOT-a", k["status"], batch_id, k.get("customer"),
+              f"Ispravak LOT-a: {old_no} → {nb['batch_no']}" + (f" ({by})" if by else "")))
+        # HACCP pakiranje: keg se premješta iz zapisa stare šarže u zapis nove šarže
+        date, op = k.get("filled_date") or today(), None
+        if k.get("batch_id"):
+            for p in db.q("SELECT * FROM packaging WHERE batch_id=? AND pack_type='Keg' ORDER BY date DESC, id DESC", (k["batch_id"],)):
+                codes = expand_codes(p.get("pack_lot"))
+                if k["code"] not in codes:
+                    continue
+                date, op = p["date"], p.get("operator")
+                rest = [c for c in codes if c != k["code"]]
+                if not rest:
+                    reported.update(_sync_excise(db, p["id"], removed=True))
+                    if not db.val("SELECT 1 FROM excise_entries WHERE packaging_id=?", (p["id"],)):
+                        db.x("DELETE FROM packaging WHERE id=?", (p["id"],))
+                else:
+                    db.x("UPDATE packaging SET pack_lot=?, units=?, total_l=? WHERE id=?",
+                         (compress_codes(rest), max(0, (p.get("units") or 1) - 1),
+                          round(max(0.0, (p.get("total_l") or 0) - fill), 2), p["id"]))
+                    reported.update(_sync_excise(db, p["id"]))
+                moved.setdefault((date, op), []).append(k)
+                break
+    for (date, op), ks in moved.items():
+        ex = db.one("SELECT * FROM packaging WHERE batch_id=? AND pack_type='Keg' AND date=? ORDER BY id DESC LIMIT 1", (batch_id, date))
+        if ex:
+            codes = sorted(set(expand_codes(ex.get("pack_lot"))) | {k["code"] for k in ks})
+            db.x("UPDATE packaging SET pack_lot=?, units=?, total_l=? WHERE id=?",
+                 (compress_codes(codes), (ex.get("units") or 0) + len(ks),
+                  round((ex.get("total_l") or 0) + sum(k.get("fill_l") or k.get("size_l") or 0 for k in ks), 2), ex["id"]))
+            reported.update(_sync_excise(db, ex["id"]))
+        else:
+            db.package_from_kegs(batch_id, [k["id"] for k in ks], date, op)
+    if nb["status"] in ("Fermentacija", "Odležavanje"):
+        db.update_batch(nb["id"], {"status": "Pakirano"})
+    return {"done": len(kegs), "lot": nb["batch_no"], "reported": sorted(reported)}

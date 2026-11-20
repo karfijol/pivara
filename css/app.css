@@ -810,3 +810,9 @@ body:has(.modal-back) .undo-fab { display: none; }
 .modal-bar.sort-bar { position: static !important; padding-bottom: 0 !important; border-top: 1px solid var(--line); }
 .modal-bar.sort-bar .btn { flex: 1; justify-content: center; }
 .modal-bar.sort-bar + .modal-bar { border-top: 0; }
+/* 2.57: odabir opranih kegova za CIP */
+.wash-day { display: flex; align-items: center; gap: 6px; margin: 12px 0 6px; padding-top: 8px; border-top: 1px solid var(--line); }
+.wash-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 6px; }
+.wash-keg { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); min-height: 44px; }
+.wash-keg.has-cip { opacity: .75; }
+@media (max-width: 700px) { .wash-grid { grid-template-columns: 1fr 1fr; } }

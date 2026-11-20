@@ -143,7 +143,17 @@ export async function editCip(app, initial = null, id = null) {
     checkTime(d.start_time, d.end_time);
     if (!(d.equipment || []).length && !d.fermentor_id) throw new Error("Označite opremu obuhvaćenu CIP-om.");
   };
-  const d = await askForm("Zapisnik o provedbi CIP postupka", fields, init, { columns: 2, width: 820, validate });
+  const onReady = (f) => {
+    // odabir opranih kegova (svi zadnje oprani ili pojedinačno)
+    f.w.keg_codes.el.parentElement.append(h("div", { class: "row gap", style: { marginTop: "6px" } },
+      btn("🛢 Odaberi oprane kegove…", async () => {
+        const codes = await pickWashedKegs(app, f.w.keg_codes.get());
+        if (codes === null) return;
+        f.w.keg_codes.set(codes.length ? app.py.call("web_extras.compress_codes", codes) : "");
+        if (codes.length && f.w.equipment) { const eq = f.w.equipment.get() || []; if (!eq.includes("Kegovi")) f.w.equipment.set(eq.concat("Kegovi")); }
+      }, "ghost")));
+  };
+  const d = await askForm("Zapisnik o provedbi CIP postupka", fields, init, { columns: 2, width: 820, validate, onReady });
   if (!d) return null;
   d.equipment = d.equipment || [];
   if (d.fermentor_id && !d.equipment.includes("Fermentor")) d.equipment.push("Fermentor");
@@ -153,6 +163,47 @@ export async function editCip(app, initial = null, id = null) {
   const rid = db.save_record("cips", d, id || null);
   app.toast("CIP zapisnik spremljen.");
   return rid;
+}
+
+// odabir opranih kegova za CIP zapisnik: „Svi zadnje oprani” ili pojedinačno (po danima pranja); vraća oznake ili null
+export async function pickWashedKegs(app, current = "") {
+  const W = app.py.call("web_kegs.washed", 60);
+  const chosen = new Set(current ? app.py.call("web_kegs.expand_codes", current) : []);
+  const d = new Dialog("Oprani kegovi", { width: 640 });
+  if (!W.groups.length) {
+    d.body.append(h("div", { class: "msg" }, "U zadnjih 60 dana nema zabilježenih pranja kegova (Rad s kegovima → Pranje)."));
+    d.buttons(null, null, "Zatvori");
+    await d.show();
+    return null;
+  }
+  const boxes = {};
+  const cnt = h("b", {});
+  const days = [];
+  const upd = () => {
+    cnt.textContent = `Odabrano: ${Object.values(boxes).filter((b) => b.checked).length}`;
+    for (const [cb, codes] of days) cb.checked = codes.every((c) => boxes[c] && boxes[c].checked);
+  };
+  const setAll = (codes, on) => { for (const c of codes) if (boxes[c]) boxes[c].checked = on; upd(); };
+  const last = W.groups[0];
+  d.body.append(h("div", { class: "row gap", style: { flexWrap: "wrap", marginBottom: "10px", alignItems: "center" } },
+    btn(`✓ Svi zadnje oprani (${d2ui(last.date)}, ${last.kegs.length})`, () => { setAll(Object.keys(boxes), false); setAll(last.kegs.map((k) => k.code), true); }, "primary"),
+    btn("Poništi odabir", () => setAll(Object.keys(boxes), false), "ghost"), cnt));
+  for (const g of W.groups) {
+    const codes = g.kegs.map((k) => k.code);
+    const all = h("input", { type: "checkbox" });
+    all.onchange = () => setAll(codes, all.checked);
+    days.push([all, codes]);
+    d.body.append(h("label", { class: "chk wash-day" }, all, " ", h("b", {}, `Oprano ${d2ui(g.date)}`), h("span", { class: "muted" }, ` · ${g.kegs.length} keg(ova)`)));
+    d.body.append(h("div", { class: "wash-grid" }, g.kegs.map((k) => {
+      const cb = h("input", { type: "checkbox" }); cb.checked = chosen.has(k.code); cb.onchange = upd;
+      boxes[k.code] = cb;
+      return h("label", { class: "chk wash-keg" + (k.cip ? " has-cip" : ""), title: k.cip ? "Za ovo pranje CIP zapisnik već postoji" : "" }, cb, " ", k.code, k.cip ? h("small", { class: "muted" }, " ✓ CIP") : null);
+    })));
+  }
+  upd();
+  d.buttons("Preuzmi odabrane", () => d.close(Object.entries(boxes).filter(([, b]) => b.checked).map(([c]) => c)));
+  const r = await d.show();
+  return r === undefined ? null : r;
 }
 
 export async function editReceipt(app, initial = null, id = null) {

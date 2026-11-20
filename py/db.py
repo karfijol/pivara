@@ -798,6 +798,9 @@ class DB(HaccpMixin, ExtrasMixin):
         """Razlog zašto se keg ne smije izdati kupcu (None = smije). Izdaju se samo puni kegovi s 17 L piva."""
         if k["status"] != "Pun":
             return f"Keg {k['code']} nije pun (status '{k['status']}')."
+        if (k.get("note") or "").strip():
+            return (f"Keg {k['code']} ima napomenu: „{k['note'].strip()}”. Keg s napomenom ne može se otpremiti kupcu – "
+                    "provjerite keg i obrišite napomenu (Kegovi → Popis kegova → Uredi) pa ga otpremite.")
         full = self.keg_fill_default()
         fill = k.get("fill_l")
         if fill is not None and fill + 1e-9 < full:

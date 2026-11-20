@@ -106,9 +106,35 @@ export async function kegDetail(app, kegId) {
     const r = await askForm(`Napomena – ${k.code}`, [{ key: "note", label: "Napomena", type: "multi" }], { note: k.note });
     if (r) { py.call("web_kegs.set_note", kegId, r.note); dlg.close("changed"); }
   }, "ghost"));
+  if (k.status === "Pun") dlg.bar.append(btn("🔁 Promijeni LOT", async () => { if (await changeLotDialog(app, [kegId])) dlg.close("changed"); }, "ghost"));
   dlg.bar.append(btn("🛠 Servisni pregled", async () => { if (await serviceDialog(app, kegId)) dlg.close("changed"); }, "ghost"));
   dlg.bar.append(btn("Zatvori", () => dlg.close(null), "primary"));
   return dlg.show();
+}
+
+// ispravak pogrešno upisanog LOT-a punog kega (keg, povijest, HACCP pakiranje, trošarine)
+export async function changeLotDialog(app, ids) {
+  const py = app.py;
+  const c = py.call("web_kegs.change_lot_check", ids);
+  if (!c.kegs.length) { await info("Odaberite pune kegove kojima treba promijeniti LOT.", "Promjena LOT-a"); return false; }
+  if (c.bad.length) { await info(`LOT se može promijeniti samo punim kegovima.\n\nNisu puni: ${c.bad.join(", ")}`, "Promjena LOT-a"); return false; }
+  const cur = [...new Set(c.kegs.map((k) => k.lot || "—"))].join(", ");
+  const opts = py.call("web_kegs.fill_batches").map((b) => [b.label, b.id]);
+  for (const b of app.db.brewed_batches()) if (!opts.some((o) => o[1] === b.id)) opts.push([`${b.batch_no} · ${b.recipe || ""}`, b.id]);
+  const d = await askForm(c.kegs.length === 1 ? `Promjena LOT-a – ${c.kegs[0].code}` : `Promjena LOT-a – ${c.kegs.length} kegova`, [
+    { key: "info", label: c.kegs.length === 1 ? "Keg" : "Kegovi", type: "info", default: c.kegs.map((k) => k.code).join(", ") },
+    { key: "info1", label: "Sadašnji (pogrešni) LOT", type: "info", default: cur },
+    { key: "batch_id", label: "Ispravan LOT (šarža)", type: "combo", options: opts, required: true },
+    { key: "info2", label: "Što se mijenja", type: "info", default: "Mijenja se LOT na kegu, u zapisu punjenja (povijest kega), u HACCP evidenciji pakiranja i u trošarinama (ako mjesec još nije prijavljen). Promjena se upisuje u povijest kega." }],
+  {}, { okText: "Promijeni LOT", width: 560 });
+  if (!d) return false;
+  try {
+    const r = py.callKw("web_kegs.change_lot", [ids, d.batch_id], { by: deviceUser(app) || null });
+    toast(`LOT promijenjen u ${r.lot} (${r.done} keg${r.done === 1 ? "" : "ova"}).`);
+    if (r.reported.length) await info(`Trošarine za ${r.reported.join(", ")} su već prijavljene carini i nisu mijenjane – po potrebi napravite ispravak prijave.`, "Promjena LOT-a");
+    app.refreshAll();
+    return true;
+  } catch (e) { error(e); return false; }
 }
 
 // pronađi keg (QR kamera ili upis oznake); camera = kamera se uključi odmah; vraća id kega ili null
@@ -759,6 +785,17 @@ class KegWorkPage extends Page {
       if (printLabels) {
         try { const m = await import("./production.js"); await m.printKegLabels(this.app, ids); } catch (e) { error(e); }
       }
+    } else if (this.flow === "wash") {
+      toast(`Pranje: ${res.done} keg(ova) potvrđeno – ispunite CIP zapisnik.`);
+      // HACCP: zapisnik o provedbi CIP postupka za oprane kegove
+      try {
+        const hx = await import("./haccp.js");
+        const codes = this.app.py.call("web_extras.compress_codes", ids.map((i) => this.db.one("SELECT code FROM kegs WHERE id=?", [i]).code));
+        const dt = p.date || today();
+        await hx.editCip(this.app, hx.cipDefaults(this.app, { cip_type: "Pranje kegova", equipment: ["Kegovi"], keg_codes: codes,
+          date: dt, ver_date: dt, review_date: dt, ...(p.operator ? { operator: p.operator, op_sign: p.operator, ver_by: p.operator } : {}),
+          ver_result: "Kegovi su oprani i dezinficirani" }));
+      } catch (e) { error(e); }
     } else toast(`${f[2]}: ${res.done} keg(ova) potvrđeno.`);
     this.close();
   }

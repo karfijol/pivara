@@ -9,7 +9,7 @@ import datetime as dt
 EPS = 1e-6
 
 CIP_TYPES = ["Redovni CIP (nakon proizvodnje)", "CIP prije početka nove šarže", "Korektivni CIP",
-             "Nakon održavanja", "CIP kegova prije punjenja"]
+             "Nakon održavanja", "CIP kegova prije punjenja", "Pranje kegova"]
 CIP_EQUIPMENT = ["Komovnik", "Kotao za kuhanje", "Vrtložnik", "Pločasti izmjenjivač topline", "Fermentor",
                  "Bistrenik", "Cjevovod", "Keg punilica", "Kegovi", "Ostalo"]
 EQ_CATEGORIES = ["Mlin", "Varionica", "Fermentor", "Punilica", "Ostalo"]

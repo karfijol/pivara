@@ -1297,6 +1297,12 @@ class KegsPage extends Page {
     this.tbtn("✎ Uredi", () => this.edit(), "ghost");
     this.tbtn("🗑 Obriši", () => this.delete(), "ghost");
     this.tbtn("Povijest kega", () => this._more("Povijest kega"), "ghost|rec");
+    this.tbtn("🔁 Promijeni LOT", async () => {
+      const ids = this.table.selectedIds();
+      if (!ids.length) return info("Označite pune kegove kojima treba promijeniti LOT.", "Promjena LOT-a");
+      const m = await import("./kegwork.js");
+      if (await m.changeLotDialog(this.app, ids)) this.refresh();
+    }, "ghost|rec");
     this.tbtn("🏷 Naljepnice (PDF)", () => this._more("🏷 Naljepnice (PDF)"), "ghost|rec");
     this.tbtn("Na servis", () => this._more("Na servis"), "ghost|more");
     this.tbtn("Otpiši", () => this._more("Otpiši"), "ghost|more");
@@ -1878,7 +1884,7 @@ class ExcisePage extends Page {
       { key: "date", label: "Datum istakanja / pakiranja", type: "date", required: true },
       { key: "trade_name", label: "Trgovački naziv (kako ga prijavljujete, npr. LAGER)", required: true },
       { key: "hl", label: "Količina (hl) – npr. 2,21", type: "num", required: true, positive: true },
-      { key: "abv", label: "Stvarni alkohol (% vol, jedna decimala)", type: "num", required: true, positive: true },
+      { key: "abv", label: "Alkohol (% vol) – za vrste iz Postavki uvijek fiksno", type: "num", required: true, positive: true },
       { key: "include", label: "Prijavi u ovom mjesecu", type: "check" },
       { key: "note", label: "Napomena" }], init);
   }
@@ -1932,15 +1938,18 @@ class ExcisePage extends Page {
   }
 
   async settings() {
-    const keys = ["small_brewery", "excise_reduced", "excise_rate", "company_oib", "company_address", "customs_office", "excise_no"];
+    const keys = ["small_brewery", "excise_reduced", "excise_rate", "company_oib", "company_address", "customs_office", "excise_no", "excise_abv_types"];
     const init = Object.fromEntries(keys.map((k) => [k, this.db.get_setting(k)]));
+    if (!(init.excise_abv_types || "").trim()) init.excise_abv_types = this.db.excise_abv_table().map(([n, , a]) => `${n} = ${String(a.toFixed(1)).replace(".", ",")}`).join("\n");
     init.small_brewery = init.small_brewery === "1";
     const d = await askForm("Trošarine – postavke", [
       { key: "small_brewery", label: "Mala nezavisna pivovara (snižena stopa)", type: "check" },
       { key: "excise_reduced", label: "Snižena stopa (€ po 1 % vol. po hl)", type: "num", min: 0 },
       { key: "excise_rate", label: "Opća stopa (€ po 1 % vol. po hl)", type: "num", min: 0 },
       { key: "company_oib", label: "OIB" }, { key: "company_address", label: "Sjedište (adresa)" },
-      { key: "customs_office", label: "Carinski ured" }, { key: "excise_no", label: "Trošarinski broj" }], init, { columns: 2 });
+      { key: "customs_office", label: "Carinski ured" }, { key: "excise_no", label: "Trošarinski broj" },
+      { key: "excise_abv_types", label: "Fiksni % alkohola po vrsti piva (jedan redak: Naziv = 5,6). Vrsta se prepoznaje po nazivu piva, npr. „Malina Sour” → Sour.", type: "multi", full: true, height: 130 }],
+    init, { columns: 2 });
     if (d) {
       d.small_brewery = d.small_brewery ? "1" : "0";
       for (const [k, v] of Object.entries(d)) this.db.set_setting(k, v !== null && v !== undefined ? v : "");

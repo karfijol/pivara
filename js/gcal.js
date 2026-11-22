@@ -91,9 +91,14 @@ function eventOf(b) {
   const desc = [b.status && `Status: ${b.status}`, b.people && `Broj osoba: ${b.people}`, b.package && `Vrsta: ${b.package}`,
     b.contact && `Kontakt: ${b.contact}`, b.phone && `Telefon: ${b.phone}`, b.email && `E-mail: ${b.email}`,
     b.price_pp && `Cijena po osobi: ${String(b.price_pp).replace(".", ",")} €` + (b.people ? ` (ukupno ${String(Math.round(b.price_pp * b.people * 100) / 100).replace(".", ",")} €)` : ""),
-    b.deposit && `Predujam: ${String(b.deposit).replace(".", ",")} €`, b.note && `Napomena: ${b.note}`].filter(Boolean).join("\n");
-  const ev = { summary: `🍺 ${b.package || "Rezervacija"}: ${b.group_name}${b.people ? ` (${b.people} os.)` : ""}${b.status === "Najavljeno" ? " – nepotvrđeno" : ""}`,
-    description: desc, colorId: COLOR[b.status] || "5", location: "",
+    b.no_alcohol && `Od toga bez alkohola: ${b.no_alcohol}`, b.language && `Jezik: ${b.language}`,
+    b.space && `Prostor: ${b.space}`, b.staff && `Vodi: ${b.staff}`, b.source && `Izvor: ${b.source}`,
+    b.company && `Tvrtka: ${b.company}${b.company_oib ? `, OIB ${b.company_oib}` : ""}${b.company_address ? `, ${b.company_address}` : ""}`,
+    b.deposit && `Predujam: ${String(b.deposit).replace(".", ",")} €`, (b.pay_status || b.pay_method) && `Plaćanje: ${[b.pay_status, b.pay_method].filter(Boolean).join(", ")}`,
+    b.note && `Napomena: ${b.note}`].filter(Boolean).join("\n");
+  const ev = { summary: `🍺 ${b.package || "Rezervacija"}: ${b.group_name}${b.people ? ` (${b.people} os.)` : ""}${b.staff ? ` – ${b.staff}` : ""}${b.status === "Najavljeno" ? " – nepotvrđeno" : ""}`,
+    description: desc, colorId: COLOR[b.status] || "5", location: b.space || "",
+    reminders: { useDefault: false, overrides: [{ method: "popup", minutes: 24 * 60 }, { method: "popup", minutes: 120 }] },
     extendedProperties: { private: { pivovaraBooking: String(b.id) } } };
   if (b.time) {
     ev.start = { dateTime: `${b.date}T${b.time}:00`, timeZone: "Europe/Zagreb" };

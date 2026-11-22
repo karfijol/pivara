@@ -4,6 +4,14 @@ import datetime as dt
 
 STATUSES = ["Najavljeno", "Potvrđeno", "Održano", "Otkazano"]
 PACKAGES = ["Kušanje piva", "Kušanje + obilazak pivovare", "Kušanje + hrana", "Privatna zabava"]
+LANGUAGES = ["Hrvatski", "Engleski", "Njemački", "Talijanski", "Mađarski"]
+SOURCES = ["Telefon", "E-mail", "Web stranica", "Društvene mreže", "Agencija", "Preporuka", "Osobno"]
+SPACES = ["Pivnica", "Terasa", "Pivovara (obilazak)"]
+PAY_METHODS = ["Gotovina", "Kartica", "Transakcijski račun"]
+PAY_STATUS = ["Nije plaćeno", "Plaćen predujam", "Plaćeno"]
+NEW_COLS = [("language", "TEXT"), ("source", "TEXT"), ("space", "TEXT"), ("staff", "TEXT"), ("company", "TEXT"),
+            ("company_oib", "TEXT"), ("company_address", "TEXT"), ("pay_method", "TEXT"), ("pay_status", "TEXT"),
+            ("no_alcohol", "INTEGER")]
 
 
 def ensure(db):
@@ -12,6 +20,10 @@ def ensure(db):
         people INTEGER, contact TEXT, phone TEXT, email TEXT, package TEXT, price_pp REAL, deposit REAL,
         status TEXT DEFAULT 'Najavljeno', note TEXT, gcal_id TEXT, gcal_dirty INTEGER DEFAULT 1, deleted INTEGER DEFAULT 0,
         created TEXT, updated TEXT, created_by TEXT)""")
+    have = {r["name"] for r in db.q("PRAGMA table_info(bookings)")}
+    for c, t in NEW_COLS:
+        if c not in have:
+            db.con.execute(f"ALTER TABLE bookings ADD COLUMN {c} {t}")
     db.con.commit()
 
 
@@ -29,8 +41,18 @@ def _user():
 
 def consts(db):
     ensure(db)
-    pk = [r["package"] for r in db.q("SELECT DISTINCT package FROM bookings WHERE package IS NOT NULL AND package<>'' ORDER BY package")]
-    return {"statuses": STATUSES, "packages": list(dict.fromkeys(PACKAGES + pk))}
+    def used(col, base):
+        vals = [r[col] for r in db.q(f"SELECT DISTINCT {col} FROM bookings WHERE {col} IS NOT NULL AND {col}<>'' ORDER BY {col}")]
+        return list(dict.fromkeys(base + vals))
+    staff = []
+    try:
+        staff = [e["name"] for e in db.employees()]
+    except Exception:  # noqa: BLE001
+        pass
+    return {"statuses": STATUSES, "packages": used("package", PACKAGES), "languages": used("language", LANGUAGES),
+            "sources": used("source", SOURCES), "spaces": used("space", SPACES), "staff": used("staff", staff),
+            "pay_methods": used("pay_method", PAY_METHODS), "pay_status": PAY_STATUS,
+            "capacity": int(float(db.get_setting("booking_capacity") or 0) or 0)}
 
 
 def bookings(db, past=False):
@@ -75,6 +97,15 @@ def save(db, data, id=None):
             "phone": (data.get("phone") or "").strip() or None, "email": (data.get("email") or "").strip() or None,
             "package": (data.get("package") or "").strip() or None, "price_pp": n("price_pp"), "deposit": n("deposit"),
             "status": st, "note": (data.get("note") or "").strip() or None, "gcal_dirty": 1, "updated": _now()}
+    for k in ("language", "source", "space", "staff", "company", "company_address", "pay_method", "pay_status"):
+        vals[k] = (str(data.get(k) or "")).strip() or None
+    oib = (str(data.get("company_oib") or "")).strip().upper().removeprefix("HR")
+    if oib and not (oib.isdigit() and len(oib) == 11):
+        raise ValueError("OIB mora imati točno 11 znamenki.")
+    vals["company_oib"] = oib or None
+    vals["no_alcohol"] = n("no_alcohol", int)
+    if vals["no_alcohol"] and vals["people"] and vals["no_alcohol"] > vals["people"]:
+        raise ValueError("Broj gostiju bez alkohola ne može biti veći od broja osoba.")
     if id:
         db._upsert("bookings", vals, id)
     else:
@@ -148,3 +179,37 @@ def month_summary(db, year=None):
                    ROUND(COALESCE(SUM(people*price_pp),0),2) AS total FROM bookings
                    WHERE COALESCE(deleted,0)=0 AND status IN ('Potvrđeno','Održano') AND substr(date,1,4)=?
                    GROUP BY substr(date,1,7) ORDER BY month""", (y,))
+
+
+def _mins(t):
+    try:
+        h, m = map(int, (t or "").split(":"))
+        return h * 60 + m
+    except ValueError:
+        return None
+
+
+def conflicts(db, data, id=None):
+    """Rezervacije koje se vremenski preklapaju s ovom (isti dan; isti prostor ili prostor nije upisan) i kapacitet.
+    Vraća {overlap: [...], people: ukupno osoba u isto vrijeme (s ovom), capacity, over}."""
+    ensure(db)
+    date = (data.get("date") or "")[:10]
+    if not date:
+        return {"overlap": [], "people": 0, "capacity": 0, "over": False}
+    t0 = _mins(data.get("time"))
+    dur = int(float(data.get("duration_min") or 120))
+    space = (str(data.get("space") or "")).strip()
+    out = []
+    for b in db.q("""SELECT * FROM bookings WHERE date=? AND COALESCE(deleted,0)=0 AND status<>'Otkazano' AND id<>?""",
+                  (date, id or 0)):
+        if space and b.get("space") and b["space"] != space:
+            continue
+        b0 = _mins(b.get("time"))
+        if t0 is not None and b0 is not None:
+            if not (t0 < b0 + (b.get("duration_min") or 120) and b0 < t0 + dur):
+                continue
+        out.append({"id": b["id"], "group_name": b["group_name"], "time": b.get("time") or "", "people": b.get("people") or 0,
+                    "space": b.get("space") or "", "duration_min": b.get("duration_min") or 120})
+    cap = int(float(db.get_setting("booking_capacity") or 0) or 0)
+    ppl = sum(o["people"] for o in out) + int(float(data.get("people") or 0))
+    return {"overlap": out, "people": ppl, "capacity": cap, "over": bool(cap and ppl > cap)}

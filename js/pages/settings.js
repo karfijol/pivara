@@ -159,7 +159,7 @@ class SettingsPage extends Page {
 
     // ---------- ponude
     const co = card("Ponude", "Zaglavlje (uz logo PIVARA) i podnožje ponude te zadane vrijednosti za nove ponude.");
-    const ok = ["offer_header1", "offer_header2", "offer_footer", "offer_payment_desc", "offer_payment_method", "offer_valid_days", "sudreg_client_id", "sudreg_client_secret", "sudreg_proxy", "gcal_client_id", "gcal_calendar_id",
+    const ok = ["offer_header1", "offer_header2", "offer_footer", "offer_payment_desc", "offer_payment_method", "offer_valid_days", "sudreg_client_id", "sudreg_client_secret", "sudreg_proxy", "gcal_client_id", "gcal_calendar_id", "booking_capacity",
       "offer_hub3", "offer_iban", "offer_recipient", "offer_recipient_street", "offer_recipient_place", "offer_model", "offer_purpose", "offer_desc_tpl"];
     try { this.app.py.call("web_offers.consts"); } catch { /* */ }
     this.formO = new Form([
@@ -177,7 +177,8 @@ class SettingsPage extends Page {
       { key: "sudreg_client_id", label: "Client ID (završava s dvije točke „..”)" },
       { key: "sudreg_client_secret", label: "Client Secret (završava s dvije točke „..”)" },
       { key: "sudreg_proxy", label: "Adresa posrednika (Cloudflare Worker, npr. https://sudreg.ime.workers.dev)", full: true },
-      { label: "Google kalendar – rezervacije", type: "section" },
+      { label: "Rezervacije i Google kalendar", type: "section" },
+      { key: "booking_capacity", label: "Kapacitet prostora – najviše gostiju u isto vrijeme (0 = bez provjere)", type: "num", min: 0 },
       { key: "gcal_client_id", label: "Google Client ID (…apps.googleusercontent.com)", full: true },
       { key: "gcal_calendar_id", label: "Calendar ID (prazno = glavni kalendar; preporuka: poseban kalendar „Rezervacije”)", full: true },
       { label: "2D kod za plaćanje (HUB 3) na ponudi", type: "section" },
